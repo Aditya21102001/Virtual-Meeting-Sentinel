@@ -57,13 +57,27 @@ import { BoardService } from '../services/board.service';
 })
 export class ModeratorComponent implements OnInit, OnDestroy {
   readonly drafting = signal<Set<string>>(new Set());
+  private pollHandle?: ReturnType<typeof setInterval>;
 
   constructor(private api: ApiService, protected board: BoardService) {}
 
   ngOnInit(): void {
     // Token is already set by AuthService — the route guard ensures a logged-in moderator.
-    this.api.getBoard().subscribe((b) => this.board.board.set(b)); // initial snapshot
-    this.board.connect();                                          // then live pushes
+    this.loadSnapshot();          // initial snapshot
+    this.board.connect();         // then live pushes over STOMP
+
+    // Fallback poll: live WebSocket pushes can drop (esp. behind free-tier proxies), and a
+    // just-asked question needs a moment to cluster. Re-fetch every 10s so new questions
+    // appear on the board without a manual page refresh. Matches backend board.refresh-ms.
+    this.pollHandle = setInterval(() => this.loadSnapshot(), 10000);
+  }
+
+  /** Pull the current ranked board via REST; used for the initial load and the fallback poll. */
+  private loadSnapshot(): void {
+    this.api.getBoard().subscribe({
+      next: (b) => this.board.board.set(b),
+      error: () => {},   // transient errors are fine — the next poll retries
+    });
   }
 
   /** Build the page-anchored PDF link for a citation source string. */
