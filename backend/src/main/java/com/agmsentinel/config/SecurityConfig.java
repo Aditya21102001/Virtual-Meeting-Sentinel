@@ -6,6 +6,7 @@ import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -50,9 +51,12 @@ public class SecurityConfig {
                 .requestMatchers("/api/questions/**").hasAnyRole("ATTENDEE", "SHAREHOLDER", "MODERATOR", "ADMIN")
                 .requestMatchers("/api/clusters/**").hasAnyRole("MODERATOR", "ADMIN")
                 .requestMatchers("/api/admin/**").hasAnyRole("MODERATOR", "ADMIN")
-                // Shareholder Lounge: any logged-in registered member.
-                .requestMatchers("/api/chat/**").hasAnyRole("ADMIN", "MODERATOR", "SHAREHOLDER")
-                // Member directory + role management.
+                // Shareholder Lounge: open to ANY authenticated member (attendees included) so
+                // everyone can see the directory of registered users and use the chat / AI assistant.
+                .requestMatchers("/api/chat/**").authenticated()
+                // Member directory: any authenticated user may READ the roster; only
+                // moderators/admins may CHANGE roles (PATCH /api/users/{id}/role).
+                .requestMatchers(HttpMethod.GET, "/api/users").authenticated()
                 .requestMatchers("/api/users/**").hasAnyRole("MODERATOR", "ADMIN")
                 .anyRequest().authenticated())
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
