@@ -1,0 +1,12 @@
+# Keep line-ending normalization for text, but never touch binaries.
+* text=auto
+
+# Binary assets — must be stored/checked out byte-for-byte (no CRLF conversion).
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.faiss binary
+*.jar   binary

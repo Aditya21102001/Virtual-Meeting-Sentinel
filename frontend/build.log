@@ -1,0 +1,16 @@
+
+> agm-sentinel-frontend@1.0.0 build
+> ng build
+
+❯ Building...
+✔ Building...
+Initial chunk files | Names         |  Raw size | Estimated transfer size
+main-QRXYKSGI.js    | main          | 392.76 kB |               103.89 kB
+styles-YL233TEY.css | styles        |   1.51 kB |               550 bytes
+
+                    | Initial total | 394.26 kB |               104.44 kB
+
+Application bundle generation complete. [5.953 seconds] - 2026-07-04T14:07:44.720Z
+
+Output location: F:\UniquePersonalProject\frontend\dist\agm-sentinel-frontend
+

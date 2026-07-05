@@ -1,0 +1,81 @@
+spring:
+  application:
+    name: agm-sentinel-backend
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+  # Google OAuth is intentionally NOT declared here: an empty client-id fails Spring's
+  # validation. To enable "Sign in with Google" in production, set these env vars (Spring
+  # auto-configures Google with its built-in provider defaults for endpoints + scopes):
+  #   SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_ID=<your-client-id>
+  #   SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_SECRET=<your-secret>
+  # With them unset (e.g. locally), Google login is simply disabled and the app starts normally.
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/sentinel}
+    username: ${SPRING_DATASOURCE_USERNAME:sentinel}
+    password: ${SPRING_DATASOURCE_PASSWORD:sentinel}
+  jpa:
+    hibernate:
+      ddl-auto: update          # tables also created by ai-service/db/init.sql; update is safe
+    properties:
+      hibernate:
+        format_sql: false
+    open-in-view: false
+
+server:
+  port: ${PORT:8080}
+
+# Python AI service base URL (Docker: http://ai-service:8000 ; HF Spaces URL in prod)
+ai:
+  service:
+    url: ${AI_SERVICE_URL:http://localhost:8000}
+
+jwt:
+  secret: ${JWT_SECRET:change-me-to-a-long-random-string-in-prod-please}
+  ttl-seconds: 28800
+
+# Where the SPA lives — Google OAuth bounces the browser back here with the token.
+app:
+  frontend-url: ${APP_FRONTEND_URL:http://localhost:4200}
+
+# Passwordless email/SMS OTP. demo-mode=true → codes are logged + returned in the API
+# response (free, no email/SMS provider). Set false + wire a real OtpDelivery bean for prod.
+otp:
+  demo-mode: ${OTP_DEMO_MODE:true}
+  ttl-seconds: 300
+  # Real SMS delivery. Leave provider empty → demo (code shown on screen). To send real texts:
+  #   OTP_DEMO_MODE=false, OTP_SMS_PROVIDER=textbelt|fast2sms, OTP_SMS_API_KEY=<key>
+  #   textbelt: use key "textbelt" for 1 free SMS/day (global, no signup).
+  #   fast2sms: free India signup, get your API key from the dashboard.
+  sms:
+    provider: ${OTP_SMS_PROVIDER:}
+    api-key: ${OTP_SMS_API_KEY:}
+
+# WebAuthn (passkeys). rp-id + origins MUST match the FRONTEND domain (where the browser runs
+# the ceremony). Defaults are for local dev; set env vars in prod to the Vercel domain, e.g.
+#   WEBAUTHN_RP_ID=agm-sentinel-xxxx.vercel.app
+#   WEBAUTHN_ORIGINS=https://agm-sentinel-xxxx.vercel.app
+webauthn:
+  rp-id: ${WEBAUTHN_RP_ID:localhost}
+  rp-name: ${WEBAUTHN_RP_NAME:AGM Sentinel}
+  origins: ${WEBAUTHN_ORIGINS:http://localhost:4200}
+
+# Question ingest path:
+#   "http"  → call the AI service /ingest synchronously (default, simplest, no broker)
+#   "kafka" → produce each question to the durable `questions.incoming` log; the AI service
+#             consumes it and replays it on restart to rebuild clusters (event sourcing).
+queue:
+  mode: ${QUEUE_MODE:http}
+  kafka:
+    questions-topic: ${KAFKA_QUESTIONS_TOPIC:questions.incoming}
+
+board:
+  refresh-ms: 10000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

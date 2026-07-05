@@ -1,0 +1,35 @@
+# Secrets
+.env
+*.env.local
+
+# Java / Spring Boot
+backend/target/
+*.class
+.mvn/
+!.mvn/wrapper/maven-wrapper.jar
+
+# Python
+ai-service/__pycache__/
+ai-service/**/__pycache__/
+ai-service/.venv/
+*.pyc
+.pytest_cache/
+ai-service/.cache/
+
+# Node / Angular
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Model + vector caches
+*.faiss
+hf_cache/
+
+# local deployment staging (not part of the app)
+.deploy/

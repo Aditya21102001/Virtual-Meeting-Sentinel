@@ -1,0 +1,20 @@
+# Local-run profile: embedded H2 (PostgreSQL compatibility mode) instead of Postgres.
+# Activate with:  SPRING_PROFILES_ACTIVE=local  (or --spring.profiles.active=local)
+spring:
+  datasource:
+    url: jdbc:h2:mem:sentinel;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+  h2:
+    console:
+      enabled: true      # browse the DB at http://localhost:8080/h2-console if you like
+
+# Point at the locally-running Python AI service.
+ai:
+  service:
+    url: http://localhost:8000
