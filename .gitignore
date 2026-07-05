@@ -27,6 +27,11 @@ frontend/.angular/
 .DS_Store
 Thumbs.db
 
+# JVM crash dumps + local build/run logs (never commit these)
+*.log
+hs_err_pid*.log
+replay_pid*.log
+
 # Model + vector caches
 *.faiss
 hf_cache/

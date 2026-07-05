@@ -1,0 +1,10 @@
+# Keep the Docker build context small and deterministic.
+# Only pom.xml + src are needed; everything below would bloat the context
+# or (worse) risk shipping a stale local artifact into the image.
+target/
+*.log
+hs_err_pid*.log
+replay_pid*.log
+.git
+.gitignore
+README.md
