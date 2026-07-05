@@ -67,9 +67,9 @@ export class ModeratorComponent implements OnInit, OnDestroy {
     this.board.connect();         // then live pushes over STOMP
 
     // Fallback poll: live WebSocket pushes can drop (esp. behind free-tier proxies), and a
-    // just-asked question needs a moment to cluster. Re-fetch every 10s so new questions
-    // appear on the board without a manual page refresh. Matches backend board.refresh-ms.
-    this.pollHandle = setInterval(() => this.loadSnapshot(), 10000);
+    // just-asked question needs a moment to cluster. Re-fetch every 30s so new questions
+    // appear on the board without a manual page refresh.
+    this.pollHandle = setInterval(() => this.loadSnapshot(), 30000);
   }
 
   /** Pull the current ranked board via REST; used for the initial load and the fallback poll. */
