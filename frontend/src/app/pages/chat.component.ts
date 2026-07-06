@@ -14,7 +14,7 @@ import { parseCitation } from '../services/api.service';
   standalone: true,
   imports: [FormsModule],
   template: `
-    <div class="lounge">
+    <div class="lounge" [class.has-active]="chat.activePeer()">
       <!-- conversation list -->
       <aside class="peers">
         <div class="peers-head">
@@ -51,6 +51,7 @@ import { parseCitation } from '../services/api.service';
       <section class="thread">
         @if (chat.activePeer(); as peer) {
           <header class="thread-head">
+            <button class="back" type="button" (click)="back()" aria-label="Back to conversations">‹</button>
             <span class="avatar" [class.ai]="peer === AI_PEER">{{ peer === AI_PEER ? '✨' : initials(peer) }}</span>
             <div>
               <div class="peer-name">{{ peer }}</div>
@@ -131,12 +132,14 @@ import { parseCitation } from '../services/api.service';
     .dot.on { background:#22c55e; }
     .thread { flex:1; background:var(--card); border-radius:12px; display:flex; flex-direction:column; min-width:0; }
     .thread-head { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid #334155; }
+    .back { display:none; background:none; border:none; color:var(--accent); font-size:26px; line-height:1;
+            padding:0 4px; margin:0; width:auto; cursor:pointer; flex-shrink:0; }
     .msgs { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:8px; }
     .bubble { max-width:72%; padding:8px 12px; border-radius:12px; background:#243449; align-self:flex-start;
               display:flex; flex-direction:column; }
     .bubble.mine { align-self:flex-end; background:#0e7490; color:#e0f2fe; }
     .bubble.ai { background:#3b2f5c; color:#ede9fe; }
-    .body { white-space:pre-wrap; font-size:14px; }
+    .body { white-space:pre-wrap; font-size:14px; overflow-wrap:anywhere; }
     .meta { font-size:10px; color:var(--muted); align-self:flex-end; margin-top:3px; }
     .bubble.mine .meta { color:#bae6fd; }
     .ticks.read { color:#38bdf8; }
@@ -144,8 +147,23 @@ import { parseCitation } from '../services/api.service';
     .cite-link { font-size:11px; color:var(--accent); }
     .typing { font-size:12px; color:#22c55e; font-style:italic; }
     .composer { display:flex; gap:8px; padding:12px 16px; border-top:1px solid #334155; }
-    .composer input { flex:1; }
-    .empty { flex:1; display:flex; align-items:center; justify-content:center; }
+    .composer input { flex:1; min-width:0; }
+    .composer button { flex-shrink:0; }
+    .empty { flex:1; display:flex; align-items:center; justify-content:center; padding:24px; text-align:center; }
+
+    /* ---- Mobile: one pane at a time (list OR open thread) ---- */
+    @media (max-width: 760px) {
+      .lounge { flex-direction:column; gap:0; margin:0; padding:0;
+                height:calc(100vh - 58px); height:calc(100dvh - 58px); }
+      .peers { width:100%; border-radius:0; flex:1; }
+      .thread { border-radius:0; }
+      .back { display:block; }
+      /* No conversation open → show the list full-screen, hide the empty thread. */
+      .lounge:not(.has-active) .thread { display:none; }
+      /* A conversation is open → show the thread full-screen, hide the list. */
+      .lounge.has-active .peers { display:none; }
+      .bubble { max-width:85%; }
+    }
   `],
 })
 export class ChatComponent implements OnInit, OnDestroy {
@@ -170,6 +188,12 @@ export class ChatComponent implements OnInit, OnDestroy {
   select(peer: string): void {
     this.chat.lastCitations.set([]);
     this.chat.openThread(peer);
+  }
+
+  /** Mobile: leave the open thread and return to the conversation list. */
+  back(): void {
+    this.chat.activePeer.set(null);
+    this.chat.lastCitations.set([]);
   }
 
   onType(value: string): void {
