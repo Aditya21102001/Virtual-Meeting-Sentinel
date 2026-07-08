@@ -139,6 +139,11 @@ export class LoginComponent implements OnInit {
     // Google OAuth redirect lands here with ?token=... — complete the session.
     const token = this.route.snapshot.queryParamMap.get('token');
     if (token) { this.auth.completeLogin(token); this.router.navigate([this.dest()]); return; }
+    // The auth interceptor redirects here with ?expired=1 when a stale/expired session is
+    // rejected by the server — tell the user why they're back at the sign-in screen.
+    if (this.route.snapshot.queryParamMap.get('expired')) {
+      this.error.set('Your session expired. Please sign in again.');
+    }
     this.auth.config().subscribe({ next: (c) => this.googleEnabled.set(c.googleEnabled) });
   }
 

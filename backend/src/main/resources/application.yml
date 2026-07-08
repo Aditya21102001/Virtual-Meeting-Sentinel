@@ -1,6 +1,12 @@
 spring:
   application:
     name: agm-sentinel-backend
+  servlet:
+    multipart:
+      # Annual-report PDFs are routinely several MB; the Spring default is only 1MB, which
+      # silently rejects real uploads. Raise both the per-file and total-request ceilings.
+      max-file-size: 25MB
+      max-request-size: 30MB
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:

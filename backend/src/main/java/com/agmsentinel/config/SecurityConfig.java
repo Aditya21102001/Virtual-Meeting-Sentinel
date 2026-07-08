@@ -3,6 +3,7 @@ package com.agmsentinel.config;
 import com.agmsentinel.security.JwtAuthFilter;
 import com.agmsentinel.security.OAuth2SuccessHandler;
 import jakarta.servlet.DispatcherType;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -36,6 +37,15 @@ public class SecurityConfig {
         http
             .csrf(AbstractHttpConfigurer::disable)
             .cors(cors -> cors.configurationSource(corsSource()))
+            // Distinguish "not authenticated" from "forbidden": a missing/expired/invalid JWT
+            // must return 401 (so the SPA knows the session is dead and can prompt re-login),
+            // NOT 403. Spring's default returns 403 for both, which made an expired token look
+            // like a permission problem on the upload endpoint.
+            .exceptionHandling(ex -> ex.authenticationEntryPoint((request, response, authEx) -> {
+                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                response.setContentType("application/json");
+                response.getWriter().write("{\"error\":\"Authentication required or session expired.\"}");
+            }))
             // IF_REQUIRED (not STATELESS): the OAuth2 redirect flow needs a short-lived session
             // to hold its state. JWT-authenticated API calls remain stateless.
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
