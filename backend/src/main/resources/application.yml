@@ -24,7 +24,7 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD:sentinel}
   jpa:
     hibernate:
-      ddl-auto: update          # tables also created by ai-service/db/init.sql; update is safe
+      ddl-auto: update # tables also created by ai-service/db/init.sql; update is safe
     properties:
       hibernate:
         format_sql: false
