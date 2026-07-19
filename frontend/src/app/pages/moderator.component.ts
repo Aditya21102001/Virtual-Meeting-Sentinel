@@ -17,6 +17,10 @@ import { BoardService } from '../services/board.service';
         Questions ranked by how many people asked × shareholder weight. Updates in real time.
       </p>
 
+      @if (error()) {
+        <div class="card" style="border-color:var(--accent); color:var(--accent)">{{ error() }}</div>
+      }
+
       @if (board.board().length === 0) {
         <div class="card muted">No questions yet. Open the “Ask a question” tab and submit a few.</div>
       }
@@ -57,6 +61,7 @@ import { BoardService } from '../services/board.service';
 })
 export class ModeratorComponent implements OnInit, OnDestroy {
   readonly drafting = signal<Set<string>>(new Set());
+  readonly error = signal<string | null>(null);
   private pollHandle?: ReturnType<typeof setInterval>;
 
   constructor(private api: ApiService, protected board: BoardService) {}
@@ -74,9 +79,18 @@ export class ModeratorComponent implements OnInit, OnDestroy {
 
   /** Pull the current ranked board via REST; used for the initial load and the fallback poll. */
   private loadSnapshot(): void {
+    this.error.set(null);
     this.api.getBoard().subscribe({
-      next: (b) => this.board.board.set(b),
-      error: () => {},   // transient errors are fine — the next poll retries
+      next: (b) => {
+        this.board.board.set(b);
+        this.error.set(null);
+      },
+      error: (err) => {
+        const message = err?.status === 403
+          ? 'The board is temporarily unavailable. Please try again in a moment.'
+          : 'We could not load the board right now.';
+        this.error.set(message);
+      },
     });
   }
 
