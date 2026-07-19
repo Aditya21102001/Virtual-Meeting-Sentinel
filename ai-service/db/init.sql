@@ -1,4 +1,4 @@
--- Schema for AGM Sentinel. Runs automatically on first Postgres boot (docker-compose),
+-- Schema for VIRTUAL MEETING Sentinel. Runs automatically on first Postgres boot (docker-compose),
 -- and is the same DDL you run once on Neon (paste into the Neon SQL editor).
 
 CREATE EXTENSION IF NOT EXISTS vector;   -- pgvector

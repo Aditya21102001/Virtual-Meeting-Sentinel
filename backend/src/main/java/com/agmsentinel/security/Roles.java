@@ -6,7 +6,7 @@ import java.util.Set;
  * The application's roles as constants (AppUser.role is stored as a plain String).
  *
  *  - ADMIN       full control, including assigning roles
- *  - MODERATOR   runs the AGM board (clusters, drafts) — the default for new registrations
+ *  - MODERATOR   runs the VIRTUAL MEETING board (clusters, drafts) — the default for new registrations
  *  - SHAREHOLDER a registered member who can use the Lounge (1-on-1 chat + GenAI assistant)
  *  - ATTENDEE    ephemeral, anonymous token for question submission (no user row)
  */

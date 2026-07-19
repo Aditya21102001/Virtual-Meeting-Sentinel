@@ -1,8 +1,8 @@
-import { HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
-import { inject } from '@angular/core';
-import { Router } from '@angular/router';
-import { catchError, throwError } from 'rxjs';
-import { AuthService } from './auth.service';
+import { HttpErrorResponse, HttpInterceptorFn } from "@angular/common/http";
+import { inject } from "@angular/core";
+import { Router } from "@angular/router";
+import { catchError, throwError } from "rxjs";
+import { AuthService } from "./auth.service";
 
 /**
  * Session-expiry handling. When a request made on behalf of a signed-in user is rejected as
@@ -20,11 +20,11 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const router = inject(Router);
   return next(req).pipe(
     catchError((err: HttpErrorResponse) => {
-      const sessionDead = (err.status === 401 || err.status === 403) && auth.isAuthenticated();
-      const isAuthCall = req.url.includes('/api/auth/');
+      const sessionDead = err.status === 401 && auth.isAuthenticated();
+      const isAuthCall = req.url.includes("/api/auth/");
       if (sessionDead && !isAuthCall) {
         auth.logout();
-        router.navigate(['/login'], { queryParams: { expired: '1' } });
+        router.navigate(["/login"], { queryParams: { expired: "1" } });
       }
       return throwError(() => err);
     }),

@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
         worker.stop()
 
 
-app = FastAPI(title="AGM Sentinel — AI Service", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="VIRTUAL MEETING Sentinel — AI Service", version="1.0.0", lifespan=lifespan)
 
 # Angular (Vercel) calls the backend, but allow direct CORS for local dev/testing.
 app.add_middleware(

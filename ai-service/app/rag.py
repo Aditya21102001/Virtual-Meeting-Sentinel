@@ -23,7 +23,7 @@ _KB_DIR = Path(__file__).resolve().parent.parent / "knowledge"
 
 _PROMPT = ChatPromptTemplate.from_messages([
     ("system",
-     "You are an AGM assistant drafting a concise L1 answer for a company moderator. "
+     "You are an VIRTUAL MEETING assistant drafting a concise L1 answer for a company moderator. "
      "Answer ONLY from the provided context excerpts of the annual report. "
      "If the context does not contain the answer, say you cannot find it in the report "
      "and recommend escalation. Keep it under 120 words. Do not invent figures."),
@@ -35,7 +35,7 @@ _PROMPT = ChatPromptTemplate.from_messages([
 # Conversational variant for the shareholder-facing GenAI assistant (the Lounge chatbot).
 _CHAT_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
-     "You are the AGM Sentinel assistant chatting directly with a shareholder. "
+     "You are the VIRTUAL MEETING Sentinel assistant chatting directly with a shareholder. "
      "Answer their question ONLY from the provided excerpts of the company's annual report. "
      "If the report does not cover it, clearly say it isn't in the annual report and suggest "
      "they raise it as a live question for the board. Be friendly and concise (under 150 words). "

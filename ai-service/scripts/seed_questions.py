@@ -1,4 +1,4 @@
-"""Seed the running system with realistic AGM questions so the moderator board looks alive.
+"""Seed the running system with realistic VIRTUAL MEETING questions so the moderator board looks alive.
 
 Fires ~45 questions through the Spring Boot backend (full pipeline: auth -> ingest ->
 cluster -> board). Many are deliberate paraphrases that should collapse into single clusters,

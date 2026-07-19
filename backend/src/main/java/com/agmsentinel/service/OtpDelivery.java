@@ -60,7 +60,7 @@ public class OtpDelivery {
 
     /** TextBelt: POST phone/message/key; the shared "textbelt" key allows 1 free SMS/day. */
     private boolean textbelt(String phone, String code) throws Exception {
-        String message = "Your AGM Sentinel code is " + code + ". It expires in 5 minutes.";
+        String message = "Your VIRTUAL MEETING Sentinel code is " + code + ". It expires in 5 minutes.";
         String body = "phone=" + enc(phone) + "&message=" + enc(message) + "&key=" + enc(apiKey);
         HttpResponse<String> resp = post("https://textbelt.com/text", null, body);
         boolean ok = resp.statusCode() == 200 && resp.body().contains("\"success\":true");
