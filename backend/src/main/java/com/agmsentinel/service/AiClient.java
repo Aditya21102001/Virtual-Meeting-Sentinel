@@ -8,6 +8,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.BodyInserters;
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.Duration;
@@ -21,7 +22,18 @@ public class AiClient {
     private final WebClient web;
 
     public AiClient(@Value("${ai.service.url:http://localhost:8000}") String baseUrl) {
-        this.web = WebClient.builder().baseUrl(baseUrl).build();
+        // Raise WebClient's default 256KB in-memory buffer. fetchKnowledgeFile() reads a
+        // whole proxied PDF into a byte[], and real annual-report PDFs exceed 256KB — which
+        // otherwise throws DataBufferLimitException → 500 when a user opens a citation link.
+        // 32MB covers the 25MB upload ceiling (see application.yml) with headroom; the other
+        // calls return small JSON, so the larger limit costs nothing.
+        ExchangeStrategies strategies = ExchangeStrategies.builder()
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(32 * 1024 * 1024))
+                .build();
+        this.web = WebClient.builder()
+                .baseUrl(baseUrl)
+                .exchangeStrategies(strategies)
+                .build();
     }
 
     public IngestResult ingest(String questionId, String text, String attendeeId, float weight) {

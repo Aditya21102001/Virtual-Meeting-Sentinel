@@ -40,6 +40,8 @@ ai:
 
 jwt:
   secret: ${JWT_SECRET:change-me-to-a-long-random-string-in-prod-please}
+  legacy-secret: ${JWT_LEGACY_SECRET:}
+  legacy-secrets: ${JWT_LEGACY_SECRETS:}
   ttl-seconds: 28800
 
 # Where the SPA lives — Google OAuth bounces the browser back here with the token.
