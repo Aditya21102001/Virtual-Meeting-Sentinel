@@ -158,6 +158,14 @@ import {
 
       <!-- Manage -->
       <h2 class="section">Recordings</h2>
+      @if (serverError()) {
+        <div class="error-box">
+          {{ serverError() }}
+          <div style="margin-top:8px">
+            <button class="ghost" (click)="retryConnection()">Try again</button>
+          </div>
+        </div>
+      }
       @if (!cards().length) {
         <div class="card"><span class="muted">Nothing uploaded yet.</span></div>
       }
@@ -465,6 +473,10 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   readonly working = signal<string | null>(null);
   readonly confirming = signal<string | null>(null);
 
+  /** Set when polling gives up, so the page explains the outage instead of failing silently. */
+  readonly serverError = signal('');
+  private consecutiveFailures = 0;
+
   private poller: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
@@ -481,9 +493,15 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
     this.refreshStatus();
     this.refreshList();
     // Poll only while something is mid-transcode; the interval stops itself otherwise.
+    // 5 s, not 2 s, and only when it can tell you something new: a transcode reports whole
+    // percentages, so polling faster than the number changes just triples the request count. Also
+    // skipped for a hidden tab — a background page polling a free-tier host consumes its monthly
+    // instance-hours while nobody is watching.
     this.poller = setInterval(() => {
+      if (document.hidden) return;
+      if (this.videos.uploading()) return;   // the upload's own progress events already drive the UI
       if (this.cards().some((card) => card.video.status === 'PROCESSING')) this.refreshList();
-    }, 2000);
+    }, 5000);
   }
 
   ngOnDestroy(): void {
@@ -499,8 +517,52 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
     this.videos.status().subscribe({ next: (s) => this.status.set(s) });
   }
 
+  /**
+   * Refresh the list, and back off when the server is unreachable.
+   *
+   * <p>The 2 s poll had no error branch, so a backend that was down (spun down, restarting, or
+   * crashed) got hammered thirty times a minute, each failure throwing an unhandled rejection into
+   * the console. Worse, the retries kept the page silent about the real problem. After three
+   * consecutive failures polling stops and the reason is shown instead.
+   */
   private refreshList(): void {
-    this.videos.listAll().subscribe({ next: (cards) => this.cards.set(cards) });
+    this.videos.listAll().subscribe({
+      next: (cards) => {
+        this.cards.set(cards);
+        this.consecutiveFailures = 0;
+        this.serverError.set('');
+      },
+      error: (err) => {
+        this.consecutiveFailures++;
+        if (this.consecutiveFailures >= 3) {
+          if (this.poller) {
+            clearInterval(this.poller);
+            this.poller = null;
+          }
+          this.serverError.set(this.describeOutage(err));
+        }
+      },
+    });
+  }
+
+  /**
+   * Name the outage from what the browser could observe. A cross-origin request to a server that
+   * never answered surfaces as status 0 with a CORS complaint, which reads as a configuration
+   * problem — it almost never is. The server simply is not up.
+   */
+  private describeOutage(err: unknown): string {
+    const status = (err as { status?: number })?.status;
+    if (status === 0) {
+      return 'Cannot reach the server. It is most likely asleep or restarting — free hosting tiers '
+           + 'suspend a service after a period of inactivity and it can take a minute to wake, or '
+           + 'fail to wake if it crashes on boot. Any "CORS" error in the console is a side effect '
+           + 'of that, not the cause. Check the server logs, then reload.';
+    }
+    if (status === 502 || status === 503 || status === 504) {
+      return `The server returned ${status}. It is starting up, overloaded, or crashing on boot — `
+           + 'check the server logs. Reload once it is back.';
+    }
+    return 'Could not load the video list. Reload to try again.';
   }
 
   /** How full database storage is, for the budget bar. */
@@ -550,6 +612,21 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
 
   cancelUpload(): void {
     this.videos.cancelUpload();
+  }
+
+  /** Clear the outage state and start polling again — for when the server has come back. */
+  retryConnection(): void {
+    this.consecutiveFailures = 0;
+    this.serverError.set('');
+    this.refreshStatus();
+    this.refreshList();
+    if (!this.poller) {
+      this.poller = setInterval(() => {
+        if (document.hidden) return;
+        if (this.videos.uploading()) return;
+        if (this.cards().some((card) => card.video.status === 'PROCESSING')) this.refreshList();
+      }, 5000);
+    }
   }
 
   // ---- manage --------------------------------------------------------------

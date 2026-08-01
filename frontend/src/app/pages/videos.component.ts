@@ -382,6 +382,12 @@ export class VideosComponent implements OnInit, OnDestroy {
   });
 
   private poller: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Stop polling this long after the page opens. A transcode that dies with the server leaves its
+   * row at a fixed percentage with nothing left to advance it, and without a deadline an open tab
+   * would poll that dead row for as long as it stayed open.
+   */
+  private readonly pollUntil = Date.now() + 30 * 60 * 1000;
 
   constructor(private videos: VideoService) {}
 
@@ -391,6 +397,13 @@ export class VideosComponent implements OnInit, OnDestroy {
     // of them are — otherwise a viewer would sit on a stale "Processing — 40%" until they reloaded
     // the page. The interval costs nothing once everything is READY: the check short-circuits.
     this.poller = setInterval(() => {
+      // Three conditions, all necessary. Nothing segmenting → nothing can change, so no request.
+      // Tab hidden → nobody is looking, and a background tab quietly polling a free-tier host
+      // burns its monthly instance-hours for no one's benefit. Past the deadline → the job is not
+      // coming back (a transcode killed with the server strands its row at a fixed percentage),
+      // and polling it forever is pure waste.
+      if (document.hidden) return;
+      if (Date.now() > this.pollUntil) return;
       if (this.cards().some((card) => this.isProcessing(card))) this.refresh(false);
     }, 5000);
   }
