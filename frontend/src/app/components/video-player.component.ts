@@ -878,6 +878,21 @@ export class VideoPlayerComponent implements OnDestroy {
 
   private eventsBound = false;
 
+  /**
+   * What actually justifies tearing down and reloading: a different recording, or the same one
+   * gaining a stream it did not have (a transcode finishing while it is on screen).
+   *
+   * <p>The effect below tracks this string rather than the `card` input, and that distinction is
+   * load-bearing. `card` is a record the parent replaces to update anything on it — a like count, a
+   * comment count — and a new object reference would re-run setup, which destroys the hls instance
+   * and restarts playback from zero. Liking a video mid-playback did exactly that. A computed only
+   * notifies when its *value* changes, so unrelated fields on the card are now inert.
+   */
+  private readonly loadKey = computed(() => {
+    const card = this.card();
+    return `${card.video.id}|${card.streamUrl ?? ''}`;
+  });
+
   constructor() {
     // `card()` is the ONE tracked dependency: when the library switches videos this re-runs, the old
     // hls instance is torn down, per-video state is reset, and the new stream loads into the same
@@ -887,8 +902,9 @@ export class VideoPlayerComponent implements OnDestroy {
     // element, and without this the effect would depend on them too — so nudging the volume slider
     // would re-run setup and restart the video from the beginning.
     effect((onCleanup) => {
-      const card = this.card();
+      this.loadKey();
       untracked(() => {
+        const card = this.card();
         const element = this.mediaRef().nativeElement;
         // Listeners belong to the element, not the video — bind them exactly once.
         if (!this.eventsBound) {

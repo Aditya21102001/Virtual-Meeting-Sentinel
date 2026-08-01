@@ -109,6 +109,14 @@ import {
 
           @if (shareNote()) {
             <p class="muted note">{{ shareNote() }}</p>
+            <input
+              class="share-link"
+              type="text"
+              readonly
+              [value]="shareLink()"
+              (click)="$any($event.target).select()"
+              aria-label="Shareable link"
+            />
           }
           @if (downloadNote()) {
             <p class="muted note">{{ downloadNote() }}</p>
@@ -364,6 +372,17 @@ import {
       }
       .liked {
         color: #fb7185;
+      }
+      .share-link {
+        width: 100%;
+        margin: 4px 0 0;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: #0b1220;
+        color: var(--muted);
+        font: inherit;
+        font-size: 13px;
       }
 
       /* ---- transcript ---- */
@@ -633,6 +652,8 @@ export class VideosComponent implements OnInit, OnDestroy {
 
   readonly liking = signal(false);
   readonly shareNote = signal('');
+  /** The generated link, shown so it can be copied by hand if the clipboard is unavailable. */
+  readonly shareLink = signal('');
 
   readonly commentsOpen = signal(false);
   readonly comments = signal<CommentView[]>([]);
@@ -747,6 +768,7 @@ export class VideosComponent implements OnInit, OnDestroy {
     this.downloadNote.set('');
     this.downloadError.set('');
     this.shareNote.set('');
+    this.shareLink.set('');
     this.commentsOpen.set(false);
     this.comments.set([]);
     this.commentBody.set('');
@@ -909,11 +931,52 @@ export class VideosComponent implements OnInit, OnDestroy {
     if (at > 0) url.searchParams.set('t', String(at));
     const link = url.toString();
 
-    // Clipboard access needs a secure context and can be denied; fall back to showing the link.
-    navigator.clipboard?.writeText(link).then(
-      () => this.shareNote.set(`Link copied${at > 0 ? ' — starts at ' + timecode(at) : ''}.`),
-      () => this.shareNote.set(link),
+    // Always shown, so there is something to copy by hand even when the clipboard is unavailable.
+    this.shareLink.set(link);
+    const from = at > 0 ? ` It starts at ${timecode(at)}.` : '';
+
+    void this.copyToClipboard(link).then((copied) =>
+      this.shareNote.set(
+        copied ? `Link copied.${from}` : `Copy this link to share.${from}`,
+      ),
     );
+  }
+
+  /**
+   * Copy text, by whichever route the browser allows.
+   *
+   * <p>`navigator.clipboard` is only exposed in a secure context — over plain HTTP it is `undefined`,
+   * not a rejecting promise. Calling `.then()` on it therefore threw a TypeError and the Share button
+   * appeared to do nothing at all, which is what made this look broken rather than unsupported.
+   *
+   * <p>`execCommand('copy')` is deprecated but is the only thing that works without a secure
+   * context, so it stays as the fallback; the link is displayed regardless if both routes fail.
+   */
+  private async copyToClipboard(text: string): Promise<boolean> {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // Denied by permissions policy, or the document was not focused. Try the fallback.
+    }
+    try {
+      const scratch = document.createElement('textarea');
+      scratch.value = text;
+      scratch.setAttribute('readonly', '');
+      // Off-screen but still selectable; display:none would make select() a no-op.
+      scratch.style.position = 'fixed';
+      scratch.style.top = '-1000px';
+      scratch.style.opacity = '0';
+      document.body.appendChild(scratch);
+      scratch.select();
+      const copied = document.execCommand('copy');
+      scratch.remove();
+      return copied;
+    } catch {
+      return false;
+    }
   }
 
   // ---- comments --------------------------------------------------------------

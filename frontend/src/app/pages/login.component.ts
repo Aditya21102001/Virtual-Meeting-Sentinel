@@ -138,7 +138,7 @@ export class LoginComponent implements OnInit {
   ngOnInit(): void {
     // Google OAuth redirect lands here with ?token=... — complete the session.
     const token = this.route.snapshot.queryParamMap.get('token');
-    if (token) { this.auth.completeLogin(token); this.router.navigate([this.dest()]); return; }
+    if (token) { this.auth.completeLogin(token); this.router.navigateByUrl(this.dest()); return; }
     // The auth interceptor redirects here with ?expired=1 when a stale/expired session is
     // rejected by the server — tell the user why they're back at the sign-in screen.
     if (this.route.snapshot.queryParamMap.get('expired')) {
@@ -171,7 +171,7 @@ export class LoginComponent implements OnInit {
         this.busy.set(false);
         if (r.status === 'AUTHENTICATED' && r.token) {
           this.auth.completeLogin(r.token);
-          this.router.navigate([this.mode() === 'register' ? '/security' : this.dest()]);
+          this.router.navigateByUrl(this.mode() === 'register' ? '/security' : this.dest());
         } else {
           this.mfaToken = r.mfaToken ?? '';
           this.methods.set(r.methods ?? []);
@@ -185,7 +185,7 @@ export class LoginComponent implements OnInit {
   verify(method: 'pin' | 'totp'): void {
     this.busy.set(true); this.error.set('');
     this.auth.verifyCode(this.mfaToken, method, this.code()).subscribe({
-      next: (r) => { this.auth.completeLogin(r.token); this.router.navigate([this.dest()]); },
+      next: (r) => { this.auth.completeLogin(r.token); this.router.navigateByUrl(this.dest()); },
       error: (e) => { this.busy.set(false); this.error.set(this.msg(e)); },
     });
   }
@@ -194,7 +194,7 @@ export class LoginComponent implements OnInit {
     this.busy.set(true); this.error.set('');
     try {
       const token = await this.auth.loginPasskey(this.mfaToken);
-      this.auth.completeLogin(token); this.router.navigate([this.dest()]);
+      this.auth.completeLogin(token); this.router.navigateByUrl(this.dest());
     } catch { this.busy.set(false); this.error.set('Passkey login failed or cancelled.'); }
   }
 
@@ -215,13 +215,30 @@ export class LoginComponent implements OnInit {
   verifyOtp(): void {
     this.busy.set(true); this.error.set('');
     this.auth.otpVerify(this.otpChannel(), this.otpDest(), this.code()).subscribe({
-      next: (r) => { this.auth.completeLogin(r.token); this.router.navigate([this.dest()]); },
+      next: (r) => { this.auth.completeLogin(r.token); this.router.navigateByUrl(this.dest()); },
       error: (e) => { this.busy.set(false); this.error.set(this.msg(e)); },
     });
   }
 
   /** Where to land after login: shareholders → Lounge, moderators/admins → board. */
-  private dest(): string { return this.auth.isShareholder() ? '/chat' : '/board'; }
+  /**
+   * Where to go after a successful sign-in.
+   *
+   * <p>Prefers the `returnUrl` a guard attached when it intercepted the visit, so a shared link
+   * survives the detour through this page. Falls back to the role's home.
+   *
+   * <p>Only app-relative paths are honoured. A `returnUrl` is attacker-controllable — it arrives in
+   * a query string — so accepting `//evil.example` or `https://evil.example` would turn this into an
+   * open redirect that borrows the site's credibility for a phishing page. A leading `//` is
+   * protocol-relative and therefore off-site, which is why it is rejected alongside absolute URLs.
+   */
+  private dest(): string {
+    const requested = this.route.snapshot.queryParamMap.get('returnUrl');
+    if (requested && requested.startsWith('/') && !requested.startsWith('//')) {
+      return requested;
+    }
+    return this.auth.isShareholder() ? '/chat' : '/board';
+  }
 
   private msg(e: any): string {
     return e?.error?.message || e?.error?.error || 'Something went wrong. Try again.';
