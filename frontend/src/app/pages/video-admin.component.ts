@@ -269,6 +269,12 @@ import {
             </div>
           }
 
+          @if (actionError(); as failure) {
+            @if (failure.id === card.video.id) {
+              <div class="error-box">{{ failure.message }}</div>
+            }
+          }
+
           <div class="row actions">
             @if (editing() !== card.video.id) {
               <button class="ghost" (click)="startEdit(card)">Edit details</button>
@@ -472,6 +478,8 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   editDescription = '';
   readonly working = signal<string | null>(null);
   readonly confirming = signal<string | null>(null);
+  /** Why the last action on a specific card failed, shown on that card. */
+  readonly actionError = signal<{ id: string; message: string } | null>(null);
 
   /** Set when polling gives up, so the page explains the outage instead of failing silently. */
   readonly serverError = signal('');
@@ -648,13 +656,30 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
 
   reprocess(card: VideoCard): void {
     this.working.set(card.video.id);
+    this.actionError.set(null);
     this.videos.reprocess(card.video.id).subscribe({
       next: () => {
         this.working.set(null);
         this.refreshList();
       },
-      error: () => this.working.set(null),
+      error: (err) => {
+        this.working.set(null);
+        // The server explains refusals precisely (a 409 says the original is gone and why).
+        // Swallowing that left the button looking broken and pushed the real answer into the
+        // browser console, where nobody using the app would ever see it.
+        this.actionError.set({ id: card.video.id, message: this.serverMessage(err) });
+      },
     });
+  }
+
+  /** Pull the server's own explanation out of an error response, falling back sensibly. */
+  private serverMessage(err: unknown): string {
+    const e = err as { status?: number; error?: { message?: string; error?: string } };
+    const fromBody = e?.error?.message ?? e?.error?.error;
+    if (fromBody) return fromBody;
+    if (e?.status === 0) return 'Could not reach the server — it may be asleep or restarting.';
+    if (e?.status) return `The server returned ${e.status}.`;
+    return 'That action failed.';
   }
 
   /** Two-step delete: the first click arms it, the second confirms. */
@@ -674,7 +699,10 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
         this.refreshList();
         this.refreshStatus();
       },
-      error: () => this.working.set(null),
+      error: (err) => {
+        this.working.set(null);
+        this.actionError.set({ id: card.video.id, message: this.serverMessage(err) });
+      },
     });
   }
 }

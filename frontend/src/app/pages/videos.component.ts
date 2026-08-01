@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit, computed, signal, viewChild } from '@angular/core';
+import { Component, OnInit, computed, signal, viewChild } from '@angular/core';
 import { VideoPlayerComponent } from '../components/video-player.component';
 import {
   SegmentView,
@@ -141,6 +141,15 @@ import {
       <!-- Library grid -->
       @if (cards().length) {
         <h2 class="section">{{ selected() ? 'More recordings' : 'Library' }}</h2>
+        @if (anyProcessing()) {
+          <p class="muted" style="margin:-4px 0 10px">
+            Some recordings are still being prepared. This page does not poll the server —
+            <button class="link" type="button" (click)="reload()" [disabled]="refreshing()">
+              {{ refreshing() ? 'refreshing…' : 'refresh' }}
+            </button>
+            when you want the latest.
+          </p>
+        }
         <div class="grid">
           @for (card of others(); track card.video.id) {
             <button
@@ -358,7 +367,7 @@ import {
     `,
   ],
 })
-export class VideosComponent implements OnInit, OnDestroy {
+export class VideosComponent implements OnInit {
   readonly humanBytes = humanBytes;
   readonly timecode = timecode;
 
@@ -381,35 +390,31 @@ export class VideosComponent implements OnInit, OnDestroy {
     return this.cards().filter((card) => card.video.id !== playing);
   });
 
-  private poller: ReturnType<typeof setInterval> | null = null;
-  /**
-   * Stop polling this long after the page opens. A transcode that dies with the server leaves its
-   * row at a fixed percentage with nothing left to advance it, and without a deadline an open tab
-   * would poll that dead row for as long as it stayed open.
-   */
-  private readonly pollUntil = Date.now() + 30 * 60 * 1000;
+  /** True while a manual refresh is in flight, so the button can show it is doing something. */
+  readonly refreshing = signal(false);
+
+  /** Whether anything in the library is still being prepared — gates the refresh hint. */
+  readonly anyProcessing = computed(() => this.cards().some((card) => this.isProcessing(card)));
 
   constructor(private videos: VideoService) {}
 
+  /**
+   * Loads once. Deliberately NOT polled.
+   *
+   * <p>A viewer does not need live progress on someone else's upload — that is the uploader's
+   * concern, and the admin screen already shows it. Polling here meant every open library tab hit
+   * the API every few seconds for as long as anything was mid-transcode; and because a transcode
+   * killed with the server never leaves {@code PROCESSING}, "temporarily" became "forever". On a
+   * host billed by instance-hours, idle tabs quietly keeping the service awake is a real cost.
+   */
   ngOnInit(): void {
     this.refresh(true);
-    // The library now includes recordings that are still segmenting, so keep it fresh while any
-    // of them are — otherwise a viewer would sit on a stale "Processing — 40%" until they reloaded
-    // the page. The interval costs nothing once everything is READY: the check short-circuits.
-    this.poller = setInterval(() => {
-      // Three conditions, all necessary. Nothing segmenting → nothing can change, so no request.
-      // Tab hidden → nobody is looking, and a background tab quietly polling a free-tier host
-      // burns its monthly instance-hours for no one's benefit. Past the deadline → the job is not
-      // coming back (a transcode killed with the server strands its row at a fixed percentage),
-      // and polling it forever is pure waste.
-      if (document.hidden) return;
-      if (Date.now() > this.pollUntil) return;
-      if (this.cards().some((card) => this.isProcessing(card))) this.refresh(false);
-    }, 5000);
   }
 
-  ngOnDestroy(): void {
-    if (this.poller) clearInterval(this.poller);
+  /** Explicit user-initiated reload, for when a recording was still processing. */
+  reload(): void {
+    this.refreshing.set(true);
+    this.refresh(false);
   }
 
   private refresh(initial: boolean): void {
@@ -417,6 +422,8 @@ export class VideosComponent implements OnInit, OnDestroy {
       next: (cards) => {
         this.cards.set(cards);
         this.loading.set(false);
+        this.refreshing.set(false);
+        this.error.set('');
         // Keep the open player in sync — a video that finished while being watched in the grid
         // should pick up its stream URL and ticket rather than staying a dead placeholder.
         const open = this.selected();
@@ -425,11 +432,14 @@ export class VideosComponent implements OnInit, OnDestroy {
           if (fresh && fresh.streamUrl && !open.streamUrl) this.selected.set(fresh);
         }
       },
-      error: () => {
-        if (initial) {
-          this.error.set('Could not load the recordings library. Is the server running?');
-        }
+      error: (err) => {
         this.loading.set(false);
+        this.refreshing.set(false);
+        this.error.set(
+          err?.status === 0 || err?.status >= 502
+            ? 'Cannot reach the server — it may be asleep or restarting. Try again in a moment.'
+            : 'Could not load the recordings library.',
+        );
       },
     });
   }
