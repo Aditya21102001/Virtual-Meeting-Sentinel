@@ -405,7 +405,9 @@ and live cluster state. They're linked by `cluster_id`.
 | POST   | `/api/auth/login`          | public       | Get a demo JWT                     |
 | POST   | `/api/questions/submit-question`           | attendee/mod | Submit a question                  |
 | POST   | `/api/clusters/question-board`            | moderator    | Ranked board (with citations)      |
-| POST   | `/api/clusters/draft-answer` | moderator    | Draft a grounded answer            |
+| POST   | `/api/clusters/draft-answer` | moderator    | Ask the model to draft / retry     |
+| POST   | `/api/clusters/save-answer` | moderator    | Write the answer by hand           |
+| POST   | `/api/clusters/awaiting-answers` | moderator | Clusters the model could not answer |
 | POST   | `/api/admin/knowledge-status`     | moderator    | Knowledge-base status              |
 | POST   | `/api/admin/upload-annual-report`     | moderator    | Upload annual report (PDF)         |
 | POST   | `/api/admin/upload-question-bank` | moderator    | Upload question bank               |

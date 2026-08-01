@@ -16,6 +16,9 @@ export interface Citation {
   snippet: string;
 }
 
+/** How the answer on a cluster came to be, and whether anyone still needs to act. */
+export type DraftStatus = 'PENDING' | 'DRAFTED' | 'NEEDS_MANUAL' | 'MANUAL';
+
 export interface ClusterView {
   cluster_id: string;
   representative_question: string;
@@ -23,6 +26,12 @@ export interface ClusterView {
   priority_score: number;
   draft: string | null;
   citations: Citation[];
+  /** PENDING = the model is still working; NEEDS_MANUAL = it gave up, write this one. */
+  draft_status: DraftStatus | null;
+  /** Why automatic drafting gave up — shown so the moderator knows what happened. */
+  draft_error: string | null;
+  /** Who wrote it, when a moderator answered by hand. */
+  answered_by: string | null;
 }
 
 export interface KnowledgeStatus {
@@ -101,6 +110,18 @@ export class ApiService {
     return this.http.post(
       `${environment.apiBase}/api/clusters/draft-answer`,
       { clusterId, representativeQuestion },
+      { headers: this.authHeaders() },
+    );
+  }
+
+  /**
+   * Store an answer a moderator wrote themselves — the fallback for when the model could not.
+   * Saved as MANUAL, which automatic drafting will never overwrite.
+   */
+  saveAnswer(clusterId: string, answer: string): Observable<ClusterView> {
+    return this.http.post<ClusterView>(
+      `${environment.apiBase}/api/clusters/save-answer`,
+      { clusterId, answer },
       { headers: this.authHeaders() },
     );
   }

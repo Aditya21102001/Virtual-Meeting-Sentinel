@@ -31,6 +31,36 @@ CREATE TABLE IF NOT EXISTS clusters (
 CREATE INDEX IF NOT EXISTS clusters_centroid_idx
     ON clusters USING ivfflat (centroid vector_cosine_ops) WITH (lists = 100);
 
+-- The backend's record of each cluster and the answer prepared for it.
+--
+-- Separate from `clusters` above because the two have different owners: that table belongs to the
+-- AI service (it carries the pgvector centroid), this one to the Spring backend. One table written
+-- by both would be two services racing on the same row.
+--
+-- It exists because the AI service keeps its clusters — drafts included — in memory, so everything
+-- it knows disappears when it restarts, which on a free tier is whenever it has been idle. The
+-- questions always survived; the answers did not, and a moderator's hand-written answer would have
+-- been the most expensive thing to lose. Hibernate's ddl-auto=update creates this too; the DDL is
+-- here so a fresh Postgres/Neon database matches exactly.
+CREATE TABLE IF NOT EXISTS cluster_drafts (
+    cluster_id              UUID PRIMARY KEY,          -- the AI service's id, used verbatim
+    representative_question TEXT        NOT NULL,
+    cluster_size            INT         NOT NULL DEFAULT 1,
+    priority_score          DOUBLE PRECISION NOT NULL DEFAULT 0,
+    draft_answer            TEXT,
+    citations_json          TEXT,                      -- JSON, so the shape can follow the AI service
+    -- PENDING = the model is still working · DRAFTED = it answered
+    -- NEEDS_MANUAL = it gave up, a moderator must write this one · MANUAL = a moderator did
+    draft_status            VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    draft_error             TEXT,                      -- why the last automatic attempt failed
+    attempts                INT         NOT NULL DEFAULT 0,
+    answered_by             TEXT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS cluster_drafts_status_idx ON cluster_drafts (draft_status);
+
 CREATE INDEX IF NOT EXISTS questions_cluster_idx ON questions (cluster_id);
 
 -- ---------------------------------------------------------------------------

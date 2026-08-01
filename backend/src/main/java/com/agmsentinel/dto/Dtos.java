@@ -29,13 +29,23 @@ public final class Dtos {
     public record DraftResult(String cluster_id, String answer, List<Citation> citations) { }
 
     // ---- AI service /clusters item (board) -----------------------------------
+    //
+    // snake_case because the first six fields are deserialised straight from the Python service.
+    // The last three are added by the backend on the way out — the AI service knows nothing about
+    // them, so Jackson simply leaves them null when reading its response.
     public record ClusterView(
             String cluster_id,
             String representative_question,
             int size,
             double priority_score,
             String draft,
-            List<Citation> citations
+            List<Citation> citations,
+            /** PENDING · DRAFTED · NEEDS_MANUAL · MANUAL — see ClusterDraft.DraftStatus. */
+            String draft_status,
+            /** Why automatic drafting gave up, shown to the moderator being asked to step in. */
+            String draft_error,
+            /** Who wrote it, when a moderator answered by hand. */
+            String answered_by
     ) { }
 
     // ---- broadcast to moderators over WebSocket ------------------------------
