@@ -97,6 +97,15 @@ public class VideoTranscodeService {
         if (cached != null) return cached;
         synchronized (this) {
             if (toolsPresent != null) return toolsPresent;
+            if (!props.getTools().isEnabled()) {
+                // Explicitly switched off for this host. Checked before probing so the answer does
+                // not depend on whether the binary happens to be installed.
+                log.info("Video segmentation is disabled (video.tools.enabled=false). Uploads will "
+                         + "be served progressively over HTTP Range.");
+                toolsVersion = "disabled";
+                toolsPresent = false;
+                return false;
+            }
             boolean ok = false;
             try {
                 ProcessResult ffmpeg = run(List.of(props.getTools().getFfmpeg(), "-version"), 20);

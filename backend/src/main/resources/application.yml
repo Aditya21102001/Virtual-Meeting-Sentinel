@@ -26,6 +26,27 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/sentinel}
     username: ${SPRING_DATASOURCE_USERNAME:sentinel}
     password: ${SPRING_DATASOURCE_PASSWORD:sentinel}
+    hikari:
+      # SURVIVE A SLEEPING DATABASE AT STARTUP.
+      #
+      # Serverless Postgres (Neon, Supabase, Aurora Serverless) suspends after inactivity and needs
+      # several seconds to resume. HikariCP defaults initialization-fail-timeout to 1 ms — it tries
+      # once, fails, and Spring aborts the whole context because entityManagerFactory cannot be
+      # built. When the app host ALSO sleeps (any free PaaS), waking both at once hits exactly this:
+      # the container comes up, the database is still cold, and the app dies before it can serve a
+      # single request. The platform then reports a wake/boot failure, and every browser request
+      # returns 502/503 with no CORS headers — which looks like a CORS bug and is not one.
+      #
+      # A positive timeout makes Hikari keep retrying for that long instead of giving up instantly.
+      initialization-fail-timeout: ${DB_INIT_FAIL_TIMEOUT_MS:60000}
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:30000}
+      # Small pool: a free-tier instance has little memory, and managed free Postgres tiers cap
+      # concurrent connections far below Hikari's default of 10.
+      maximum-pool-size: ${DB_MAX_POOL_SIZE:5}
+      minimum-idle: ${DB_MIN_IDLE:1}
+      # Drop idle connections so a suspending database doesn't leave the pool holding dead sockets.
+      idle-timeout: 300000
+      max-lifetime: 900000
   jpa:
     hibernate:
       ddl-auto: update # tables also created by ai-service/db/init.sql; update is safe
@@ -74,6 +95,12 @@ video:
     preset: ${VIDEO_X264_PRESET:veryfast}
     thumbnail-interval-seconds: ${VIDEO_THUMB_INTERVAL:10}
   tools:
+    # Set false to forbid transcoding on this host even if ffmpeg is installed. Transcoding is by
+    # far the heaviest thing this app does: a multi-rung H.264 encode will exhaust a small
+    # container's memory and get the process killed, which the platform reports as a 502/503 and
+    # the browser reports as a CORS error. On a ~512 MB free instance, set this to false and upload
+    # MP4 (H.264) or WebM, which browsers play without any conversion.
+    enabled: ${VIDEO_TRANSCODE_ENABLED:true}
     # FFmpeg does the segmentation. Without it, uploads still play — served progressively over
     # HTTP Range instead of as an adaptive ladder — and can be re-processed once it's installed.
     ffmpeg: ${FFMPEG_PATH:ffmpeg}

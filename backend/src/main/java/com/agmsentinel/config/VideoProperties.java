@@ -160,6 +160,20 @@ public class VideoProperties {
     }
 
     public static class Tools {
+        /**
+         * Whether this host is allowed to transcode at all.
+         *
+         * <p>Set false to force progressive delivery even when ffmpeg is installed. Transcoding is
+         * the single most resource-hungry thing the application does — a multi-rung H.264 encode
+         * will exhaust a small container's memory and get the whole process killed, taking every
+         * in-flight request with it. On a host that cannot afford that, refusing to start is far
+         * better than discovering it through a dead container.
+         *
+         * <p>Uploads still work with this off; they are served whole over HTTP Range, so the source
+         * must be in a format browsers can decode (MP4/H.264 or WebM).
+         */
+        private boolean enabled = true;
+
         /** ffmpeg executable (on PATH, or an absolute path). */
         private String ffmpeg = "ffmpeg";
         /** ffprobe executable (on PATH, or an absolute path). */
@@ -169,6 +183,8 @@ public class VideoProperties {
         /** How many videos may transcode at once. Transcoding is CPU-bound — keep this small. */
         private int workers = 1;
 
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
         public String getFfmpeg() { return ffmpeg; }
         public void setFfmpeg(String ffmpeg) { this.ffmpeg = ffmpeg; }
         public String getFfprobe() { return ffprobe; }
