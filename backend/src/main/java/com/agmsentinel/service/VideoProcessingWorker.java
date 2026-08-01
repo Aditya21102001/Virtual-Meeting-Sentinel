@@ -88,6 +88,16 @@ public class VideoProcessingWorker {
         if (recovered > 0) {
             log.warn("Marked {} interrupted video transcode(s) as FAILED at startup.", recovered);
         }
+        // Same class of problem, different cause: the transcode above died with the process,
+        // whereas these rows outlived their files entirely. Both leave the catalogue describing
+        // something that no longer exists, and both are only detectable at boot.
+        int missing = library.flagMissingMedia();
+        if (missing > 0) {
+            log.error("{} recording(s) have no media left in storage. This host is not keeping "
+                      + "files across restarts — mount a persistent volume, or set "
+                      + "VIDEO_STORAGE_MODE=database to store media in the database instead.",
+                      missing);
+        }
     }
 
     void process(UUID videoId) {

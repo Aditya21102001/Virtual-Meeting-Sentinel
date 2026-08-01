@@ -137,6 +137,48 @@ public class VideoLibraryService {
         return stranded.size();
     }
 
+    /**
+     * Flag recordings whose media has vanished from underneath them.
+     *
+     * <p>The catalogue row lives in the database and the bytes live somewhere else, so the two can
+     * disagree. On a host with no persistent volume they reliably do: the container filesystem is
+     * reset on every restart, taking every uploaded file with it, while the rows survive in an
+     * external database. The library then advertises recordings that cannot play and cannot be
+     * re-processed — the only symptom being an opaque 409 when someone tries.
+     *
+     * <p>Checking the <em>source</em> specifically is what makes the diagnosis actionable: if that
+     * is gone, the recording is unrecoverable and the row is the only thing left of it.
+     *
+     * @return how many rows were flagged
+     */
+    @Transactional
+    public int flagMissingMedia() {
+        int flagged = 0;
+        for (Video video : videos.findAll()) {
+            if (video.getStatus() != VideoStatus.READY) continue;
+            if (video.getSourceRel() != null && media.exists(video, video.getSourceRel())) continue;
+            // A segmented video can still play from its segments even with the source discarded,
+            // which is the normal state of database storage with keep-source=false.
+            if (video.getMasterPlaylistRel() != null
+                    && media.exists(video, video.getMasterPlaylistRel())) {
+                continue;
+            }
+            log.warn("Video {} ({}) has no media left in {} storage — flagging it.",
+                     video.getId(), video.getTitle(), video.getStorageMode());
+            video.setStatus(VideoStatus.FAILED);
+            video.setErrorMessage(
+                    "The media for this recording is missing from storage, so it can no longer be "
+                    + "played or re-processed. This happens when the server has no persistent disk: "
+                    + "a restart wipes the container filesystem while the database row survives. "
+                    + "Delete this entry and re-upload. To stop it recurring, mount a persistent "
+                    + "volume, or set VIDEO_STORAGE_MODE=database so the media is kept in the "
+                    + "database alongside the row.");
+            videos.save(video);
+            flagged++;
+        }
+        return flagged;
+    }
+
     @Transactional(readOnly = true)
     public Video get(UUID id) {
         return videos.findWithRenditionsById(id)
