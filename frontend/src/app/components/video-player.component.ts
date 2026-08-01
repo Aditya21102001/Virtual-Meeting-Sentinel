@@ -4,13 +4,21 @@ import {
   OnDestroy,
   computed,
   effect,
+  inject,
   input,
   signal,
   untracked,
   viewChild,
 } from '@angular/core';
 import Hls, { ErrorData, Events, Level } from 'hls.js';
-import { VideoCard, timecode } from '../services/video.service';
+import { PlaybackProgressService } from '../services/playback-progress.service';
+import {
+  SegmentLocation,
+  VideoCard,
+  VideoService,
+  humanBytes,
+  timecode,
+} from '../services/video.service';
 
 /** One entry in the quality menu. `levelIndex` is -1 for Auto. */
 interface QualityOption {
@@ -78,6 +86,28 @@ interface QualityOption {
           <div class="fatal-title">Playback failed</div>
           <p>{{ fatalError() }}</p>
           <button type="button" (click)="retry()">Retry</button>
+        </div>
+      }
+
+      <!--
+        Resume notice. Playback has already started at the right place by the time this renders —
+        it exists so the jump is explained rather than surprising, and so there is a way back.
+        The segment line arrives a moment later from the server's index lookup.
+      -->
+      @if (resumedFrom() !== null) {
+        <div class="resume-note">
+          <span class="resume-main">Resumed from {{ timecode(resumedFrom()!) }}</span>
+          @if (resumeLocation(); as at) {
+            <span class="resume-detail">
+              segment {{ at.segment.seq }} of {{ at.segmentCount }} ·
+              {{ at.rendition }} · {{ bytes(at.byteOffset) }} into
+              {{ bytes(at.renditionBytes) }}
+            </span>
+          }
+          <button class="resume-action" type="button" (click)="startOver()">Start over</button>
+          <button class="icon" type="button" (click)="dismissResumeNotice()" aria-label="Dismiss">
+            ✕
+          </button>
         </div>
       }
 
@@ -340,6 +370,43 @@ interface QualityOption {
         max-width: 420px;
       }
 
+      /* ---- resume notice ---- */
+      .resume-note {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        right: 10px;
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 4px 10px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: #0f172aee;
+        border: 1px solid #334155;
+        font-size: 13px;
+        /* Above the video, below the fatal-error overlay and the controls. */
+        z-index: 2;
+      }
+      .resume-main {
+        font-weight: 600;
+      }
+      .resume-detail {
+        color: var(--muted);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+      .resume-action {
+        margin-left: auto;
+        background: none;
+        border: none;
+        color: #93c5fd;
+        cursor: pointer;
+        font: inherit;
+        padding: 0;
+        text-decoration: underline;
+      }
+
       /* ---- stats ---- */
       .stats {
         position: absolute;
@@ -582,6 +649,7 @@ export class VideoPlayerComponent implements OnDestroy {
 
   readonly SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
   readonly timecode = timecode;
+  readonly bytes = humanBytes;
   readonly pipSupported = typeof document !== 'undefined' && 'pictureInPictureEnabled' in document;
 
   private readonly mediaRef = viewChild.required<ElementRef<HTMLVideoElement>>('media');
@@ -699,6 +767,28 @@ export class VideoPlayerComponent implements OnDestroy {
     };
   });
 
+  // ---- resume ----------------------------------------------------------------
+
+  private readonly progress = inject(PlaybackProgressService);
+  private readonly videos = inject(VideoService);
+
+  /** Set when this video started somewhere other than zero, so the UI can offer "start over". */
+  readonly resumedFrom = signal<number | null>(null);
+  /** Where the resume landed in the segment index. Arrives after playback has already begun. */
+  readonly resumeLocation = signal<SegmentLocation | null>(null);
+
+  /** Ticks of the 500 ms stats timer since the last write; see {@link rememberPosition}. */
+  private sinceLastSave = 0;
+
+  /**
+   * The video currently loaded into the element — <b>not</b> {@code card()}.
+   *
+   * <p>When the library switches recordings, the effect's cleanup runs after the signal has already
+   * changed, so reading {@code card()} during teardown yields the video being switched *to*. Saving
+   * the outgoing playhead under that id would stamp one recording's position onto another.
+   */
+  private activeVideoId: string | null = null;
+
   private hls: Hls | null = null;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
   private statsTimer: ReturnType<typeof setInterval> | null = null;
@@ -756,6 +846,10 @@ export class VideoPlayerComponent implements OnDestroy {
     this.bufferAhead.set(0);
     this.openMenu.set(null);
     this.controlsVisible.set(true);
+    this.resumedFrom.set(null);
+    this.resumeLocation.set(null);
+    this.sinceLastSave = 0;
+    this.activeVideoId = card.video.id;
   }
 
   ngOnDestroy(): void {
@@ -777,17 +871,58 @@ export class VideoPlayerComponent implements OnDestroy {
     element.volume = this.volume();
     element.playbackRate = this.speed();
 
+    // Resolved BEFORE anything is fetched. That ordering is the whole trick — see startHls.
+    const resumeAt = this.progress.resumeAt(card.video.id, card.video.durationSeconds);
+    if (resumeAt !== null) {
+      this.resumedFrom.set(resumeAt);
+      this.currentTime.set(resumeAt);
+      this.locateResumePoint(card, resumeAt);
+    }
+
     if (card.adaptive && Hls.isSupported()) {
-      this.startHls(element, source);
+      this.startHls(element, source, resumeAt);
     } else {
       // Safari plays HLS natively, and progressive files are a plain src with Range requests.
+      // Neither exposes a "start here" hook, so the seek has to happen once metadata exists.
+      // Native HLS then discards the first segment it fetched; there is no way around that
+      // without controlling the requests, which is exactly what hls.js gives us below.
       element.src = source;
+      if (resumeAt !== null) {
+        element.addEventListener(
+          'loadedmetadata',
+          () => { element.currentTime = resumeAt; },
+          { once: true },
+        );
+      }
       if (this.autoplay()) void element.play().catch(() => undefined);
     }
   }
 
-  private startHls(element: HTMLVideoElement, source: string): void {
+  /**
+   * Ask the server which segment the resume landed in, purely to show it.
+   *
+   * <p>Fire-and-forget on purpose: hls.js resolves the same seek locally from the playlist, so
+   * waiting on this round-trip would delay playback to display a label. A failure is silent — the
+   * video is already playing, and the absence of a caption is not worth an error.
+   */
+  private locateResumePoint(card: VideoCard, seconds: number): void {
+    if (!card.adaptive) return;
+    this.videos.segmentAt(card.video.id, seconds).subscribe({
+      next: (location) => this.resumeLocation.set(location),
+      error: () => this.resumeLocation.set(null),
+    });
+  }
+
+  /**
+   * @param resumeAt second to begin at, or null for the beginning
+   */
+  private startHls(element: HTMLVideoElement, source: string, resumeAt: number | null): void {
     const hls = new Hls({
+      // Nothing loads until startLoad() below. This is what makes resuming cost one segment
+      // instead of two: left to itself hls.js begins fetching fragment 0 the moment the manifest
+      // parses, so setting currentTime afterwards throws that download away and then stalls while
+      // the real fragment arrives — which is the "buffering" a resume is supposed to avoid.
+      autoStartLoad: false,
       // Bounded look-ahead. This is the setting that keeps playback from turning into a download:
       // never hold more than ~30 s / 60 MB of video, however long the recording is.
       maxBufferLength: 30,
@@ -813,6 +948,10 @@ export class VideoPlayerComponent implements OnDestroy {
     hls.on(Events.MANIFEST_PARSED, (_event, data) => {
       this.levels.set([...data.levels]);
       this.fatalError.set(null);
+      // Where loading actually begins, and the documented place to call it with autoStartLoad off:
+      // the master playlist is parsed, so hls.js knows the levels, and the FIRST fragment it asks
+      // for is the one covering `resumeAt`. -1 means "from the start".
+      hls.startLoad(resumeAt ?? -1);
       if (this.autoplay()) void element.play().catch(() => undefined);
     });
 
@@ -824,6 +963,7 @@ export class VideoPlayerComponent implements OnDestroy {
     hls.on(Events.FRAG_BUFFERED, () => this.segmentsLoaded.update((n) => n + 1));
     hls.on(Events.ERROR, (_event, data) => this.onHlsError(data));
 
+    // Loads the master playlist only; fragments wait for startLoad() in MANIFEST_PARSED above.
     hls.loadSource(source);
     hls.attachMedia(element);
   }
@@ -866,10 +1006,16 @@ export class VideoPlayerComponent implements OnDestroy {
     element.addEventListener('pause', () => {
       this.playing.set(false);
       this.wakeControls();
+      this.rememberPosition(true);   // pausing is the likeliest moment to close the tab
     });
     element.addEventListener('ended', () => {
       this.playing.set(false);
       this.controlsVisible.set(true);
+      // Watched to the end: the next visit should start at the beginning, not two seconds before
+      // the credits. Also clears the "resumed from" caption.
+      this.clearResumePoint();
+      this.resumedFrom.set(null);
+      this.resumeLocation.set(null);
     });
     element.addEventListener('waiting', () => this.buffering.set(true));
     element.addEventListener('playing', () => this.buffering.set(false));
@@ -942,7 +1088,47 @@ export class VideoPlayerComponent implements OnDestroy {
       if (this.hls) this.bandwidth.set(this.hls.bandwidthEstimate ?? 0);
       const quality = element.getVideoPlaybackQuality?.();
       if (quality) this.droppedFrames.set(quality.droppedVideoFrames);
+      this.rememberPosition(false);
     }, 500);
+  }
+
+  /**
+   * Persist the playhead so the next visit can resume.
+   *
+   * <p>Piggy-backs on the existing 500 ms stats timer but only writes every tenth tick — a
+   * `localStorage` write is synchronous and JSON-serialises the whole store, which is not something
+   * to do twice a second for the sake of five seconds' precision. `force` skips the throttle for
+   * the moments that might be the last one we get: a pause, or the component going away.
+   */
+  private rememberPosition(force: boolean): void {
+    if (!force && ++this.sinceLastSave < 10) return;
+    this.sinceLastSave = 0;
+
+    const element = this.mediaRef().nativeElement;
+    const seconds = element.currentTime;
+    const total = element.duration;
+    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    if (element.ended) return;   // 'ended' clears the point; do not immediately re-save it
+    if (!this.activeVideoId) return;
+    this.progress.save(this.activeVideoId, seconds, Number.isFinite(total) ? total : 0);
+  }
+
+  /** Discard the resume point and jump back to the beginning. */
+  startOver(): void {
+    this.clearResumePoint();
+    this.resumedFrom.set(null);
+    this.resumeLocation.set(null);
+    this.seekTo(0);
+  }
+
+  private clearResumePoint(): void {
+    if (this.activeVideoId) this.progress.clear(this.activeVideoId);
+  }
+
+  /** Dismiss the "resumed from…" caption without moving the playhead. */
+  dismissResumeNotice(): void {
+    this.resumedFrom.set(null);
+    this.resumeLocation.set(null);
   }
 
   /** Seconds of contiguous buffer in front of the playhead — how much stall headroom there is. */
@@ -969,6 +1155,13 @@ export class VideoPlayerComponent implements OnDestroy {
   }
 
   private teardown(): void {
+    // Last chance to record where they got to: this runs when the card switches and on destroy.
+    // Guarded because teardown can also run before the view exists.
+    try {
+      this.rememberPosition(true);
+    } catch {
+      // No element yet, or storage refused. Neither should block teardown.
+    }
     if (this.rafHandle) cancelAnimationFrame(this.rafHandle);
     this.rafHandle = 0;
     if (this.statsTimer) clearInterval(this.statsTimer);

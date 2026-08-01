@@ -286,9 +286,12 @@ SELECT * FROM video_segments
 ```
 
 That is `POST /api/videos/find-segment-at` with `{"seconds": 1290}` — "which slice covers
-21:30". The upper bound
-matters: without it, any position past the end of the video would return the final segment and a
-nonsense timestamp would look like a valid seek target.
+21:30". The upper bound matters: without it, any position past the end of the video would return the
+final segment and a nonsense timestamp would look like a valid seek target.
+
+It answers with the position as well as the slice — `segment 215 of 271`, `248 MB` into the rung —
+using one aggregate over `byte_size` for everything before it. [Resume](#resuming-a-recording) calls
+it, and displays exactly that.
 
 DDL is in [ai-service/db/init.sql](ai-service/db/init.sql). Hibernate's `ddl-auto=update` also
 creates these tables; the explicit DDL exists so a fresh Neon/Postgres database matches exactly.
@@ -381,7 +384,9 @@ and playback still work.
 | POST | `/api/videos/list-library` | catalogue of READY videos, each with a ticket + media URLs |
 | POST | `/api/videos/video-details` | one entry |
 | POST | `/api/videos/list-segments` | the segment index |
-| POST | `/api/videos/find-segment-at` | which slice covers that second |
+| POST | `/api/videos/find-segment-at` | which slice covers that second, + its position and byte offset |
+| POST | `/api/videos/prepare-download` | resolve what a download will produce |
+| GET  | `/api/videos/{id}/download?t=` | save the original, or `&rendition=` to join a rung's segments |
 
 ### Media (ticket in the URL; no auth header possible)
 
@@ -440,6 +445,62 @@ Two implementation notes:
 
 The two video routes are lazy-loaded, keeping hls.js (~250 kB) out of the initial bundle: initial
 transfer stays at ~112 kB for members who never open a recording.
+
+### Resuming a recording
+
+Positions are kept in `localStorage` by
+[PlaybackProgressService](frontend/src/app/services/playback-progress.service.ts) — per browser, not
+per account. A resume point is a convenience, not something worth a table, a migration and a write on
+every `timeupdate`; moving it server-side later means swapping two methods and nothing else.
+
+Rules, so a resume is never surprising: under 15 s in is ignored (resuming someone four seconds in
+looks like a bug), within 20 s of the end starts over instead, watching to the end clears the point,
+and the store is capped at 50 entries, oldest evicted.
+
+**The part that matters is the ordering.** The obvious implementation restores the position once the
+manifest has parsed:
+
+```ts
+hls.on(Events.MANIFEST_PARSED, () => { element.currentTime = 1290; });   // ✗ costs two segments
+```
+
+By then hls.js has already begun fetching fragment 0. That download is thrown away, the buffer is
+flushed, and playback stalls waiting for the fragment it actually needs — which is precisely the
+buffering a resume is supposed to avoid. So the resume point is resolved *before* anything loads and
+handed to hls.js instead:
+
+```ts
+const hls = new Hls({ autoStartLoad: false, /* … */ });
+hls.on(Events.MANIFEST_PARSED, () => hls.startLoad(resumeAt ?? -1));
+```
+
+One segment fetched, no flush, no stall. Native HLS and the progressive fallback cannot do this —
+neither exposes a "start here" hook, so both seek after `loadedmetadata` and eat the wasted fetch.
+Controlling the requests is what buys the difference, and hls.js is the only path where we do.
+
+Alongside the resume (never blocking it) the player calls `find-segment-at` and captions the jump
+with where it landed in the index: *segment 215 of 271 · 480p · 248 MB into 371 MB*.
+
+### Downloading a recording
+
+Two steps, because the client cannot know what is available to download:
+
+1. `POST /api/videos/prepare-download` → `{url, filename, contentType, sizeBytes, kind, note}`
+2. the browser fetches that ticketed `GET` URL
+
+`kind` is **`ORIGINAL`** when the uploaded file is still stored, or **`SEGMENTS`** when it is not —
+database mode discards originals by default (`video.database.keep-source=false`), so the ladder is
+joined back together instead. Concatenation is enough: HLS segments here are MPEG-TS, a self-contained
+sequence of 188-byte packets, so writing them back to back yields a valid stream with **no remux and
+no ffmpeg process** — which matters on a host that cannot spare one. `note` explains that the result
+is `.ts` rather than `.mp4`.
+
+Either way the bytes are streamed a chunk at a time via `VideoMediaStore.copyTo`, so serving a
+download costs a megabyte of heap rather than a copy of the recording — the same discipline as
+[the drain](#4a-why-the-drain-exists). The transfer is a `GET` because a download is a browser
+navigation: it streams to disk, shows the browser's own progress, and can be resumed. It is pointed
+at a hidden iframe rather than assigned to `location`, so a failed transfer cannot replace the app
+with an error page.
 
 ---
 

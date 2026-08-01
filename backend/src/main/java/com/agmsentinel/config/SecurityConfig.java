@@ -70,7 +70,10 @@ public class SecurityConfig {
                                  "/api/videos/*/r/**",
                                  "/api/videos/*/raw",
                                  "/api/videos/*/poster.jpg",
-                                 "/api/videos/*/sprite.jpg").permitAll()
+                                 "/api/videos/*/sprite.jpg",
+                                 // Save-to-disk. A download is a browser navigation, so it carries
+                                 // no Authorization header either and authorises the same way.
+                                 "/api/videos/*/download").permitAll()
                 // The catalogue + segment index need a real session (any signed-in member).
                 .requestMatchers("/api/videos/**").authenticated()
                 .requestMatchers("/api/questions/**").hasAnyRole("ATTENDEE", "SHAREHOLDER", "MODERATOR", "ADMIN")

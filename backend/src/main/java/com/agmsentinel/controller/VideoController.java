@@ -1,5 +1,7 @@
 package com.agmsentinel.controller;
 
+import com.agmsentinel.dto.VideoDtos.DownloadPlan;
+import com.agmsentinel.dto.VideoDtos.SegmentLocation;
 import com.agmsentinel.dto.VideoDtos.SegmentView;
 import com.agmsentinel.dto.VideoDtos.VideoCard;
 import com.agmsentinel.model.Video;
@@ -18,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -137,11 +140,16 @@ public class VideoController {
     }
 
     /**
-     * Which segment covers a given second — the DB-side seek lookup. Handy for "resume where you
-     * left off" and for verifying that a seek really only needs one segment.
+     * Which segment covers a given second — the database answering a seek.
+     *
+     * <p>This is what "resume at 21:30" resolves to, and the player does <b>not</b> wait for it:
+     * hls.js already holds the playlist and works the same thing out locally, so blocking playback
+     * on a round-trip here would add latency to buy nothing. It is called alongside the resume so
+     * the UI can show where the seek actually landed — segment 215 of 271, 248 MB in — which is the
+     * index doing visible work rather than sitting in a table nothing reads.
      */
     @PostMapping("/find-segment-at")
-    public SegmentView findSegmentAt(@RequestBody SegmentAtRequest req) {
+    public SegmentLocation findSegmentAt(@RequestBody SegmentAtRequest req) {
         UUID id = req.id();
         Video video = library.getPlayable(id);
         VideoRendition chosen = library.pickRendition(video, req.rendition());
@@ -149,7 +157,140 @@ public class VideoController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "No segment covers " + req.seconds() + "s."));
         String ticket = tickets.issue(currentSubject(), id);
-        return SegmentView.of(segment, urls.segmentUrl(id, chosen.getName(), segment.getFilename(), ticket));
+        return new SegmentLocation(
+                SegmentView.of(segment, urls.segmentUrl(id, chosen.getName(), segment.getFilename(), ticket)),
+                chosen.getName(),
+                chosen.getSegmentCount(),
+                library.bytesBefore(chosen, segment.getSeq()),
+                chosen.getTotalBytes());
+    }
+
+    // ---- download ------------------------------------------------------------
+
+    /**
+     * Resolve what a download will produce, before starting one.
+     *
+     * <p>POST, because it is an ordinary data call; the transfer it points at is a GET, because a
+     * download is a browser navigation. Splitting it this way is also what lets the UI say "12.4 MB
+     * MP4" or explain that it is getting a rebuilt ladder — neither of which the client can work
+     * out on its own, since whether the original survived depends on the storage mode it was
+     * uploaded under.
+     */
+    @PostMapping("/prepare-download")
+    public DownloadPlan prepareDownload(@RequestBody VideoRef req) {
+        Video video = library.getPlayable(req.id());
+        String ticket = tickets.issue(currentSubject(), video.getId());
+        String sourceRel = video.getSourceRel();
+
+        if (sourceRel != null && media.exists(video, sourceRel)) {
+            return new DownloadPlan(
+                    urls.downloadUrl(video.getId(), null, ticket),
+                    downloadName(video, "." + extensionOf(sourceRel)),
+                    guessVideoType(video).toString(),
+                    media.size(video, sourceRel),
+                    "ORIGINAL",
+                    null);
+        }
+
+        // No original left — database storage drops it once the ladder exists. The segments are
+        // still a complete copy of the recording, so hand those over instead of refusing.
+        VideoRendition chosen = library.pickRendition(video, req.rendition());
+        if (chosen.getSegmentCount() == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "There is nothing to download: this recording has neither a stored original "
+                    + "nor any segments.");
+        }
+        return new DownloadPlan(
+                urls.downloadUrl(video.getId(), chosen.getName(), ticket),
+                downloadName(video, "-" + chosen.getName() + ".ts"),
+                MP2T.toString(),
+                chosen.getTotalBytes(),
+                "SEGMENTS",
+                "The original upload was discarded after segmenting, so this is the "
+                + chosen.getName() + " rendition rebuilt by joining its " + chosen.getSegmentCount()
+                + " segments. That produces a valid MPEG-TS file — VLC, ffmpeg and most desktop "
+                + "players open it directly, though some tools expect .mp4. Set "
+                + "video.database.keep-source=true to keep originals for future uploads.");
+    }
+
+    /**
+     * Stream the recording to disk.
+     *
+     * <p>Either the stored original, or — with {@code rendition} — one rung rebuilt by writing its
+     * segments back to back. Concatenation is enough because these are MPEG-TS: each segment is a
+     * self-contained sequence of 188-byte packets, so joining them yields a valid stream with no
+     * remux and, more to the point, no ffmpeg process on a host that cannot spare one.
+     *
+     * <p>Written straight to the response a piece at a time, so serving a download costs a chunk of
+     * memory rather than a copy of the recording — the same reason the transcode drains as it goes.
+     */
+    @GetMapping("/{id}/download")
+    public ResponseEntity<StreamingResponseBody> download(
+            @PathVariable UUID id,
+            @RequestParam(name = "t", required = false) String ticket,
+            @RequestParam(required = false) String rendition) {
+
+        Video video = authorise(id, ticket);
+
+        if (rendition == null || rendition.isBlank()) {
+            String sourceRel = video.getSourceRel();
+            if (sourceRel == null || !media.exists(video, sourceRel)) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "The original file for this recording is no longer stored. Download a "
+                        + "rendition instead.");
+            }
+            return attachment(downloadName(video, "." + extensionOf(sourceRel)),
+                    guessVideoType(video), media.size(video, sourceRel),
+                    out -> media.copyTo(video, sourceRel, out));
+        }
+
+        VideoRendition chosen = requireRendition(video, rendition);
+        List<VideoSegment> segments = library.segmentsOf(id, chosen.getName());
+        if (segments.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                    "That rendition has no segments to join.");
+        }
+        String prefix = siblingOf(chosen.getPlaylistRel(), "");
+        return attachment(downloadName(video, "-" + chosen.getName() + ".ts"),
+                MP2T, chosen.getTotalBytes(),
+                out -> {
+                    for (VideoSegment segment : segments) {
+                        media.copyTo(video, prefix + segment.getFilename(), out);
+                    }
+                });
+    }
+
+    private ResponseEntity<StreamingResponseBody> attachment(String filename, MediaType type,
+                                                             long length,
+                                                             StreamingResponseBody body) {
+        return ResponseEntity.ok()
+                .contentType(type)
+                .contentLength(length)
+                // filename* (RFC 5987) so a title with non-ASCII characters survives the trip.
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment()
+                                .filename(filename, StandardCharsets.UTF_8).build().toString())
+                .cacheControl(CacheControl.noStore())
+                .body(body);
+    }
+
+    /**
+     * A filename the user's operating system will accept, built from the title rather than from
+     * {@code source.mp4} — which is what every recording is called in storage.
+     */
+    private String downloadName(Video video, String suffix) {
+        String base = video.getTitle() == null || video.getTitle().isBlank()
+                ? "recording"
+                : video.getTitle().trim();
+        base = base.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").trim();
+        if (base.isEmpty()) base = "recording";
+        if (base.length() > 80) base = base.substring(0, 80).trim();
+        return base + suffix;
+    }
+
+    private String extensionOf(String path) {
+        int dot = path.lastIndexOf('.');
+        return dot < 0 ? "mp4" : path.substring(dot + 1).toLowerCase(Locale.ROOT);
     }
 
     // ---- media ---------------------------------------------------------------

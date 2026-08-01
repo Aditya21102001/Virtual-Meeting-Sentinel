@@ -118,6 +118,43 @@ public final class VideoDtos {
         }
     }
 
+    /**
+     * Where a given moment lives in the ladder: the segment covering it, plus enough surrounding
+     * numbers to read it as a position rather than an isolated row.
+     *
+     * <p>This is the answer to "resume at 21:30" as the <em>database</em> gives it — the player
+     * works the same thing out from the playlist it already holds, and does not wait for this. It
+     * is what makes the segment index demonstrably load-bearing instead of decorative: one indexed
+     * lookup turns a timestamp into a slice, a position in the sequence, and a byte offset.
+     */
+    public record SegmentLocation(
+            SegmentView segment,
+            String rendition,
+            /** Segments in this rung, so the answer reads "215 of 271". */
+            int segmentCount,
+            /** Bytes before this segment in this rung — how far in the seek lands. */
+            long byteOffset,
+            /** Total bytes in this rung, for the "of N" on the offset. */
+            long renditionBytes) { }
+
+    /**
+     * What downloading a recording will actually produce, resolved before the transfer starts.
+     *
+     * <p>Two things can be downloaded and the client cannot tell which applies: the original upload
+     * when it is still stored, or the ladder rebuilt from its segments when it is not (database
+     * storage discards originals by default). Answering that up front means the UI can name the
+     * file and its size honestly instead of starting a transfer and hoping.
+     */
+    public record DownloadPlan(
+            String url,
+            String filename,
+            String contentType,
+            long sizeBytes,
+            /** ORIGINAL or SEGMENTS. */
+            String kind,
+            /** Set for SEGMENTS: why this is not the file that was uploaded. */
+            String note) { }
+
     /** Storage + tooling health for the admin screen. */
     public record VideoStorageStatus(
             /** FILESYSTEM or DATABASE — where new uploads will be stored. */

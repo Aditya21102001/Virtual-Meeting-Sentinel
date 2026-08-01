@@ -34,5 +34,20 @@ public interface VideoSegmentRepository extends JpaRepository<VideoSegment, UUID
     Optional<VideoSegment> findSegmentAt(@Param("renditionId") UUID renditionId,
                                         @Param("position") double position);
 
+    /**
+     * Bytes occupied by every segment before {@code seq} in this rung — the offset a seek to that
+     * segment lands at, if you think of the rendition as one continuous file.
+     *
+     * <p>Nothing in the delivery path needs this: the player addresses segments by URI, not by
+     * offset. It exists so the UI can show what the index actually knows — "segment 215 of 271,
+     * 248 MB in" — which is the difference between claiming the recording is indexed and being able
+     * to point at the index answering a question.
+     */
+    @Query("""
+           select coalesce(sum(s.byteSize), 0) from VideoSegment s
+           where s.rendition.id = :renditionId and s.seq < :seq
+           """)
+    long bytesBefore(@Param("renditionId") UUID renditionId, @Param("seq") int seq);
+
     void deleteByRenditionId(UUID renditionId);
 }

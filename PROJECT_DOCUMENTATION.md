@@ -425,6 +425,8 @@ playback ticket in the URL, because the browser's media stack cannot send an `Au
 | POST   | `/api/videos/video-details`                          | member    | One catalogue entry                       |
 | POST   | `/api/videos/list-segments`      | member    | The segment index for a rung              |
 | POST   | `/api/videos/find-segment-at`      | member    | Which segment covers that second          |
+| POST   | `/api/videos/prepare-download`     | member    | What a download will produce (original / joined) |
+| GET    | `/api/videos/{id}/download?t=`     | ticket    | Save to disk; `&rendition=` joins that rung |
 | GET    | `/api/videos/{id}/master.m3u8?t=`           | ticket    | Variant list (URIs rewritten)             |
 | GET    | `/api/videos/{id}/r/{rung}/index.m3u8?t=`   | ticket    | Media playlist (URIs rewritten)           |
 | GET    | `/api/videos/{id}/r/{rung}/seg_NNNNN.ts?t=` | ticket    | One ~6s segment                           |

@@ -38,6 +38,33 @@ export interface SegmentView {
   url: string;
 }
 
+/**
+ * The database's answer to "which slice covers second N", with enough context to read it as a
+ * position. The player never waits for this — it resolves the same seek from the playlist it
+ * already holds — so this is what the seek *landed on*, reported after the fact.
+ */
+export interface SegmentLocation {
+  segment: SegmentView;
+  rendition: string;
+  /** Segments in this rung, so the answer reads "215 of 271". */
+  segmentCount: number;
+  /** Bytes before this segment in this rung. */
+  byteOffset: number;
+  renditionBytes: number;
+}
+
+/** What downloading a recording will actually produce. */
+export interface DownloadPlan {
+  url: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  /** ORIGINAL = the file that was uploaded; SEGMENTS = the ladder joined back together. */
+  kind: "ORIGINAL" | "SEGMENTS";
+  /** Set for SEGMENTS: why this is not the uploaded file. */
+  note: string | null;
+}
+
 export interface VideoView {
   id: string;
   title: string;
@@ -226,17 +253,36 @@ export class VideoService {
     );
   }
 
-  /** Which segment covers a given second (server-side seek lookup). */
+  /**
+   * Which segment covers a given second — the server-side seek lookup.
+   *
+   * <p>Informational, never blocking: playback resolves its own seeks from the playlist. This is
+   * called alongside a resume so the UI can show where it landed in the index.
+   */
   segmentAt(
     id: string,
     seconds: number,
     rendition?: string,
-  ): Observable<SegmentView> {
-    return this.http.post<SegmentView>(
+  ): Observable<SegmentLocation> {
+    return this.http.post<SegmentLocation>(
       `${this.base}/find-segment-at`,
       { id, seconds, rendition: rendition ?? null },
       { headers: this.headers() },
     );
+  }
+
+  /**
+   * Resolve a download before starting one. Returns a ticketed GET URL — the transfer itself is a
+   * browser navigation, so it can be resumed and never has to live in the tab's memory.
+   */
+  prepareDownload(id: string, rendition?: string): Observable<DownloadPlan> {
+    return this.http
+      .post<DownloadPlan>(
+        `${this.base}/prepare-download`,
+        { id, rendition: rendition ?? null },
+        { headers: this.headers() },
+      )
+      .pipe(map((plan) => ({ ...plan, url: this.absolute(plan.url) })));
   }
 
   // ---- admin ----------------------------------------------------------------
@@ -322,16 +368,17 @@ export class VideoService {
 
   /** Backend media URLs are root-relative; resolve them against the Render API, not Vercel. */
   private normalizeMediaUrls(card: VideoCard): VideoCard {
-    const resolve = (url: string | null): string | null => {
-      if (!url || /^https?:\/\//i.test(url)) return url;
-      return `${environment.apiBase}${url}`;
-    };
     return {
       ...card,
-      streamUrl: resolve(card.streamUrl),
-      posterUrl: resolve(card.posterUrl),
-      spriteUrl: resolve(card.spriteUrl),
+      streamUrl: this.absolute(card.streamUrl),
+      posterUrl: this.absolute(card.posterUrl),
+      spriteUrl: this.absolute(card.spriteUrl),
     };
+  }
+
+  private absolute<T extends string | null>(url: T): T {
+    if (!url || /^https?:\/\//i.test(url)) return url;
+    return `${environment.apiBase}${url}` as T;
   }
 
   // ---- helpers --------------------------------------------------------------

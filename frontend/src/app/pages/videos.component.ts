@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, signal, viewChild } from '@angular/core';
+import { Component, OnDestroy, OnInit, computed, signal, viewChild } from '@angular/core';
 import { VideoPlayerComponent } from '../components/video-player.component';
 import {
   SegmentView,
@@ -66,7 +66,22 @@ import {
               <span class="badge">progressive (HTTP Range)</span>
             }
             <span class="muted">{{ humanBytes(card.video.sizeBytes) }} source</span>
+            <button
+              class="link"
+              type="button"
+              (click)="download(card)"
+              [disabled]="downloading()"
+            >
+              {{ downloading() ? 'Preparing…' : '⭳ Download' }}
+            </button>
           </div>
+
+          @if (downloadNote()) {
+            <p class="muted note">{{ downloadNote() }}</p>
+          }
+          @if (downloadError()) {
+            <p class="note error-note">{{ downloadError() }}</p>
+          }
 
           @if (!card.adaptive && card.video.errorMessage) {
             <p class="muted note">{{ card.video.errorMessage }}</p>
@@ -211,6 +226,9 @@ import {
       }
       .note {
         margin: 8px 0 0;
+      }
+      .error-note {
+        color: #fca5a5;
       }
       .section {
         font-size: 16px;
@@ -367,7 +385,7 @@ import {
     `,
   ],
 })
-export class VideosComponent implements OnInit {
+export class VideosComponent implements OnInit, OnDestroy {
   readonly humanBytes = humanBytes;
   readonly timecode = timecode;
 
@@ -455,7 +473,48 @@ export class VideosComponent implements OnInit {
     this.segmentsOpen.set(false);
     this.segments.set([]);
     this.activeRendition.set(null);
+    this.downloadNote.set('');
+    this.downloadError.set('');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // ---- download --------------------------------------------------------------
+
+  readonly downloading = signal(false);
+  /** Explains a download that isn't the uploaded file — see DownloadPlan.note. */
+  readonly downloadNote = signal('');
+  readonly downloadError = signal('');
+
+  /**
+   * Two steps on purpose. The POST resolves *what* will be downloaded — the stored original, or the
+   * ladder joined back together when the original was discarded after segmenting — and the browser
+   * then navigates to the ticketed URL it returns.
+   *
+   * <p>Navigating rather than fetching a blob matters for anything large: the transfer streams to
+   * disk, shows the browser's own progress, and survives being resumed. A `fetch` + object URL would
+   * have to hold the whole recording in the tab's memory first.
+   */
+  download(card: VideoCard): void {
+    if (this.downloading()) return;
+    this.downloading.set(true);
+    this.downloadNote.set('');
+    this.downloadError.set('');
+
+    this.videos.prepareDownload(card.video.id).subscribe({
+      next: (plan) => {
+        this.downloading.set(false);
+        if (plan.note) this.downloadNote.set(plan.note);
+        this.startTransfer(plan.url);
+      },
+      error: (err) => {
+        this.downloading.set(false);
+        this.downloadError.set(
+          err?.error?.message ??
+            err?.error?.error ??
+            'Could not prepare a download for this recording.',
+        );
+      },
+    });
   }
 
   toggleSegments(card: VideoCard): void {
@@ -479,6 +538,38 @@ export class VideosComponent implements OnInit {
         this.segmentsLoading.set(false);
       },
     });
+  }
+
+  /**
+   * Point a hidden iframe at the URL, rather than assigning `location`.
+   *
+   * <p>`Content-Disposition: attachment` means the browser saves the file either way and does not
+   * navigate — but only when the request succeeds. If it fails (an expired ticket, the instance
+   * asleep) assigning `location` replaces the whole app with a JSON error page and loses the
+   * viewer's place. Inside an iframe that failure is invisible and the page is untouched.
+   *
+   * <p>The `download` attribute on an anchor is not an option: it has no effect cross-origin, and
+   * the API is a different origin from the SPA.
+   */
+  private startTransfer(url: string): void {
+    let frame = this.transferFrame;
+    if (!frame) {
+      frame = document.createElement('iframe');
+      frame.hidden = true;
+      frame.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(frame);
+      this.transferFrame = frame;
+    }
+    frame.src = url;
+  }
+
+  private transferFrame: HTMLIFrameElement | null = null;
+
+  ngOnDestroy(): void {
+    // The iframe lives on document.body, so leaving the page would otherwise leak it. Removing it
+    // does not cancel a transfer already underway — the browser owns the download by then.
+    this.transferFrame?.remove();
+    this.transferFrame = null;
   }
 
   /**

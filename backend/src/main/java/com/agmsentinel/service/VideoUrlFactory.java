@@ -68,6 +68,21 @@ public class VideoUrlFactory {
         return BASE + "/" + videoId + "/raw" + query(ticket);
     }
 
+    /**
+     * A save-to-disk URL. GET, like every other media route and for the same reason — a download is
+     * a browser navigation, and a navigation is a GET; it also means the transfer can be resumed
+     * and does not have to survive in the tab's memory.
+     *
+     * @param rendition rung to rebuild from segments, or null to download the stored original
+     */
+    public String downloadUrl(UUID videoId, String rendition, String ticket) {
+        String base = BASE + "/" + videoId + "/download" + query(ticket);
+        if (rendition == null || rendition.isBlank()) return base;
+        String separator = base.contains("?") ? "&" : "?";
+        return base + separator + "rendition="
+               + URLEncoder.encode(rendition, StandardCharsets.UTF_8);
+    }
+
     public String posterUrl(UUID videoId, String ticket) {
         return BASE + "/" + videoId + "/poster.jpg" + query(ticket);
     }

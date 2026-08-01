@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -41,6 +42,9 @@ import java.util.stream.Stream;
 public class VideoMediaStore {
 
     private static final Logger log = LoggerFactory.getLogger(VideoMediaStore.class);
+
+    /** Window size for {@link #copyTo} — the most of any one file that is ever in heap. */
+    private static final int COPY_CHUNK_BYTES = 1024 * 1024;
 
     private final VideoStorageService filesystem;
     private final VideoAssetRepository assets;
@@ -129,6 +133,40 @@ public class VideoMediaStore {
             return new InputStreamResource(filesystem.openRange(file, start, length));
         } catch (IOException ex) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Could not read the media file.");
+        }
+    }
+
+    /**
+     * Write a stored file to {@code out} without ever holding more than a chunk of it in heap.
+     *
+     * <p>{@link #resource} would be simpler, but in database mode it materialises the whole asset
+     * as a {@code byte[]} — fine for a 2 MB segment, ruinous for a download of a 200 MB original on
+     * a small container. Reading in bounded windows makes the cost of streaming a file independent
+     * of the size of the file, which is the same property the range reads rely on.
+     *
+     * <p>Deliberately <b>not</b> {@code @Transactional}: each window is its own short read, so a
+     * slow client cannot pin a database connection for the length of its download. Segments and
+     * sources are immutable once written, so there is nothing a snapshot would protect.
+     */
+    public void copyTo(Video video, String relPath, OutputStream out) throws IOException {
+        if (!inDatabase(video)) {
+            Path file = filesystem.resolveMedia(video, relPath);
+            if (!Files.isRegularFile(file)) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Media file not found.");
+            }
+            Files.copy(file, out);
+            return;
+        }
+        String path = normalise(relPath);
+        long size = assets.findSize(video.getId(), path)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Media file not found in database storage."));
+        for (long offset = 0; offset < size; offset += COPY_CHUNK_BYTES) {
+            long length = Math.min(COPY_CHUNK_BYTES, size - offset);
+            byte[] chunk = assets.readRange(video.getId(), path, offset, length)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                            "Media file not found in database storage."));
+            out.write(chunk);
         }
     }
 

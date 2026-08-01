@@ -230,6 +230,16 @@ public class VideoLibraryService {
         return segments.findSegmentAt(rendition.getId(), Math.max(0, positionSeconds));
     }
 
+    /**
+     * How far into a rung a segment starts, in bytes. Purely descriptive — delivery addresses
+     * segments by URI — but it is what lets a seek be reported as a position in the stored data
+     * rather than just a row number.
+     */
+    @Transactional(readOnly = true)
+    public long bytesBefore(VideoRendition rendition, int seq) {
+        return segments.bytesBefore(rendition.getId(), seq);
+    }
+
     /** Named rendition, or the highest-quality one when no name is given. */
     public VideoRendition pickRendition(Video video, String name) {
         List<VideoRendition> all = video.getRenditions();
