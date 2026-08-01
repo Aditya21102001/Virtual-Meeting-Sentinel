@@ -41,4 +41,12 @@ EXPOSE 8080
 # error in the browser, because an error page from the proxy carries no CORS headers).
 # Override with JAVA_HEAP_PERCENT on an instance with real memory.
 ENV JAVA_HEAP_PERCENT=50.0
-ENTRYPOINT ["sh", "-c", "java -XX:MaxRAMPercentage=${JAVA_HEAP_PERCENT} -XX:+ExitOnOutOfMemoryError -jar app.jar --server.port=${PORT:-8080}"]
+#
+# -Djdk.lang.Process.launchMechanism=POSIX_SPAWN is not cosmetic in a small container.
+# Spawning ffmpeg means the JVM creates a child process, and the default mechanism on Linux
+# forks — briefly duplicating the parent's address space. The pages are copy-on-write, but the
+# kernel still accounts for the reservation, so a JVM holding a few hundred MB can trip the
+# cgroup limit at the exact moment it tries to start ffmpeg. The symptom is a container that
+# dies at 0% of every transcode no matter how small the video is, because the failure is in
+# launching the process, not in doing the work. posix_spawn does not duplicate the address space.
+ENTRYPOINT ["sh", "-c", "java -XX:MaxRAMPercentage=${JAVA_HEAP_PERCENT} -XX:+ExitOnOutOfMemoryError -Djdk.lang.Process.launchMechanism=POSIX_SPAWN -jar app.jar --server.port=${PORT:-8080}"]

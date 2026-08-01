@@ -329,8 +329,21 @@ public class VideoTranscodeService {
         List<String> cmd = new ArrayList<>(List.of(
                 props.getTools().getFfmpeg(),
                 "-hide_banner", "-nostdin", "-y",
-                "-progress", "pipe:1", "-nostats",
-                "-i", source.toString()));
+                "-progress", "pipe:1", "-nostats"));
+
+        // Cap ffmpeg's parallelism BEFORE the input so it applies to decoding, filtering and every
+        // encoder. A container sees the host's core count rather than its own CPU share, so left to
+        // itself ffmpeg spawns a thread per host core for a fraction of a core's worth of quota.
+        // The encoders then starve the JVM: health checks time out, the platform restarts the
+        // container mid-transcode, and the video is stranded at whatever percent it had reached.
+        int threads = props.getTools().getThreads();
+        if (threads > 0) {
+            cmd.addAll(List.of("-threads", String.valueOf(threads),
+                               "-filter_threads", String.valueOf(threads),
+                               "-filter_complex_threads", String.valueOf(threads)));
+        }
+
+        cmd.addAll(List.of("-i", source.toString()));
 
         // Split the decoded video once and scale each branch — one decode pass for the whole ladder.
         StringBuilder filter = new StringBuilder("[0:v]split=").append(ladder.size());

@@ -101,6 +101,11 @@ video:
     # the browser reports as a CORS error. On a ~512 MB free instance, set this to false and upload
     # MP4 (H.264) or WebM, which browsers play without any conversion.
     enabled: ${VIDEO_TRANSCODE_ENABLED:true}
+    # Threads ffmpeg may use (0 = let it decide, i.e. one per HOST core — which is wrong inside a
+    # container with a fractional CPU share). Keeping this at 1 stops the encoder starving the JVM
+    # of CPU, which is what makes a platform health check time out and restart the container in the
+    # middle of a transcode.
+    threads: ${VIDEO_FFMPEG_THREADS:1}
     # FFmpeg does the segmentation. Without it, uploads still play — served progressively over
     # HTTP Range instead of as an adaptive ladder — and can be re-processed once it's installed.
     ffmpeg: ${FFMPEG_PATH:ffmpeg}

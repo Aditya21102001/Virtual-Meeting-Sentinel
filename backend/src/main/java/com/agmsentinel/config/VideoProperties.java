@@ -178,6 +178,17 @@ public class VideoProperties {
         private String ffmpeg = "ffmpeg";
         /** ffprobe executable (on PATH, or an absolute path). */
         private String ffprobe = "ffprobe";
+        /**
+         * Threads ffmpeg may use. 0 lets it decide, which means "one per visible core".
+         *
+         * <p>A container sees the host's core count, not its own CPU share, so on a fractional-CPU
+         * instance ffmpeg happily starts a dozen encoding threads for a tenth of a core. Each one
+         * costs memory, and together they starve the JVM of CPU — long enough that the platform's
+         * health check times out and restarts the container mid-transcode. Pinning this low keeps
+         * the application responsive while it encodes.
+         */
+        private int threads = 1;
+
         /** Kill a transcode that runs longer than this (minutes) so a wedged job can't leak. */
         private int timeoutMinutes = 240;
         /** How many videos may transcode at once. Transcoding is CPU-bound — keep this small. */
@@ -185,6 +196,8 @@ public class VideoProperties {
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getThreads() { return threads; }
+        public void setThreads(int threads) { this.threads = threads; }
         public String getFfmpeg() { return ffmpeg; }
         public void setFfmpeg(String ffmpeg) { this.ffmpeg = ffmpeg; }
         public String getFfprobe() { return ffprobe; }
