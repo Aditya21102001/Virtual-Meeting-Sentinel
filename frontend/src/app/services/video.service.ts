@@ -197,11 +197,15 @@ export class VideoService {
 
   /** Every READY video, each with a fresh playback ticket. */
   library(): Observable<VideoCard[]> {
-    return this.http.get<VideoCard[]>(this.base, { headers: this.headers() });
+    return this.http.get<VideoCard[]>(this.base, { headers: this.headers() }).pipe(
+      map((cards) => cards.map((card) => this.normalizeMediaUrls(card))),
+    );
   }
 
   card(id: string): Observable<VideoCard> {
-    return this.http.get<VideoCard>(`${this.base}/${id}`, { headers: this.headers() });
+    return this.http.get<VideoCard>(`${this.base}/${id}`, { headers: this.headers() }).pipe(
+      map((card) => this.normalizeMediaUrls(card)),
+    );
   }
 
   /** The segment index for one rung — what the "N segments" inspector shows. */
@@ -229,11 +233,15 @@ export class VideoService {
 
   /** All videos including PROCESSING/FAILED, so the manage table can show them. */
   listAll(): Observable<VideoCard[]> {
-    return this.http.get<VideoCard[]>(this.admin, { headers: this.headers() });
+    return this.http.get<VideoCard[]>(this.admin, { headers: this.headers() }).pipe(
+      map((cards) => cards.map((card) => this.normalizeMediaUrls(card))),
+    );
   }
 
   adminCard(id: string): Observable<VideoCard> {
-    return this.http.get<VideoCard>(`${this.admin}/${id}`, { headers: this.headers() });
+    return this.http.get<VideoCard>(`${this.admin}/${id}`, { headers: this.headers() }).pipe(
+      map((card) => this.normalizeMediaUrls(card)),
+    );
   }
 
   /**
@@ -270,6 +278,20 @@ export class VideoService {
 
   remove(id: string): Observable<void> {
     return this.http.delete<void>(`${this.admin}/${id}`, { headers: this.headers() });
+  }
+
+  /** Backend media URLs are root-relative; resolve them against the Render API, not Vercel. */
+  private normalizeMediaUrls(card: VideoCard): VideoCard {
+    const resolve = (url: string | null): string | null => {
+      if (!url || /^https?:\/\//i.test(url)) return url;
+      return `${environment.apiBase}${url}`;
+    };
+    return {
+      ...card,
+      streamUrl: resolve(card.streamUrl),
+      posterUrl: resolve(card.posterUrl),
+      spriteUrl: resolve(card.spriteUrl),
+    };
   }
 
   // ---- helpers --------------------------------------------------------------
