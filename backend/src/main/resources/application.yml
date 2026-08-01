@@ -3,10 +3,14 @@ spring:
     name: agm-sentinel-backend
   servlet:
     multipart:
-      # Annual-report PDFs are routinely several MB; the Spring default is only 1MB, which
-      # silently rejects real uploads. Raise both the per-file and total-request ceilings.
-      max-file-size: 25MB
-      max-request-size: 30MB
+      # Sized for VIDEO uploads (see the `video` block below), which are orders of magnitude
+      # larger than the annual-report PDFs this originally covered. Per-endpoint limits are
+      # enforced in code — AdminController caps knowledge PDFs, VideoLibraryService caps videos —
+      # so raising the container ceiling doesn't loosen the document upload path.
+      max-file-size: ${MAX_UPLOAD_SIZE:2GB}
+      max-request-size: ${MAX_REQUEST_SIZE:2GB}
+      # 0 => always spool to disk. A 2 GB upload must never be buffered in the JVM heap.
+      file-size-threshold: 0
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
@@ -32,6 +36,71 @@ spring:
 
 server:
   port: ${PORT:8080}
+  tomcat:
+    # A rejected large upload must not reset the connection: let Tomcat swallow the rest of the
+    # request body so the browser receives the 413/400 JSON instead of a network error.
+    max-swallow-size: -1
+    # Long video uploads over a slow link can exceed the default 20s connection timeout.
+    connection-timeout: 300000
+
+# ---------------------------------------------------------------------------
+# Video library — uploads are segmented into an adaptive HLS ladder and streamed
+# on demand. Bytes live on the NAS; the DB holds the catalogue + segment index.
+# ---------------------------------------------------------------------------
+video:
+  # WHERE MEDIA BYTES LIVE for new uploads:
+  #   filesystem (default) — the NAS share below. Correct whenever durable disk exists.
+  #   database             — rows in video_assets. Use when the host has NO persistent volume:
+  #                          a free-tier container filesystem is wiped on every redeploy, which
+  #                          silently destroys recordings written to it.
+  # Recorded per video, so changing this never strands existing recordings.
+  storage-mode: ${VIDEO_STORAGE_MODE:filesystem}
+  # THE NAS SHARE. Set this in every real environment, e.g.
+  #   Windows UNC : VIDEO_NAS_PATH=\\nas01\media\virtual-meeting\videos
+  #   Linux mount : VIDEO_NAS_PATH=/mnt/nas/virtual-meeting/videos
+  # The service writes a probe file at startup to prove the share is actually writable.
+  # Still used as the working directory in database mode: FFmpeg needs real files, so it
+  # transcodes here and the output is then ingested and the directory deleted.
+  nas-path: ${VIDEO_NAS_PATH:./var/nas/videos}
+  # true => refuse to start when the NAS is unreachable (recommended in production).
+  # false => log a warning and degrade to `fallback-path` so local dev still works.
+  require-nas: ${VIDEO_REQUIRE_NAS:false}
+  fallback-path: ${VIDEO_FALLBACK_PATH:./var/videos}
+  max-upload-bytes: ${VIDEO_MAX_UPLOAD_BYTES:2147483648}   # 2 GiB
+  hls:
+    segment-seconds: ${VIDEO_SEGMENT_SECONDS:6}
+    # Rungs are capped to the source resolution, so a 720p upload only produces 720p and below.
+    ladder: ${VIDEO_LADDER:1080,720,480,360}
+    preset: ${VIDEO_X264_PRESET:veryfast}
+    thumbnail-interval-seconds: ${VIDEO_THUMB_INTERVAL:10}
+  tools:
+    # FFmpeg does the segmentation. Without it, uploads still play — served progressively over
+    # HTTP Range instead of as an adaptive ladder — and can be re-processed once it's installed.
+    ffmpeg: ${FFMPEG_PATH:ffmpeg}
+    ffprobe: ${FFPROBE_PATH:ffprobe}
+    workers: ${VIDEO_WORKERS:1}
+    timeout-minutes: ${VIDEO_TIMEOUT_MINUTES:240}
+  playback:
+    ticket-ttl-seconds: ${VIDEO_TICKET_TTL:21600}   # 6h — long enough for one sitting
+  database:
+    # These only apply when storage-mode=database. A database is not bulk storage, so database
+    # mode is for SHORT recordings and enforces its own, much smaller limits.
+    #
+    # Per-upload ceiling, checked before the bytes are accepted so an over-sized file fails in
+    # seconds instead of after a multi-minute transcode.
+    max-upload-bytes: ${VIDEO_DB_MAX_UPLOAD_BYTES:209715200}    # 200 MiB
+    # Total budget across every video. Uploads are refused once it is reached, rather than being
+    # allowed to fill the database. Lower this to match a managed free tier (Neon allows 0.5 GiB).
+    max-total-bytes: ${VIDEO_DB_MAX_TOTAL_BYTES:2147483648}     # 2 GiB
+    # Source-size → stored-size multiplier, used only to reject an upload up-front when it clearly
+    # will not fit. Measured: a 13.2 MB 720p source produced 26.1 MB across three rungs.
+    size-estimate-factor: ${VIDEO_DB_SIZE_FACTOR:2.0}
+    # Segments are a few MB each, so this is generous for HLS output; the limit exists to catch
+    # the case that would otherwise buffer a whole un-segmented recording in heap (no FFmpeg).
+    max-asset-bytes: ${VIDEO_DB_MAX_ASSET_BYTES:67108864}       # 64 MiB
+    # Keep the original upload in the database as well as the segments? Off by default: it is
+    # only needed to re-process, and it is far larger than every segment combined.
+    keep-source: ${VIDEO_DB_KEEP_SOURCE:false}
 
 # Python AI service base URL (Docker: http://ai-service:8000 ; HF Spaces URL in prod)
 ai:

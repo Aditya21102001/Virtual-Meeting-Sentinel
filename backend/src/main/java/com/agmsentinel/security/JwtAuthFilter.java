@@ -34,8 +34,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 Claims claims = jwt.parse(header.substring(7));
                 String role = claims.get("role", String.class);
                 // Only FULL access tokens authenticate. MFA-challenge tokens (typ=mfa, no role)
-                // must never grant access — they only authorize the second-factor step.
-                if (!jwt.isMfaChallenge(claims) && role != null) {
+                // must never grant access — they only authorize the second-factor step. Likewise
+                // media playback tickets (typ=playback, no role): they let one video's segments be
+                // read and must never be usable as a session.
+                boolean playbackTicket = JwtService.PLAYBACK_TYPE.equals(claims.get("typ", String.class));
+                if (!jwt.isMfaChallenge(claims) && !playbackTicket && role != null) {
                     var authority = new SimpleGrantedAuthority("ROLE_" + role);
                     var auth = new UsernamePasswordAuthenticationToken(
                             claims.getSubject(), null, List.of(authority));

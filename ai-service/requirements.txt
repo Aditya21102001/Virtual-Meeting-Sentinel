@@ -4,11 +4,15 @@ python-multipart==0.0.20
 pydantic==2.10.4
 pydantic-settings==2.7.1
 
-# LangChain + providers (all have free tiers)
+# LangChain + providers
 langchain==0.3.14
 langchain-core==0.3.29
 langchain-community==0.3.14
 langchain-text-splitters==0.3.4
+# Fully local, open-source LLM via Ollama — no API key, no account, no bill.
+# The only provider that keeps the whole stack self-hosted (LLM_PROVIDER=ollama).
+langchain-ollama==0.2.2
+# Hosted proprietary services with free tiers; each needs an API key.
 langchain-groq==0.2.3
 langchain-google-genai==2.0.8
 

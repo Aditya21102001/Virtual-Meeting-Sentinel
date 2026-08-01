@@ -36,6 +36,9 @@ import { AuthService } from "./services/auth.service";
           <a routerLink="/chat" routerLinkActive="active" (click)="close()"
             >💬 Lounge</a
           >
+          <a routerLink="/recordings" routerLinkActive="active" (click)="close()"
+            >🎬 Recordings</a
+          >
         }
         @if (auth.isModerator()) {
           <a routerLink="/board" routerLinkActive="active" (click)="close()"
@@ -43,6 +46,9 @@ import { AuthService } from "./services/auth.service";
           >
           <a routerLink="/setup" routerLinkActive="active" (click)="close()"
             >Setup</a
+          >
+          <a routerLink="/videos" routerLinkActive="active" (click)="close()"
+            >Video library</a
           >
           <a routerLink="/members" routerLinkActive="active" (click)="close()"
             >Members</a

@@ -58,6 +58,18 @@ public class SecurityConfig {
                 .requestMatchers("/api/auth/**", "/oauth2/**", "/login/**",
                                  "/ws/**", "/actuator/health", "/health").permitAll()
                 .requestMatchers("/api/source/**").permitAll()   // PDF opened in a new tab (no auth header)
+                // Media URLs are fetched by the browser's own media stack (<video src>, native HLS,
+                // <img> posters), which cannot attach an Authorization header. They are permitted
+                // here and authorised inside VideoController by a short-lived, video-scoped
+                // playback ticket — see PlaybackTicketService. GET only: nothing is mutated.
+                .requestMatchers(HttpMethod.GET,
+                                 "/api/videos/*/master.m3u8",
+                                 "/api/videos/*/r/**",
+                                 "/api/videos/*/raw",
+                                 "/api/videos/*/poster.jpg",
+                                 "/api/videos/*/sprite.jpg").permitAll()
+                // The catalogue + segment index need a real session (any signed-in member).
+                .requestMatchers("/api/videos/**").authenticated()
                 .requestMatchers("/api/questions/**").hasAnyRole("ATTENDEE", "SHAREHOLDER", "MODERATOR", "ADMIN")
                 .requestMatchers("/api/clusters/**").hasAnyRole("MODERATOR", "ADMIN")
                 .requestMatchers("/api/admin/**").hasAnyRole("MODERATOR", "ADMIN")

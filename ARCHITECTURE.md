@@ -1,4 +1,4 @@
-# AGM Sentinel — Architecture & Flow Guide
+# VIRTUAL MEETING Sentinel — Architecture & Flow Guide
 
 A guide to **how the application works**: the pieces, how they talk, and the exact flow of
 every major action. Read this to understand the system end to end.
@@ -9,6 +9,7 @@ every major action. Read this to understand the system end to end.
 ---
 
 ## Table of Contents
+
 1. [What the app does (in one minute)](#1-what-the-app-does-in-one-minute)
 2. [The three services](#2-the-three-services)
 3. [High-level architecture](#3-high-level-architecture)
@@ -19,17 +20,18 @@ every major action. Read this to understand the system end to end.
 8. [Flow 3 — Click a source → open the PDF at the page](#flow-3--click-a-source--open-the-pdf-at-the-page)
 9. [Flow 4 — Upload the annual report](#flow-4--upload-the-annual-report)
 10. [Flow 5 — Upload a question bank](#flow-5--upload-a-question-bank)
-11. [The clustering algorithm](#6-the-clustering-algorithm)
-12. [Data model](#7-data-model)
-13. [Security model](#8-security-model)
-14. [API surface (quick reference)](#9-api-surface-quick-reference)
+11. [Flow 6 — Upload a recording → watch it on demand](#flow-6--upload-a-recording--watch-it-on-demand)
+12. [The clustering algorithm](#6-the-clustering-algorithm)
+13. [Data model](#7-data-model)
+14. [Security model](#8-security-model)
+15. [API surface (quick reference)](#9-api-surface-quick-reference)
 
 ---
 
 ## 1. What the app does (in one minute)
 
-During a virtual **Annual General Meeting (AGM)**, thousands of shareholders type questions at
-once — most are duplicates worded differently. AGM Sentinel:
+During a virtual **Annual General Meeting (VIRTUAL MEETING)**, thousands of shareholders type questions at
+once — most are duplicates worded differently. VIRTUAL MEETING Sentinel:
 
 1. **Collects** questions in real time.
 2. **Clusters** them by meaning, so "When's the dividend?" and "What date is the payout?" become
@@ -45,11 +47,11 @@ Moderators can also **upload** the annual report and a question bank from a **Se
 
 ## 2. The three services
 
-| Service | Language / framework | Port (local) | Responsibility |
-|---|---|---|---|
-| **frontend** | Angular 22 (zoneless, signals) | 4200 | UI: ask, moderator board, setup |
-| **backend** | Spring Boot (Java 17) | 8080 | Auth, orchestration, WebSocket, persistence, proxy |
-| **ai-service** | Python (FastAPI + LangChain) | 8000 | Embeddings, clustering, RAG, PDF serving |
+| Service        | Language / framework           | Port (local) | Responsibility                                     |
+| -------------- | ------------------------------ | ------------ | -------------------------------------------------- |
+| **frontend**   | Angular 22 (zoneless, signals) | 4200         | UI: ask, moderator board, setup                    |
+| **backend**    | Spring Boot (Java 17)          | 8080         | Auth, orchestration, WebSocket, persistence, proxy |
+| **ai-service** | Python (FastAPI + LangChain)   | 8000         | Embeddings, clustering, RAG, PDF serving           |
 
 The frontend only ever talks to the **backend**. The backend talks to the **ai-service**.
 The ai-service owns all the "AI math" (vectors, clustering, LLM calls).
@@ -78,6 +80,7 @@ The ai-service owns all the "AI math" (vectors, clustering, LLM calls).
 ```
 
 Data stores:
+
 - **Questions** → H2 (local) or Postgres (prod), via the backend.
 - **Vectors / cluster centroids** → in-memory in the ai-service (FAISS + a dict of clusters).
 
@@ -99,41 +102,64 @@ boundary is a plain HTTP call, so any service can be replaced without touching t
 ## 5. Component map (every file's job)
 
 ### frontend (`frontend/src/app`)
-| File | Job |
-|---|---|
-| `app.component.ts` | Shell + nav (Ask / Board / Setup) |
-| `app.config.ts` | **Zoneless** change detection, router, HttpClient |
-| `app.routes.ts` | Routes: `/ask`, `/board`, `/setup` |
-| `pages/attendee.component.ts` | Submit a question; shows new-vs-merged result |
-| `pages/moderator.component.ts` | Live board; draft button; **citation links** |
-| `pages/admin.component.ts` | **Setup**: upload report + question bank |
-| `services/api.service.ts` | All REST calls + `parseCitation()` link builder |
-| `services/board.service.ts` | STOMP/WebSocket board subscription (signals) |
+
+| File                           | Job                                               |
+| ------------------------------ | ------------------------------------------------- |
+| `app.component.ts`                    | Shell + nav (Ask / Board / Setup / Recordings)             |
+| `app.config.ts`                       | **Zoneless** change detection, router, HttpClient          |
+| `app.routes.ts`                       | Routes: `/ask`, `/board`, `/setup`, `/recordings`, `/videos` |
+| `pages/attendee.component.ts`         | Submit a question; shows new-vs-merged result              |
+| `pages/moderator.component.ts`        | Live board; draft button; **citation links**               |
+| `pages/admin.component.ts`            | **Setup**: upload report + question bank                   |
+| `pages/videos.component.ts`           | Recordings library + segment inspector (lazy-loaded)       |
+| `pages/video-admin.component.ts`      | Upload / manage recordings (lazy-loaded)                   |
+| `components/video-player.component.ts`| **hls.js player**: quality, speed, seek preview, PiP, stats |
+| `services/api.service.ts`             | All REST calls + `parseCitation()` link builder            |
+| `services/board.service.ts`           | STOMP/WebSocket board subscription (signals)               |
+| `services/video.service.ts`           | Video API client + upload progress stream                  |
 
 ### backend (`backend/src/main/java/com/agmsentinel`)
-| Class | Job |
-|---|---|
-| `controller/AuthController` | Issue demo JWT (`/api/auth/login`) |
-| `controller/QuestionController` | Attendee submits (`POST /api/questions`) |
-| `controller/ClusterController` | Board + draft (`/api/clusters…`) |
-| `controller/AdminController` | Upload report + question bank (`/api/admin…`) |
-| `controller/SourceController` | Serve source PDFs publicly (`/api/source/{file}`) |
-| `service/QuestionService` | Orchestrates ingest → cluster → broadcast; bulk ingest |
-| `service/AiClient` | HTTP client to the Python service |
-| `service/BoardRefreshScheduler` | Periodic board re-broadcast + keep-warm |
-| `config/WebSocketConfig` | STOMP broker (`/topic`, endpoint `/ws`) |
-| `config/SecurityConfig` + `security/*` | JWT auth + role rules |
-| `model/Question` + `repository/*` | Persistence |
+
+| Class                                  | Job                                                    |
+| -------------------------------------- | ------------------------------------------------------ |
+| `controller/AuthController`            | Issue demo JWT (`/api/auth/login`)                     |
+| `controller/QuestionController`        | Attendee submits (`POST /api/questions`)               |
+| `controller/ClusterController`         | Board + draft (`/api/clusters…`)                       |
+| `controller/AdminController`           | Upload report + question bank (`/api/admin…`)          |
+| `controller/SourceController`          | Serve source PDFs publicly (`/api/source/{file}`)      |
+| `service/QuestionService`              | Orchestrates ingest → cluster → broadcast; bulk ingest |
+| `service/AiClient`                     | HTTP client to the Python service                      |
+| `service/BoardRefreshScheduler`        | Periodic board re-broadcast + keep-warm                |
+| `config/WebSocketConfig`               | STOMP broker (`/topic`, endpoint `/ws`)                |
+| `config/SecurityConfig` + `security/*` | JWT auth + role rules                                  |
+| `model/Question` + `repository/*`      | Persistence                                            |
+
+**Video library** (see [VIDEO_LIBRARY.md](VIDEO_LIBRARY.md) for the full design):
+
+| Class                              | Job                                                             |
+| ---------------------------------- | --------------------------------------------------------------- |
+| `controller/VideoAdminController`  | Upload + manage recordings (`/api/admin/videos…`)               |
+| `controller/VideoController`       | Catalogue, segment index, media bytes, **manifest rewriting**, Range |
+| `service/VideoLibraryService`      | Upload, lifecycle, the short state-transition transactions       |
+| `service/VideoProcessingWorker`    | The `@Async` transcode job (separate bean so the proxy applies)  |
+| `service/VideoTranscodeService`    | ffprobe + the HLS ladder + poster + seek filmstrip              |
+| `service/VideoStorageService`      | The NAS: path-traversal boundary + bounded range reads          |
+| `service/VideoMediaStore`          | Reads/writes media from **either** backend (filesystem or DB)   |
+| `service/VideoUrlFactory`          | Builds ticketed media URLs                                      |
+| `security/PlaybackTicketService`   | Short-lived, video-scoped playback tickets                      |
+| `config/VideoProperties` / `VideoAsyncConfig` | `video.*` config + the transcode pool                |
+| `model/Video`, `VideoRendition`, `VideoSegment` | Catalogue + ladder + **segment index**        |
 
 ### ai-service (`ai-service/app`)
-| Module | Job |
-|---|---|
-| `main.py` | FastAPI endpoints |
-| `embeddings.py` | Local sentence-transformer embeddings |
-| `clustering.py` | **Online nearest-centroid clustering** |
-| `rag.py` | FAISS knowledge base + LangChain draft chain + PDF resolve |
-| `llm.py` | LLM provider factory (Groq / Gemini / Azure) |
-| `consumer.py` | Optional Redis Streams worker (scale path) |
+
+| Module          | Job                                                        |
+| --------------- | ---------------------------------------------------------- |
+| `main.py`       | FastAPI endpoints                                          |
+| `embeddings.py` | Local sentence-transformer embeddings                      |
+| `clustering.py` | **Online nearest-centroid clustering**                     |
+| `rag.py`        | FAISS knowledge base + LangChain draft chain + PDF resolve |
+| `llm.py`        | LLM provider factory (Groq / Gemini / Azure)               |
+| `consumer.py`   | Optional Redis Streams worker (scale path)                 |
 
 ---
 
@@ -163,7 +189,8 @@ Moderator board (subscribed to /topic/board) receives the update and re-renders 
 ```
 
 Key points:
-- The attendee's POST returns immediately with *their* cluster assignment.
+
+- The attendee's POST returns immediately with _their_ cluster assignment.
 - Separately, the backend pushes the **whole ranked board** to every moderator over WebSocket.
 - Signals in `board.service.ts` make the Angular view update with no zone.js.
 
@@ -215,7 +242,7 @@ Board shows:  "Sources: nimbus-annual-report-2024.pdf p.2"   (link)
   the URL with a `#page=N` anchor.
 - The source route is **public** on purpose: the PDF opens in a new tab, which won't carry the
   JWT header, and an annual report is a public disclosure anyway.
-- **Limitation:** browsers can jump to a *page* (`#page=N`) but can't highlight an exact span;
+- **Limitation:** browsers can jump to a _page_ (`#page=N`) but can't highlight an exact span;
   the snippet is shown as a tooltip so you know what to look for.
 
 ---
@@ -259,6 +286,51 @@ Moderator (Setup)     Backend (QuestionService.submitBulk)      AI service
 
 ---
 
+## Flow 6 — Upload a recording → watch it on demand
+
+Video library page → the recording is stored on the NAS and cut into short segments so members can
+stream it without downloading it. Full design in **[VIDEO_LIBRARY.md](VIDEO_LIBRARY.md)**.
+
+```
+Moderator (/videos)        Backend                              NAS         Postgres
+   │ POST /api/admin/videos (multipart, up to 2 GB) +JWT
+   │────────────────────────►│ validate extension + size
+   │                         │ save row, stream bytes ─────────► source.mp4
+   │                         │ status = PROCESSING ───────────────────────► videos
+   │ ◄── 200 {PROCESSING} ───│   (returns immediately — a transcode takes minutes)
+   │                         │ publishEvent ─── after commit ──┐
+   │                         │                                 ▼
+   │                         │            VideoProcessingWorker (@Async pool)
+   │                         │              ffprobe → duration, w×h, fps ──► videos
+   │                         │              ffmpeg  → hls/{720p,480p,360p}/seg_*.ts
+   │  GET /api/admin/videos/{id}  (poll)      progress 0…100  ──────────► videos
+   │ ◄── {PROCESSING, 45%} ──│              poster + filmstrip
+   │                         │              read playlists → segment index ─► video_renditions
+   │ ◄── {READY, 100%} ──────│                                              └► video_segments
+
+Member (/recordings)
+   │ GET /api/videos ───────►│ catalogue + a signed playback ticket per video
+   │ GET …/master.m3u8?t= ──►│ variant list, URIs rewritten to carry the ticket
+   │ GET …/r/720p/index.m3u8?t= ► segment list, ticket appended to each segment URI
+   │ GET …/r/720p/seg_00007.ts?t= ► ONE ~6s slice   ← repeated as playback advances
+```
+
+Why this shape:
+
+- **The POST doesn't wait for the transcode.** Holding the request open for minutes would time out;
+  the UI polls for `progressPercent` instead.
+- **The worker starts after commit**, so it can't read a row its own connection can't see yet.
+- **The worker is a separate bean.** `@Async`/`@Transactional` are proxy-based — a service calling
+  its own annotated method would get neither, and the "async" transcode would run inline on the HTTP
+  thread.
+- **Manifests are rewritten on the way out.** Relative playlist URIs are resolved without the query
+  string, so without the rewrite the player would drop the ticket and the next request would 403.
+- **Media URLs use a playback ticket, not the session JWT** — the browser's media stack (`<video>`,
+  hls.js, `<img>`) cannot set an `Authorization` header, and a ticket is scoped to one video and
+  short-lived rather than granting the whole API.
+
+---
+
 ## 6. The clustering algorithm
 
 Live streams can't use batch k-means (unknown number of topics, one-at-a-time arrival). So we use
@@ -283,13 +355,23 @@ for each incoming question:
 ## 7. Data model
 
 **Persisted (H2 local / Postgres prod), owned by the backend:**
+
 - `questions(id, text, attendee_id, weight, cluster_id, created_at)`
+- `videos(id, title, status, delivery_mode, storage_mode, progress_percent, duration, w×h, …)`
+  → `video_renditions(name, resolution, bitrates, playlist_rel)`
+  → `video_segments(seq, filename, duration_seconds, **start_seconds**, byte_size)`
+- `video_assets(video_id, rel_path, data)` — media bytes, only when `storage_mode = DATABASE`
+
+`start_seconds` is what turns "seek to 21:30" into an indexed lookup for one segment instead of a
+scan. Media bytes normally live on the NAS share and the tables hold metadata only; `database`
+storage mode puts them in `video_assets` instead, for hosts with no persistent volume.
 
 **In-memory, owned by the ai-service:**
+
 - FAISS index of annual-report chunks (`page_content`, `source = "file.pdf p.N"`).
 - `clusters{ id → centroid, representative_question, size, weight_sum, draft, citations }`.
 
-The backend stores the durable *record* of each question; the ai-service holds the *vector math*
+The backend stores the durable _record_ of each question; the ai-service holds the _vector math_
 and live cluster state. They're linked by `cluster_id`.
 
 ---
@@ -301,7 +383,15 @@ and live cluster state. They're linked by `cluster_id`.
   - `/api/auth/**`, `/api/source/**`, `/ws/**`, health → **public**
   - `/api/questions/**` → attendee or moderator
   - `/api/clusters/**`, `/api/admin/**` → **moderator only**
+  - `/api/videos/**` → any signed-in member; the **media** sub-routes (GET only) are permitted at the
+    filter chain and authorised in code by a **playback ticket** (see below)
 - `/api/source/**` is intentionally public (PDF opens in a new tab without a token).
+- **Playback tickets** exist because the browser's media stack can't send headers. A ticket is signed,
+  short-lived (6h default) and scoped to **one video id** — unlike the session JWT, which is
+  long-lived and grants the whole API. A ticket for video A returns 403 on video B.
+- **Path traversal** for media is contained in one place: `VideoStorageService.resolveWithin`
+  normalises the client-supplied relative path and rejects anything escaping the video's own folder.
+  Segment and rendition names are additionally regex-validated in the controller.
 - Input validation on submissions; RAG prompt forbids inventing figures.
 
 ---
@@ -309,30 +399,47 @@ and live cluster state. They're linked by `cluster_id`.
 ## 9. API surface (quick reference)
 
 ### Backend (browser → backend)
-| Method | Path | Role | Purpose |
-|---|---|---|---|
-| POST | `/api/auth/login` | public | Get a demo JWT |
-| POST | `/api/questions` | attendee/mod | Submit a question |
-| GET | `/api/clusters` | moderator | Ranked board (with citations) |
-| POST | `/api/clusters/{id}/draft` | moderator | Draft a grounded answer |
-| GET | `/api/admin/knowledge` | moderator | Knowledge-base status |
-| POST | `/api/admin/knowledge` | moderator | Upload annual report (PDF) |
-| POST | `/api/admin/question-bank` | moderator | Upload question bank |
-| GET | `/api/source/{filename}` | public | Serve a source PDF (citation link) |
-| WS | `/ws` → `/topic/board` | — | Live board push |
+
+| Method | Path                       | Role         | Purpose                            |
+| ------ | -------------------------- | ------------ | ---------------------------------- |
+| POST   | `/api/auth/login`          | public       | Get a demo JWT                     |
+| POST   | `/api/questions`           | attendee/mod | Submit a question                  |
+| GET    | `/api/clusters`            | moderator    | Ranked board (with citations)      |
+| POST   | `/api/clusters/{id}/draft` | moderator    | Draft a grounded answer            |
+| GET    | `/api/admin/knowledge`     | moderator    | Knowledge-base status              |
+| POST   | `/api/admin/knowledge`     | moderator    | Upload annual report (PDF)         |
+| POST   | `/api/admin/question-bank` | moderator    | Upload question bank               |
+| GET    | `/api/source/{filename}`   | public       | Serve a source PDF (citation link) |
+| WS     | `/ws` → `/topic/board`     | —            | Live board push                    |
+
+**Video library** (full table in [VIDEO_LIBRARY.md](VIDEO_LIBRARY.md#8-api-surface)):
+
+| Method | Path                                   | Role      | Purpose                              |
+| ------ | -------------------------------------- | --------- | ------------------------------------ |
+| GET    | `/api/videos`                          | member    | Catalogue + a playback ticket each   |
+| GET    | `/api/videos/{id}/segments`            | member    | The segment index                    |
+| GET    | `/api/videos/{id}/segment-at?seconds=` | member    | Which slice covers that second       |
+| GET    | `/api/videos/{id}/master.m3u8?t=`      | ticket    | Variant list (rewritten)             |
+| GET    | `/api/videos/{id}/r/{rung}/*.ts?t=`    | ticket    | One segment                          |
+| GET    | `/api/videos/{id}/raw?t=`              | ticket    | Progressive fallback (`Range`-aware) |
+| GET    | `/api/admin/videos/status`             | moderator | NAS + ffmpeg health                  |
+| POST   | `/api/admin/videos`                    | moderator | Upload a recording (multipart)       |
+| POST   | `/api/admin/videos/{id}/reprocess`     | moderator | Rebuild the ladder                   |
+| DELETE | `/api/admin/videos/{id}`               | moderator | Remove rows + the NAS folder         |
 
 ### AI service (backend → ai-service)
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/health` | Liveness |
-| POST | `/ingest` | Embed + cluster one question |
-| POST | `/draft` | RAG answer + citations |
-| GET | `/clusters` | Ranked board |
-| GET | `/knowledge/status` | Indexed sources + chunk count |
-| POST | `/knowledge/upload` | Index an uploaded PDF |
-| GET | `/knowledge/files/{filename}` | Serve a source PDF |
+
+| Method | Path                          | Purpose                       |
+| ------ | ----------------------------- | ----------------------------- |
+| GET    | `/health`                     | Liveness                      |
+| POST   | `/ingest`                     | Embed + cluster one question  |
+| POST   | `/draft`                      | RAG answer + citations        |
+| GET    | `/clusters`                   | Ranked board                  |
+| GET    | `/knowledge/status`           | Indexed sources + chunk count |
+| POST   | `/knowledge/upload`           | Index an uploaded PDF         |
+| GET    | `/knowledge/files/{filename}` | Serve a source PDF            |
 
 ---
 
-*This document reflects the current codebase, including the Setup uploads and citation-link
-features. Diagrams are ASCII so they render anywhere (GitHub, editors, PDF exports).*
+_This document reflects the current codebase, including the Setup uploads and citation-link
+features. Diagrams are ASCII so they render anywhere (GitHub, editors, PDF exports)._

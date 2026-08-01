@@ -1,4 +1,4 @@
-# AGM Sentinel — How It Works (Complete Walkthrough)
+# VIRTUAL MEETING Sentinel — How It Works (Complete Walkthrough)
 
 A code-level walkthrough of the whole system in runtime sequence, followed by deep dives
 into the three subsystems that carry the most logic: **online clustering**, **RAG
@@ -126,8 +126,8 @@ See the **RAG deep dive** below.
    from the AI service (`GET /clusters`) and pushes them to the STOMP topic `/topic/board`
    (`backend/.../service/QuestionService.java:79-82`).
 2. **Ranking:** clusters are ordered by `priority_score = log(1+size) × (1 + weight_sum)`
-   (`ai-service/app/clustering.py:37-40`) — *how many people asked* × *how much equity they
-   hold*, with log-damping.
+   (`ai-service/app/clustering.py:37-40`) — _how many people asked_ × _how much equity they
+   hold_, with log-damping.
 3. The Angular `BoardService` holds a STOMP+SockJS connection subscribed to `/topic/board`;
    each push updates an Angular **signal**, which re-renders the moderator view instantly
    (`frontend/src/app/services/board.service.ts:20-38`). Signals (not RxJS subjects) are used
@@ -148,6 +148,59 @@ Both feed the same `OnlineClusterer`:
   to a Redis stream; a separate `consumer.py` worker drains it at a steady rate
   (`ai-service/app/consumer.py:37-56`). Adds **backpressure**: a spike of 10,000 simultaneous
   writers is absorbed by the stream instead of overwhelming embedding/clustering throughput.
+
+---
+
+## Phase 5 — Watching the recording afterwards
+
+The live board is only half the meeting; the recording has to be watchable too. That runs on a
+different path from everything above — no AI service, no WebSocket, and the bytes never go near
+Postgres.
+
+```
+Moderator uploads recording
+   → POST /api/admin/videos (multipart, up to 2 GB)
+   → stream bytes to the NAS share (never buffered in the JVM heap)
+   → save row as PROCESSING, return 200 IMMEDIATELY
+   → publish VideoQueuedEvent, consumed AFTER COMMIT by the transcode worker
+        → ffprobe: duration, resolution, frame rate, audio?
+        → ffmpeg (one decode pass): cut into ~6s segments at 720p/480p/360p
+        → poster frame + seek-preview filmstrip
+        → read the generated playlists back → one DB row per segment
+        → READY
+Member opens /recordings
+   → GET /api/videos: catalogue + a signed playback ticket per video
+   → GET master.m3u8: variant list, URIs rewritten to carry the ticket
+   → GET r/720p/index.m3u8: segment list, ticket appended to each URI
+   → GET r/720p/seg_00007.ts: ONE ~6s slice, repeated as playback advances
+```
+
+Three decisions in there are worth understanding, because each one is the answer to a way this
+naïvely breaks:
+
+**The upload returns before the transcode.** A 45-minute recording takes minutes to segment. Holding
+the HTTP request open for that length would time out, so the POST finishes as soon as the bytes are
+safe on the NAS and the admin page polls for `progressPercent`. Each state transition is its own
+short transaction — one transaction spanning the ffmpeg run would pin a database connection for
+minutes and make progress invisible until the very end.
+
+**The worker is a separate bean, and it starts after commit.** `@Async` and `@Transactional` are
+proxy-based, so a service calling its own annotated method gets neither: the "async" transcode would
+run inline on the HTTP thread and each "transaction" would silently join the caller's. Crossing a
+bean boundary is what makes both annotations real. And `@TransactionalEventListener(AFTER_COMMIT)`
+matters because a worker started mid-transaction would look up a row its own connection can't see.
+
+**Media URLs carry a playback ticket, not the session JWT.** `<video src>`, hls.js and `<img>` are
+fetched by the browser's media stack, which cannot attach an `Authorization` header. Putting the
+session JWT in the query string would be worse — it's long-lived and grants the whole API. A ticket
+is signed, short-lived, and scoped to one video id. Because relative playlist URIs are resolved
+*without* the query string, the manifests are rewritten on the way out so the ticket is carried onto
+every child URI; otherwise the player would resolve `720p/index.m3u8`, drop the `?t=`, and 403 on its
+very next request.
+
+The payoff is the segment index in `video_segments`: `start_seconds` per slice turns "seek to 21:30"
+into a single indexed lookup for one ~2 MB file, instead of streaming from zero. Full design in
+[VIDEO_LIBRARY.md](VIDEO_LIBRARY.md).
 
 ---
 
@@ -219,7 +272,7 @@ priority_score = log(1 + size) × (1 + weight_sum)
 - **`size`** = how many asked. `log(1+size)` damps it so a cluster of 400 doesn't outrank
   everything 400× — the 5th duplicate matters far more than the 400th.
 - **`weight_sum`** = sum of askers' **shareholder weights** (equity held). Boosts questions
-  from large shareholders even with fewer askers — right for an AGM where votes are
+  from large shareholders even with fewer askers — right for an VIRTUAL MEETING where votes are
   share-weighted.
 
 `top(n)` sorts by this score descending and returns the top 20.
@@ -267,10 +320,11 @@ embed/cluster with **no LLM API key** — the key is needed only to draft.
 ### Why it resists hallucination
 
 The system prompt (`ai-service/app/rag.py:24-33`) does the heavy lifting:
-- *"Answer ONLY from the provided context excerpts"* — no outside knowledge.
-- *"If the context does not contain the answer, say you cannot find it… recommend
-  escalation"* — a graceful "I don't know" instead of a confident fabrication.
-- *"Keep it under 120 words. Do not invent figures."* — critical for financial data.
+
+- _"Answer ONLY from the provided context excerpts"_ — no outside knowledge.
+- _"If the context does not contain the answer, say you cannot find it… recommend
+  escalation"_ — a graceful "I don't know" instead of a confident fabrication.
+- _"Keep it under 120 words. Do not invent figures."_ — critical for financial data.
 
 Reinforced by `temperature=0.2` (`ai-service/app/llm.py:19`) — deterministic, conservative
 output. Every claim is backed by a citation to a real page, so a moderator verifies before it
@@ -280,7 +334,7 @@ reaches shareholders. This is L1 drafting — a human still approves.
 
 `ai-service/app/llm.py:13-30` is a factory: `LLM_PROVIDER` in `.env` swaps Groq ↔ Gemini ↔
 (future) Azure OpenAI with **no RAG code change**. The rest of the app never imports a vendor
-SDK. Vendor imports live *inside* each branch, so you only install the provider you use.
+SDK. Vendor imports live _inside_ each branch, so you only install the provider you use.
 
 ---
 
@@ -293,11 +347,11 @@ Login is **two stages**, orchestrated in `backend/.../service/AuthService.java`,
 
 `backend/.../security/JwtService.java` issues two kinds of JWT:
 
-| | Access token | MFA-challenge token |
-|---|---|---|
-| Claims | `role` + `typ=access` | **no role** + `typ=mfa` |
-| TTL | 8 hours (`JwtService.java:22`) | **5 minutes** (`JwtService.java:50`) |
-| Grants | real access | **nothing** — only the right to finish step 2 |
+|        | Access token                   | MFA-challenge token                           |
+| ------ | ------------------------------ | --------------------------------------------- |
+| Claims | `role` + `typ=access`          | **no role** + `typ=mfa`                       |
+| TTL    | 8 hours (`JwtService.java:22`) | **5 minutes** (`JwtService.java:50`)          |
+| Grants | real access                    | **nothing** — only the right to finish step 2 |
 
 The gate is `backend/.../security/JwtAuthFilter.java:38`:
 `if (!jwt.isMfaChallenge(claims) && role != null)`. A challenge token has `typ=mfa` and no
@@ -315,11 +369,12 @@ JWT. This is what makes a half-finished login safe.
 
 ### Stage 2a — PIN / TOTP (`AuthService.java:133-148`)
 
-`requireChallengeUser()` re-derives the user *from the challenge token* — the client can't
+`requireChallengeUser()` re-derives the user _from the challenge token_ — the client can't
 name any user; it must present the valid, unexpired `typ=mfa` token from stage 1. Then:
+
 - **PIN** → BCrypt-compare against the stored PIN hash.
 - **TOTP** → recompute the expected time-based code from the shared secret and compare. The
-  TOTP secret + QR are set up during enrollment (`AuthService.java:158-184`) and only *enabled*
+  TOTP secret + QR are set up during enrollment (`AuthService.java:158-184`) and only _enabled_
   after the user confirms one working code — so a misconfigured authenticator can't lock them
   out.
 
@@ -332,6 +387,7 @@ Principle: **the private key and the biometric never leave the device.** The ser
 stores a **public key**.
 
 **Enrollment (registration ceremony)** — once, while logged in:
+
 1. `startRegistration` (`WebAuthnService.java:81-101`) generates creation options (random
    challenge, relying-party id, user handle, allowed algorithms), stashed server-side.
 2. Browser's `startRegistration()` (`auth.service.ts:117-127`) → the device authenticator
@@ -340,6 +396,7 @@ stores a **public key**.
    verifies the attestation and stores `(credentialId, publicKeyCose, signatureCount)`.
 
 **Login (assertion ceremony)** — as an MFA second factor:
+
 1. `startAssertion` (`WebAuthnService.java:126-136`) issues a fresh challenge.
 2. Browser's `startAuthentication()` (`auth.service.ts:135-143`) has the device **sign the
    challenge with the private key** after a local biometric check.
@@ -347,12 +404,13 @@ stores a **public key**.
    stored public key. On success → full access token.
 
 Two security details:
+
 - **`rpId`/`origin` binding** (`WebAuthnService.java:66-73`) — the credential is
   cryptographically bound to the frontend domain, so a passkey from your Vercel site can't be
   replayed by a phishing site. WebAuthn's built-in phishing resistance.
 - **Signature counter / clone detection** (`WebAuthnService.java:149-151`) — each
   authenticator increments a counter per use; the server persists it. A counter that goes
-  *backwards* signals a cloned authenticator.
+  _backwards_ signals a cloned authenticator.
 
 ### Two other entry points
 
@@ -365,6 +423,6 @@ Two security details:
 
 ## The recurring theme
 
-Across all three subsystems: **do the expensive/risky thing lazily and behind a clear gate** —
-lazy LLM chain, lazy clusterer, and a challenge token that grants nothing until the second
-factor clears.
+Across all four subsystems: **do the expensive/risky thing lazily and behind a clear gate** —
+lazy LLM chain, lazy clusterer, a challenge token that grants nothing until the second factor
+clears, and a video that is fetched one segment at a time behind a ticket scoped to that one video.

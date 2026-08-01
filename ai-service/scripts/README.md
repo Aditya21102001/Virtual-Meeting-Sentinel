@@ -3,6 +3,7 @@
 Two helpers to make the project demo-ready for recruiters.
 
 ## 1. `generate_report.py` — mock annual report
+
 Creates `knowledge/nimbus-annual-report-2024.pdf`, a realistic report whose facts
 (dividend ₹4.50, revenue +18.3%, buyback, board changes, ESG, expansion) match the seeded
 questions — so the RAG draft answers are grounded and citable.
@@ -12,11 +13,13 @@ cd ai-service
 ./.venv/Scripts/python.exe scripts/generate_report.py     # Windows venv
 # or:  python scripts/generate_report.py
 ```
+
 Already generated once; re-run only if you change the content.
 (Needs `reportlab`: `pip install reportlab` — a dev-only dep, not required at runtime.)
 
 ## 2. `seed_questions.py` — populate the live board
-Fires ~45 AGM questions through the backend. Many are paraphrases that collapse into single
+
+Fires ~45 VIRTUAL MEETING questions through the backend. Many are paraphrases that collapse into single
 clusters (semantic dedup in action); a few are singletons. Weights simulate different
 shareholder sizes so the ranking is interesting.
 

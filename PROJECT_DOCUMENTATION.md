@@ -1,18 +1,19 @@
-# AGM Sentinel — Project Documentation
+# VIRTUAL MEETING Sentinel — Project Documentation
 
 **Live Crowd-Question Intelligence for Virtual Annual General Meetings**
 
-| | |
-|---|---|
-| **Author** | Aditya Yadav |
-| **Type** | Full-Stack + Generative AI · Polyglot Microservices |
-| **Stack** | Angular · Spring Boot (Java) · Python (FastAPI + LangChain) |
-| **Status** | Built & verified locally; deployable on 100% free infrastructure |
-| **Repository** | `agm-sentinel` (Angular / Spring Boot / Python monorepo) |
+|                |                                                                  |
+| -------------- | ---------------------------------------------------------------- |
+| **Author**     | Aditya Yadav                                                     |
+| **Type**       | Full-Stack + Generative AI · Polyglot Microservices              |
+| **Stack**      | Angular · Spring Boot (Java) · Python (FastAPI + LangChain)      |
+| **Status**     | Built & verified locally; deployable on 100% free infrastructure |
+| **Repository** | `agm-sentinel` (Angular / Spring Boot / Python monorepo)         |
 
 ---
 
 ## Table of Contents
+
 1. [Abstract](#1-abstract)
 2. [Problem Statement](#2-problem-statement)
 3. [Objectives](#3-objectives)
@@ -35,8 +36,8 @@
 
 ## 1. Abstract
 
-AGM Sentinel is a real-time, AI-powered system that manages the flood of questions asked
-during a large virtual **Annual General Meeting (AGM)**, town-hall, or webinar. When
+VIRTUAL MEETING Sentinel is a real-time, AI-powered system that manages the flood of questions asked
+during a large virtual **Annual General Meeting (VIRTUAL MEETING)**, town-hall, or webinar. When
 thousands of shareholders type questions simultaneously, 60–70% are duplicates phrased
 differently, and human moderators cannot keep up.
 
@@ -66,7 +67,7 @@ During the Q&A window:
   not improvised.
 
 No off-the-shelf tool performs **live semantic clustering + ranking + grounded drafting** on a
-real-time question stream. AGM Sentinel solves this specific, high-value problem.
+real-time question stream. VIRTUAL MEETING Sentinel solves this specific, high-value problem.
 
 ---
 
@@ -85,6 +86,7 @@ real-time question stream. AGM Sentinel solves this specific, high-value problem
 ## 4. Scope
 
 **In scope**
+
 - Real-time question ingestion, semantic clustering, ranking, and RAG drafting.
 - JWT-based role separation (attendee vs. moderator).
 - Live moderator board over STOMP/WebSocket.
@@ -92,9 +94,13 @@ real-time question stream. AGM Sentinel solves this specific, high-value problem
   question bank (bulk-ingested and clustered).
 - **Cited answers**: each draft lists its sources as **clickable links that open the source
   PDF at the cited page**.
+- **Video library**: moderators upload the meeting recording to a NAS share; it is transcoded into
+  an adaptive HLS ladder of ~6-second segments and indexed per segment, so members stream it on
+  demand in a full-control player without downloading the file.
 - Free-tier cloud deployment.
 
 **Out of scope (future work)**
+
 - Full shareholder identity federation (OAuth2/MFA) — stubbed via demo JWT.
 - Horizontal auto-scaling and Kafka-grade throughput (Redis Streams path included as the
   production-scale option).
@@ -105,17 +111,20 @@ real-time question stream. AGM Sentinel solves this specific, high-value problem
 
 ## 5. Technology Stack
 
-| Layer | Technology | Rationale |
-|---|---|---|
-| Frontend | **Angular 22** (standalone, **zoneless**, signals), STOMP/SockJS | Real-time board UI; current best-practice change detection |
-| Core API | **Spring Boot 3 / Java 17** | Enterprise auth, WebSocket fan-out, transactional store |
-| AI Service | **Python 3.11 · FastAPI · LangChain** | The entire LLM/embeddings ecosystem lives in Python |
-| Embeddings | **sentence-transformers** `all-MiniLM-L6-v2` (local) | Runs in-process; zero API cost |
-| LLM | **Groq (Llama 3.3 70B)** / **Google Gemini** — swappable to Azure OpenAI | Free inference; LangChain abstracts the provider |
-| Vector search | **FAISS** (knowledge base) + **pgvector** (persistence) | Fast similarity search without a paid vector DB |
-| Database | **PostgreSQL + pgvector** (Neon free tier) | Relational + vector in one store |
-| Messaging | **Redis Streams** (Upstash free tier) — optional | Backpressure for high-volume ingest |
-| Auth | **JWT (JJWT)** | Stateless role separation |
+| Layer         | Technology                                                               | Rationale                                                  |
+| ------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| Frontend      | **Angular 22** (standalone, **zoneless**, signals), STOMP/SockJS         | Real-time board UI; current best-practice change detection |
+| Core API      | **Spring Boot 3 / Java 17**                                              | Enterprise auth, WebSocket fan-out, transactional store    |
+| AI Service    | **Python 3.11 · FastAPI · LangChain**                                    | The entire LLM/embeddings ecosystem lives in Python        |
+| Embeddings    | **sentence-transformers** `all-MiniLM-L6-v2` (local)                     | Runs in-process; zero API cost                             |
+| LLM           | **Groq (Llama 3.3 70B)** / **Google Gemini** — swappable to Azure OpenAI | Free inference; LangChain abstracts the provider           |
+| Vector search | **FAISS** (knowledge base) + **pgvector** (persistence)                  | Fast similarity search without a paid vector DB            |
+| Database      | **PostgreSQL + pgvector** (Neon free tier)                               | Relational + vector in one store                           |
+| Messaging     | **Redis Streams** (Upstash free tier) — optional                         | Backpressure for high-volume ingest                        |
+| Auth          | **JWT (JJWT)**                                                           | Stateless role separation                                  |
+| Video storage | **NAS share** (SMB/UNC or mounted path), or PostgreSQL `bytea`           | Filesystem by default; database mode for hosts with no persistent volume |
+| Video transcode | **FFmpeg** → HLS (H.264/AAC, MPEG-TS segments)                        | Adaptive-bitrate segmentation; the industry-standard tool   |
+| Video playback | **hls.js** over Media Source Extensions                                 | HLS in every browser, plus a manual quality menu and metrics |
 
 **Why polyglot?** Java gives transactional, secure, high-concurrency business logic; Python
 gives first-class access to embeddings, vector stores, and LLM orchestration. Splitting them
@@ -164,36 +173,51 @@ each service single-responsibility and independently deployable.
 ## 7. Module Descriptions
 
 ### 7.1 Frontend (Angular) — `frontend/`
-| File | Responsibility |
-|---|---|
-| `app.config.ts` | **Zoneless** change detection, router, HttpClient providers |
-| `pages/attendee.component.ts` | Question submission; shows new-topic vs. merged result |
-| `pages/moderator.component.ts` | Live ranked board; draft generation; **citation links** |
-| `pages/admin.component.ts` | **Setup**: upload annual report + question bank |
-| `services/api.service.ts` | REST calls + `parseCitation()` (builds page-anchored PDF links) |
-| `services/board.service.ts` | STOMP/SockJS subscription to `/topic/board` (signals) |
+
+| File                           | Responsibility                                                  |
+| ------------------------------ | --------------------------------------------------------------- |
+| `app.config.ts`                | **Zoneless** change detection, router, HttpClient providers     |
+| `pages/attendee.component.ts`  | Question submission; shows new-topic vs. merged result          |
+| `pages/moderator.component.ts` | Live ranked board; draft generation; **citation links**         |
+| `pages/admin.component.ts`     | **Setup**: upload annual report + question bank                 |
+| `services/api.service.ts`      | REST calls + `parseCitation()` (builds page-anchored PDF links) |
+| `services/board.service.ts`    | STOMP/SockJS subscription to `/topic/board` (signals)           |
+| `pages/videos.component.ts`    | Recordings library + segment inspector (lazy-loaded route)      |
+| `pages/video-admin.component.ts` | Upload / manage recordings, with live transcode progress       |
+| `components/video-player.component.ts` | **hls.js player**: quality menu, speed, filmstrip seek preview, PiP, keyboard, stats |
+| `services/video.service.ts`    | Video API client + upload-progress stream                       |
 
 ### 7.2 Backend (Spring Boot) — `backend/`
-| Class | Responsibility |
-|---|---|
-| `QuestionService` | Orchestrates persist → AI cluster → broadcast; bulk ingest |
-| `AiClient` | WebClient over the Python service (ingest, draft, upload, fetch PDF) |
-| `controller/AdminController` | Upload annual report + question bank (moderator) |
-| `controller/SourceController` | Serve source PDFs publicly (citation-link target) |
-| `WebSocketConfig` | STOMP broker on `/topic`, endpoint `/ws` |
-| `BoardRefreshScheduler` | Periodic board re-broadcast + keep-warm ping |
-| `SecurityConfig` / `JwtService` / `JwtAuthFilter` | JWT auth + role rules |
-| `Question` / `QuestionRepository` | JPA persistence |
+
+| Class                                             | Responsibility                                                       |
+| ------------------------------------------------- | -------------------------------------------------------------------- |
+| `QuestionService`                                 | Orchestrates persist → AI cluster → broadcast; bulk ingest           |
+| `AiClient`                                        | WebClient over the Python service (ingest, draft, upload, fetch PDF) |
+| `controller/AdminController`                      | Upload annual report + question bank (moderator)                     |
+| `controller/SourceController`                     | Serve source PDFs publicly (citation-link target)                    |
+| `WebSocketConfig`                                 | STOMP broker on `/topic`, endpoint `/ws`                             |
+| `BoardRefreshScheduler`                           | Periodic board re-broadcast + keep-warm ping                         |
+| `SecurityConfig` / `JwtService` / `JwtAuthFilter` | JWT auth + role rules                                                |
+| `Question` / `QuestionRepository`                 | JPA persistence                                                      |
+| `VideoLibraryService`                             | Video upload, lifecycle, short state-transition transactions          |
+| `VideoProcessingWorker`                           | The `@Async` transcode job (separate bean, so the proxy applies)      |
+| `VideoTranscodeService`                           | ffprobe + HLS ladder + poster + seek filmstrip                        |
+| `VideoStorageService`                             | The NAS: path-traversal boundary + bounded ranged reads               |
+| `PlaybackTicketService` / `VideoUrlFactory`        | Video-scoped playback tickets + ticketed URL construction             |
+| `controller/VideoController`                      | Catalogue, segment index, media bytes, manifest rewriting, HTTP Range |
+| `controller/VideoAdminController`                 | Upload + manage recordings (moderator)                                |
+| `Video` / `VideoRendition` / `VideoSegment`        | Catalogue, ladder rungs, and the segment index                        |
 
 ### 7.3 AI Service (Python) — `ai-service/`
-| Module | Responsibility |
-|---|---|
-| `main.py` | FastAPI endpoints (ingest, draft, clusters, knowledge upload/serve) |
-| `embeddings.py` | Local sentence-transformer embeddings (LangChain-compatible) |
-| `clustering.py` | **Online nearest-centroid clustering** (core algorithm) |
-| `rag.py` | FAISS knowledge base + LangChain draft chain + runtime PDF ingest/serve |
-| `llm.py` | Provider factory — Groq / Gemini / Azure, one-line swap |
-| `consumer.py` | Optional Redis Streams worker (production-scale ingest) |
+
+| Module          | Responsibility                                                          |
+| --------------- | ----------------------------------------------------------------------- |
+| `main.py`       | FastAPI endpoints (ingest, draft, clusters, knowledge upload/serve)     |
+| `embeddings.py` | Local sentence-transformer embeddings (LangChain-compatible)            |
+| `clustering.py` | **Online nearest-centroid clustering** (core algorithm)                 |
+| `rag.py`        | FAISS knowledge base + LangChain draft chain + runtime PDF ingest/serve |
+| `llm.py`        | Provider factory — Groq / Gemini / Azure, one-line swap                 |
+| `consumer.py`   | Optional Redis Streams worker (production-scale ingest)                 |
 
 ---
 
@@ -201,7 +225,7 @@ each service single-responsibility and independently deployable.
 
 Batch clustering (e.g., k-means) needs all points up front and a fixed number of clusters `k`.
 A live question stream has neither — questions arrive one at a time and the number of distinct
-topics is unknown. AGM Sentinel therefore uses **incremental nearest-centroid clustering**:
+topics is unknown. VIRTUAL MEETING Sentinel therefore uses **incremental nearest-centroid clustering**:
 
 ```
 for each incoming question q:
@@ -217,6 +241,7 @@ for each incoming question q:
 ```
 
 **Properties**
+
 - **O(number of clusters)** per question → real-time.
 - **No `k` required** — topics emerge organically.
 - **Incremental centroid** (running mean) keeps each cluster's center accurate as it grows.
@@ -235,7 +260,7 @@ To keep draft answers factual, the system uses **Retrieval-Augmented Generation*
 company's annual report:
 
 1. **Ingest:** PDFs are split into ~1000-char chunks, embedded locally, and indexed in **FAISS**.
-   This happens at **startup** (from `ai-service/knowledge/`) *and* at **runtime** when a
+   This happens at **startup** (from `ai-service/knowledge/`) _and_ at **runtime** when a
    moderator uploads a report via the Setup page (`add_pdf` extends the live index).
 2. **Retrieve:** for a cluster's representative question, fetch the top-k (default 4) most
    similar chunks.
@@ -286,35 +311,117 @@ Because the LLM is accessed through LangChain's provider abstraction (`llm.py`),
 An **IVFFlat** index on `clusters.centroid` (`vector_cosine_ops`) accelerates nearest-centroid
 lookups at scale.
 
+### Video library tables
+
+`videos ──1:N──► video_renditions ──1:N──► video_segments`
+
+**`videos`** — the catalogue row
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID (PK) | also names the folder on the NAS |
+| title / description | TEXT | |
+| original_filename / content_type / size_bytes | | as uploaded |
+| storage_dir | TEXT | folder under the NAS root |
+| source_rel / master_playlist_rel / poster_rel / sprite_rel | TEXT | paths **relative** to `storage_dir` |
+| duration_seconds / width / height / frame_rate / has_audio | | from ffprobe |
+| status | VARCHAR | UPLOADED → PROCESSING → READY / FAILED |
+| delivery_mode | VARCHAR | HLS, or PROGRESSIVE when FFmpeg is absent |
+| progress_percent / error_message | | drives the admin UI |
+
+**`video_renditions`** — one row per ladder rung
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID (PK) | |
+| video_id | UUID (FK, cascade) | |
+| name | VARCHAR | `720p` — also the folder name |
+| width / height / video_bitrate_kbps / audio_bitrate_kbps | INT | drives the quality menu |
+| playlist_rel | TEXT | `hls/720p/index.m3u8` |
+
+**`video_segments`** — the segment index
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID (PK) | |
+| rendition_id | UUID (FK, cascade) | |
+| seq | INT | ordinal, unique per rendition |
+| filename | TEXT | `seg_00042.ts` |
+| duration_seconds | DOUBLE | |
+| **start_seconds** | DOUBLE | offset into the video |
+| byte_size | BIGINT | |
+
+**`video_assets`** — media bytes, only for videos with `storage_mode = 'DATABASE'`
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID (PK) | |
+| video_id | UUID (FK, cascade) | |
+| rel_path | TEXT | same relative addressing as the filesystem (`hls/720p/seg_00042.ts`) |
+| content_type / byte_size | | |
+| data | BYTEA | the bytes |
+
+By default only **metadata** is stored and the media bytes live on the NAS; `database` storage mode
+puts them in `video_assets` instead, for hosts with no persistent volume. A composite index on
+`(rendition_id, seq)` orders the playlist, and `start_seconds` is what turns "seek to 21:30" into a
+single indexed lookup for one segment rather than a scan:
+
+```sql
+SELECT * FROM video_segments
+ WHERE rendition_id = ? AND start_seconds <= :pos AND :pos < start_seconds + duration_seconds
+ ORDER BY start_seconds DESC LIMIT 1;
+```
+
 ---
 
 ## 11. API Reference
 
 ### Spring Boot (backend)
-| Method | Path | Role | Purpose |
-|---|---|---|---|
-| POST | `/api/auth/login` | public | Issue a demo JWT `{username, role}` |
-| POST | `/api/questions` | attendee/mod | Submit a question → returns cluster assignment |
-| GET | `/api/clusters?limit=N` | moderator | Current ranked board (includes citations) |
-| POST | `/api/clusters/{id}/draft` | moderator | Trigger RAG draft for a cluster |
-| GET | `/api/admin/knowledge` | moderator | Knowledge-base status (sources, chunk count) |
-| POST | `/api/admin/knowledge` | moderator | Upload annual-report PDF (indexed into RAG) |
-| POST | `/api/admin/question-bank` | moderator | Upload question bank (bulk-ingested) |
-| GET | `/api/source/{filename}` | public | Serve a source PDF (citation-link target) |
-| WS | `/ws` → subscribe `/topic/board` | — | Live board push |
+
+| Method | Path                             | Role         | Purpose                                        |
+| ------ | -------------------------------- | ------------ | ---------------------------------------------- |
+| POST   | `/api/auth/login`                | public       | Issue a demo JWT `{username, role}`            |
+| POST   | `/api/questions`                 | attendee/mod | Submit a question → returns cluster assignment |
+| GET    | `/api/clusters?limit=N`          | moderator    | Current ranked board (includes citations)      |
+| POST   | `/api/clusters/{id}/draft`       | moderator    | Trigger RAG draft for a cluster                |
+| GET    | `/api/admin/knowledge`           | moderator    | Knowledge-base status (sources, chunk count)   |
+| POST   | `/api/admin/knowledge`           | moderator    | Upload annual-report PDF (indexed into RAG)    |
+| POST   | `/api/admin/question-bank`       | moderator    | Upload question bank (bulk-ingested)           |
+| GET    | `/api/source/{filename}`         | public       | Serve a source PDF (citation-link target)      |
+| WS     | `/ws` → subscribe `/topic/board` | —            | Live board push                                |
+
+**Video library** — `member` = any signed-in user; `ticket` = authorised by a signed, video-scoped
+playback ticket in the URL, because the browser's media stack cannot send an `Authorization` header.
+
+| Method | Path                                       | Role      | Purpose                                  |
+| ------ | ------------------------------------------ | --------- | ---------------------------------------- |
+| GET    | `/api/videos`                              | member    | Catalogue of READY videos + a ticket each |
+| GET    | `/api/videos/{id}`                         | member    | One catalogue entry                      |
+| GET    | `/api/videos/{id}/segments?rendition=`     | member    | The segment index for a rung             |
+| GET    | `/api/videos/{id}/segment-at?seconds=`     | member    | Which segment covers that second         |
+| GET    | `/api/videos/{id}/master.m3u8?t=`          | ticket    | Variant list (URIs rewritten)            |
+| GET    | `/api/videos/{id}/r/{rung}/index.m3u8?t=`  | ticket    | Media playlist (URIs rewritten)          |
+| GET    | `/api/videos/{id}/r/{rung}/seg_NNNNN.ts?t=`| ticket    | One ~6s segment                          |
+| GET    | `/api/videos/{id}/raw?t=`                  | ticket    | Progressive fallback, `Range`-aware      |
+| GET    | `/api/videos/{id}/poster.jpg?t=`           | ticket    | Catalogue thumbnail                      |
+| GET    | `/api/videos/{id}/sprite.jpg?t=`           | ticket    | Seek-preview filmstrip                   |
+| GET    | `/api/admin/videos/status`                 | moderator | NAS reachability, free space, FFmpeg     |
+| GET    | `/api/admin/videos`                        | moderator | All videos incl. PROCESSING / FAILED     |
+| POST   | `/api/admin/videos`                        | moderator | Upload a recording (multipart)           |
+| PATCH  | `/api/admin/videos/{id}`                   | moderator | Edit title / description                 |
+| POST   | `/api/admin/videos/{id}/reprocess`         | moderator | Rebuild the ladder from the original     |
+| DELETE | `/api/admin/videos/{id}`                   | moderator | Delete rows + the NAS folder             |
 
 ### Python AI service
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/health` | Liveness / keep-warm |
-| POST | `/ingest` | Embed + cluster one question |
-| POST | `/draft` | RAG draft for a cluster (returns answer + citations) |
-| GET | `/clusters?limit=N` | Ranked cluster board |
-| GET | `/knowledge/status` | Indexed sources + chunk count |
-| POST | `/knowledge/upload` | Index an uploaded PDF at runtime |
-| GET | `/knowledge/files/{filename}` | Serve a source PDF |
+
+| Method | Path                          | Purpose                                              |
+| ------ | ----------------------------- | ---------------------------------------------------- |
+| GET    | `/health`                     | Liveness / keep-warm                                 |
+| POST   | `/ingest`                     | Embed + cluster one question                         |
+| POST   | `/draft`                      | RAG draft for a cluster (returns answer + citations) |
+| GET    | `/clusters?limit=N`           | Ranked cluster board                                 |
+| GET    | `/knowledge/status`           | Indexed sources + chunk count                        |
+| POST   | `/knowledge/upload`           | Index an uploaded PDF at runtime                     |
+| GET    | `/knowledge/files/{filename}` | Serve a source PDF                                   |
 
 **Example — deduplication in action**
+
 ```bash
 POST /ingest {"question_id":"1","text":"When will the dividend be paid?", ...}
 POST /ingest {"question_id":"2","text":"What is the date for dividend payout?", ...}
@@ -334,13 +441,10 @@ GET  /clusters
 5. Spring Boot broadcasts the refreshed ranked board to `/topic/board`.
 6. All subscribed moderator clients update in real time over WebSocket.
 
-**Setup flows (moderator):**
-7. **Upload annual report** → backend forwards the PDF to the AI service, which chunks, embeds,
-   and adds it to the live FAISS index (no restart).
-8. **Upload question bank** → backend splits the file into lines and bulk-ingests each through the
-   clustering pipeline, broadcasting the board once at the end.
-9. **Click a citation** → opens `/api/source/{file}#page=N` in a new tab; the backend proxies the
-   PDF and the browser jumps to the cited page.
+**Setup flows (moderator):** 7. **Upload annual report** → backend forwards the PDF to the AI service, which chunks, embeds,
+and adds it to the live FAISS index (no restart). 8. **Upload question bank** → backend splits the file into lines and bulk-ingests each through the
+clustering pipeline, broadcasting the board once at the end. 9. **Click a citation** → opens `/api/source/{file}#page=N` in a new tab; the backend proxies the
+PDF and the browser jumps to the cited page.
 
 > Full step-by-step sequence diagrams for every flow are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -356,6 +460,19 @@ GET  /clusters
 - **CORS** restricted (configurable to the Vercel domain in production).
 - **CSRF disabled** (stateless API), **sessions stateless**.
 - **Input validation** via Bean Validation (`@NotBlank`, size limits) on submissions.
+- **Playback tickets for media.** `<video src>`, hls.js and `<img>` are fetched by the browser's
+  media stack, which cannot attach an `Authorization` header, so those routes are permitted in the
+  filter chain (GET only) and authorised in code. The credential is *not* the session JWT — it is a
+  signed token scoped to **one video id** and short-lived (6h default), so a leaked media URL grants
+  read access to one recording for a bounded time rather than the whole API. A ticket for video A is
+  rejected on video B.
+- **Media path traversal** is contained in one method, `VideoStorageService.resolveWithin`: it folds
+  `\` to `/`, normalises, and rejects anything resolving outside the video's own folder. Rendition and
+  segment names are additionally regex-validated in the controller, so only generated filenames are
+  ever served.
+- **Upload validation** for video: extension allow-list and a per-file byte ceiling
+  (`VIDEO_MAX_UPLOAD_BYTES`, 2 GiB default). The multipart ceiling was raised for video, so the
+  knowledge-PDF endpoint enforces its own 25 MB limit rather than relying on the shared global one.
 - Prompt hardening in RAG: the model is instructed to answer only from retrieved context and
   never fabricate figures — reducing hallucination risk on financial data.
 
@@ -365,15 +482,15 @@ GET  /clusters
 
 Full step-by-step in `DEPLOY.md`. Summary — **no credit card on any service**:
 
-| Layer | Free host | Notes |
-|---|---|---|
-| Frontend | **Vercel** | Static hosting, SPA rewrites via `vercel.json` |
-| Backend | **Koyeb** (or Render) | Dockerfile build; idle-sleep mitigated by UptimeRobot |
-| AI service | **Hugging Face Spaces** (Docker) | Embedding model pre-baked into image |
-| LLM | **Groq / Gemini** | Free API keys, email login only |
-| Database | **Neon** | Postgres + pgvector |
-| Redis (optional) | **Upstash** | Redis Streams |
-| Keep-warm | **UptimeRobot** | Prevents free-tier cold sleeps |
+| Layer            | Free host                        | Notes                                                 |
+| ---------------- | -------------------------------- | ----------------------------------------------------- |
+| Frontend         | **Vercel**                       | Static hosting, SPA rewrites via `vercel.json`        |
+| Backend          | **Koyeb** (or Render)            | Dockerfile build; idle-sleep mitigated by UptimeRobot |
+| AI service       | **Hugging Face Spaces** (Docker) | Embedding model pre-baked into image                  |
+| LLM              | **Groq / Gemini**                | Free API keys, email login only                       |
+| Database         | **Neon**                         | Postgres + pgvector                                   |
+| Redis (optional) | **Upstash**                      | Redis Streams                                         |
+| Keep-warm        | **UptimeRobot**                  | Prevents free-tier cold sleeps                        |
 
 A `docker-compose.yml` runs the entire system locally with one command (requires Docker).
 
@@ -383,13 +500,14 @@ A `docker-compose.yml` runs the entire system locally with one command (requires
 
 All three services were built, run, and verified locally end to end:
 
-| Service | Command | Result |
-|---|---|---|
-| Backend (Spring Boot) | `mvn clean package` | ✅ `backend-1.0.0.jar` (~72 MB) produced |
-| Frontend (Angular 22) | `npm run build` | ✅ Production bundle ~366 KB (98 KB gzipped) |
-| AI service (Python) | venv install + `py_compile` | ✅ All modules import & compile |
+| Service               | Command                     | Result                                       |
+| --------------------- | --------------------------- | -------------------------------------------- |
+| Backend (Spring Boot) | `mvn clean package`         | ✅ `backend-1.0.0.jar` (~72 MB) produced     |
+| Frontend (Angular 22) | `npm run build`             | ✅ Production bundle ~366 KB (98 KB gzipped) |
+| AI service (Python)   | venv install + `py_compile` | ✅ All modules import & compile              |
 
 End-to-end runtime verification (all three services live):
+
 - Question submission → **semantic dedup** confirmed (paraphrases merged into one cluster).
 - Question-bank upload → `{"received":5,"ingested":5}`.
 - Annual-report upload → indexed into FAISS at runtime (`chunks_indexed` increased).
@@ -397,6 +515,7 @@ End-to-end runtime verification (all three services live):
 - Citation link → `/api/source/...pdf` returns a valid PDF (`%PDF-1.4`, `application/pdf`, 200).
 
 Issues found and fixed during build/upgrade:
+
 - Aligned `pom.xml` to **Java 17** (matching the installed JDK).
 - Upgraded the frontend to **Angular 22** (zoneless + signals); required **Node ≥ 24.15**.
 - Fixed a strict-TypeScript typing error and a `sockjs-client` `global` shim (blank-screen bug).
@@ -421,7 +540,7 @@ Issues found and fixed during build/upgrade:
 
 ## 17. Conclusion
 
-AGM Sentinel demonstrates a production-shaped, polyglot microservice system that solves a
+VIRTUAL MEETING Sentinel demonstrates a production-shaped, polyglot microservice system that solves a
 genuine, non-trivial problem: making sense of a live flood of questions at scale. It combines
 real-time messaging, semantic machine learning, and retrieval-augmented generation — with each
 technology chosen for a concrete reason. The design is cloud-native yet runs at zero cost,
@@ -432,9 +551,10 @@ Azure OpenAI with only configuration changes.
 ---
 
 **Related documents**
+
 - [ARCHITECTURE.md](ARCHITECTURE.md) — how it works, with per-flow sequence diagrams
 - [RUN_LOCAL.md](RUN_LOCAL.md) — run it locally (exact commands)
 - [DEPLOY.md](DEPLOY.md) — free-tier deployment
 - [README.md](README.md) — quick overview
 
-*Document reflects the current codebase, including the Setup uploads and cited-answer features.*
+_Document reflects the current codebase, including the Setup uploads and cited-answer features._

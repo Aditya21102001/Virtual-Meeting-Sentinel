@@ -35,6 +35,13 @@ public class AdminController {
         return ai.knowledgeStatus();
     }
 
+    /**
+     * Per-endpoint ceiling for report PDFs. The container's multipart limit is sized for video
+     * uploads now, so the document path enforces its own (much smaller) limit here rather than
+     * relying on a shared global one.
+     */
+    private static final long MAX_PDF_BYTES = 25L * 1024 * 1024;
+
     /** Upload an annual-report PDF -> indexed into RAG at runtime. */
     @PostMapping("/knowledge")
     public ResponseEntity<?> uploadKnowledge(@RequestParam("file") MultipartFile file) throws IOException {
@@ -44,6 +51,9 @@ public class AdminController {
         String name = file.getOriginalFilename();
         if (name == null || !name.toLowerCase().endsWith(".pdf")) {
             return ResponseEntity.badRequest().body(Map.of("error", "Only PDF files are supported."));
+        }
+        if (file.getSize() > MAX_PDF_BYTES) {
+            return ResponseEntity.badRequest().body(Map.of("error", "PDF is larger than the 25 MB limit."));
         }
         Map<String, Object> result = ai.uploadKnowledge(name, file.getBytes());
         return ResponseEntity.ok(result);

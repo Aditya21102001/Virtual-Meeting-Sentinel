@@ -18,6 +18,7 @@
     "@angular/router": "^22.0.5",
     "@simplewebauthn/browser": "^13.3.0",
     "@stomp/stompjs": "^7.0.0",
+    "hls.js": "^1.6.16",
     "rxjs": "~7.8.0",
     "sockjs-client": "^1.6.1",
     "tslib": "^2.3.0"

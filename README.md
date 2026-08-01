@@ -1,7 +1,7 @@
-# AGM Sentinel — Live Crowd-Question Intelligence
+# VIRTUAL MEETING Sentinel — Live Crowd-Question Intelligence
 
 > Real-time system that **clusters, deduplicates, ranks, and drafts grounded answers**
-> to thousands of live questions during a virtual Annual General Meeting (AGM),
+> to thousands of live questions during a virtual Annual General Meeting (VIRTUAL MEETING),
 > town-hall, or webinar.
 
 A polyglot microservice project built to run on **100% free infrastructure — no credit card required.**
@@ -10,18 +10,24 @@ A polyglot microservice project built to run on **100% free infrastructure — n
 
 ## The problem it solves
 
-In a live virtual AGM with 10,000+ attendees, hundreds of shareholders type questions
-*at the same time*. 60–70% are duplicates phrased differently ("What about the dividend?"
+In a live virtual VIRTUAL MEETING with 10,000+ attendees, hundreds of shareholders type questions
+_at the same time_. 60–70% are duplicates phrased differently ("What about the dividend?"
 asked 400 ways). Human moderators drown. **No off-the-shelf tool clusters a live flood of
 questions in real time and drafts factual answers grounded in the company's annual report.**
 
-AGM Sentinel does exactly that:
+VIRTUAL MEETING Sentinel does exactly that:
 
 1. **Ingest** questions at scale over WebSocket.
 2. **Embed + cluster** them live (semantic dedup — not text matching).
 3. **Rank** clusters by size × shareholder weight × urgency.
 4. **Draft** a cited answer for the top clusters via RAG over the annual report.
 5. **Stream** the live, deduplicated, ranked board back to moderators.
+
+Afterwards, the meeting itself has to be watchable. A **video library** lets moderators upload the
+recording and members stream it on demand: the file is stored on a NAS share and cut into ~6-second
+segments at several bitrates, so playback starts immediately, seeking anywhere is instant, and the
+quality adapts to the network instead of stalling — nobody downloads a 2 GB file to watch it. See
+**[VIDEO_LIBRARY.md](VIDEO_LIBRARY.md)**.
 
 ---
 
@@ -54,37 +60,72 @@ AGM Sentinel does exactly that:
                   │  • LangChain RAG draft chain    │
                   │  • Groq / Gemini (free LLM)     │
                   └───────────────────────────────┘
+
+   Meeting recordings take a separate path — bytes to a NAS share, metadata to Postgres:
+
+                         ┌──────────────────────────┐
+   Members ────────────► │  Angular SPA              │
+   (watch on demand)     │  custom HLS player        │
+                         └───────────┬──────────────┘
+                          segments + │ ticketed media URLs
+                          manifests  │
+                         ┌───────────▼──────────────┐        ┌──────────────┐
+                         │  Spring Boot API          │───────►│ NAS share     │
+                         │  • upload → NAS           │  bytes │ segments +    │
+                         │  • FFmpeg → HLS ladder    │        │ the original  │
+                         │  • segment index → DB     │        └──────────────┘
+                         │  • signed playback tickets │
+                         └───────────────────────────┘
 ```
 
 ### Why each language (the interview talking point)
 
-| Service | Tech | Why this language |
-|---|---|---|
-| Frontend | **Angular** | Real-time board, your core skill |
-| Core API | **Spring Boot (Java)** | Enterprise auth, WebSocket fan-out, transactional store |
+| Service  | Tech                   | Why this language                                                         |
+| -------- | ---------------------- | ------------------------------------------------------------------------- |
+| Frontend | **Angular**            | Real-time board, your core skill                                          |
+| Core API | **Spring Boot (Java)** | Enterprise auth, WebSocket fan-out, transactional store                   |
 | AI layer | **Python + LangChain** | The entire LLM/embeddings ecosystem lives in Python; scales independently |
 
-Polyglot microservices with a *reason* for each language is exactly what AI-enabled
+Polyglot microservices with a _reason_ for each language is exactly what AI-enabled
 enterprises run in production. That rationale is the point of the design.
 
 ---
 
 ## The 100%-free stack (no credit card anywhere)
 
-| Layer | Free host | Card? | Catch |
-|---|---|---|---|
-| Angular frontend | **Vercel** | No | None |
-| Spring Boot API | **Koyeb** (or Render) | No | Sleeps when idle → ~30s cold start |
-| Python AI service | **Hugging Face Spaces** (Docker) | No | 2 vCPU/16GB, sleeps when idle |
-| LLM inference | **Groq** or **Google Gemini** | No | Generous free rate limits |
-| Embeddings | `sentence-transformers` **in-process** | No | Runs inside the container, $0 |
-| Postgres + pgvector | **Neon** (or Supabase) | No | 0.5GB — plenty |
-| Redis Streams | **Upstash** | No | 10k cmd/day free |
-| Keep-warm ping | **UptimeRobot** | No | Pings every ~10 min so hosts don't sleep |
+| Layer               | Free host                              | Card? | Catch                                    |
+| ------------------- | -------------------------------------- | ----- | ---------------------------------------- |
+| Angular frontend    | **Vercel**                             | No    | None                                     |
+| Spring Boot API     | **Koyeb** (or Render)                  | No    | Sleeps when idle → ~30s cold start       |
+| Python AI service   | **Hugging Face Spaces** (Docker)       | No    | 2 vCPU/16GB, sleeps when idle            |
+| LLM inference       | **Ollama** (local) / Groq / Gemini     | No    | Ollama needs no key at all               |
+| Embeddings          | `sentence-transformers` **in-process** | No    | Runs inside the container, $0            |
+| Postgres + pgvector | **Neon** (or Supabase)                 | No    | 0.5GB — plenty                           |
+| Video storage       | NAS share, or **in Postgres**          | No    | Needs a volume, or use `database` mode   |
+| Redis Streams       | **Upstash**                            | No    | 10k cmd/day free                         |
+| Keep-warm ping      | **UptimeRobot**                        | No    | Pings every ~10 min so hosts don't sleep |
 
-**LLM-agnostic by design:** LangChain abstracts the provider. Develop on free Groq/Gemini;
-swap to Azure OpenAI with one line later. Resume-legit phrasing:
-*"LLM-agnostic RAG layer (LangChain), tested on Gemini/Groq, swappable to Azure OpenAI."*
+**LLM-agnostic by design:** LangChain abstracts the provider. `LLM_PROVIDER=ollama` runs a local
+open-source model with no API key and no account; Groq and Gemini are hosted alternatives; Azure
+OpenAI is one line away. Resume-legit phrasing:
+_"LLM-agnostic RAG layer (LangChain), tested on Ollama/Gemini/Groq, swappable to Azure OpenAI."_
+
+### Fully open source, fully self-hosted
+
+Every dependency is open source — audited in **[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)**,
+which also covers the one nuance worth knowing (FFmpeg's GPL vs LGPL builds). To run with **no
+third-party service and no account anywhere**:
+
+```bash
+LLM_PROVIDER=ollama            # local open-source model — no key, no bill
+VECTOR_STORE=faiss             # in-process, no external vector DB
+QUEUE_MODE=inproc              # no Redis or Kafka
+VIDEO_STORAGE_MODE=filesystem  # local disk or a NAS share
+```
+
+Postgres, FFmpeg and Ollama all install locally. Clustering, dedup, ranking, the live board and the
+whole video library already work with no API key; only "Draft answer" needs an LLM, and Ollama
+supplies that locally.
 
 ---
 
@@ -93,6 +134,9 @@ swap to Azure OpenAI with one line later. Resume-legit phrasing:
 ```
 UniquePersonalProject/
 ├── README.md               ← you are here (master doc)
+├── LICENSE                 ← MIT
+├── THIRD_PARTY_LICENSES.md ← every dependency audited; all open source
+├── VIDEO_LIBRARY.md        ← recordings: storage modes, HLS segmentation, the player
 ├── docker-compose.yml      ← run EVERYTHING locally with one command
 ├── .env.example            ← copy to .env and fill in free API keys
 ├── ai-service/             ← Python + FastAPI + LangChain      (see its README)
@@ -128,7 +172,7 @@ board — watch questions cluster and get drafted answers in real time.
 Each service folder has a detailed deploy guide. High level:
 
 1. **Neon** → create a free Postgres project, enable `pgvector`, copy the connection string.
-2. **Upstash** → create a free Redis DB, copy REST/redis URL. *(Optional — see cheaper variant.)*
+2. **Upstash** → create a free Redis DB, copy REST/redis URL. _(Optional — see cheaper variant.)_
 3. **Hugging Face Spaces** → new Space (Docker SDK), push `ai-service/`, set secrets.
 4. **Koyeb** → deploy `backend/` from GitHub (Dockerfile), set env vars.
 5. **Vercel** → import `frontend/`, set `VERCEL` env, deploy.

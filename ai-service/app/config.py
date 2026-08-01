@@ -6,8 +6,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # LLM
-    llm_provider: str = "groq"            # "groq" | "gemini"
+    # LLM. "ollama" is the fully self-hosted option: open source, no API key, no account,
+    # nothing leaves the machine. "groq"/"gemini" are hosted proprietary services whose free
+    # tiers need a key. See app/llm.py.
+    llm_provider: str = "groq"            # "ollama" | "groq" | "gemini"
+    ollama_model: str = "llama3.2"        # any model pulled locally: `ollama pull llama3.2`
+    ollama_base_url: str = "http://localhost:11434"
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
     google_api_key: str = ""

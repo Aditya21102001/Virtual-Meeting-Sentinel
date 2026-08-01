@@ -17,6 +17,9 @@ import java.util.List;
 @Service
 public class JwtService {
 
+    /** {@code typ} claim of a media playback ticket (see PlaybackTicketService). */
+    public static final String PLAYBACK_TYPE = "playback";
+
     private final List<SecretKey> keys = new ArrayList<>();
     private final long ttlSeconds;
 
@@ -60,6 +63,25 @@ public class JwtService {
                 .claim("typ", "mfa")
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(300)))   // 5 minutes to finish MFA
+                .signWith(currentKey())
+                .compact();
+    }
+
+    /**
+     * Media playback ticket: authorises GETs of ONE video's manifest and segments, nothing else.
+     * A {@code <video>} element and Safari's native HLS engine cannot send an Authorization
+     * header, so this rides in the URL instead — which is why it is scoped to a single video id
+     * and given a short life. {@code typ=playback} keeps {@link JwtAuthFilter} from ever treating
+     * it as a login.
+     */
+    public String issuePlaybackTicket(String subject, String videoId, long ticketTtlSeconds) {
+        Instant now = Instant.now();
+        return Jwts.builder()
+                .subject(subject)
+                .claim("typ", PLAYBACK_TYPE)
+                .claim("vid", videoId)
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(ticketTtlSeconds)))
                 .signWith(currentKey())
                 .compact();
     }

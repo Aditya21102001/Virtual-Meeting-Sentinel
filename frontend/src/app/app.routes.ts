@@ -14,9 +14,21 @@ export const routes: Routes = [
   { path: 'login', component: LoginComponent },
   // Shareholder Lounge: any signed-in member (chat + GenAI assistant).
   { path: 'chat', component: ChatComponent, canActivate: [authGuard] },
+  // Meeting recordings: any signed-in member can watch on demand. Lazy-loaded so hls.js
+  // (~250 kB) is fetched only by people who actually open a recording.
+  {
+    path: 'recordings',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/videos.component').then((m) => m.VideosComponent),
+  },
   // Moderator-only areas require a signed-in moderator (password + any enrolled MFA).
   { path: 'board', component: ModeratorComponent, canActivate: [moderatorGuard] },
   { path: 'setup', component: AdminComponent, canActivate: [moderatorGuard] },
+  {
+    path: 'videos',
+    canActivate: [moderatorGuard],
+    loadComponent: () => import('./pages/video-admin.component').then((m) => m.VideoAdminComponent),
+  },
   { path: 'members', component: MembersComponent, canActivate: [moderatorGuard] },
   { path: 'security', component: SecurityComponent, canActivate: [moderatorGuard] },
 ];
