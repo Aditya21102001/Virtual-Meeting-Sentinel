@@ -501,6 +501,8 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   constructor() {
     // An upload that finishes while this page is open should show up without waiting for the
     // next poll tick. The service bumps libraryChanged on completion; re-read the list then.
+    // This also covers the FIRST load — the effect runs once on creation — so ngOnInit must not
+    // fetch again or every visit to the page would open two of each request.
     effect(() => {
       this.videos.libraryChanged();
       this.refreshList();
@@ -509,8 +511,6 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
-    this.refreshStatus();
-    this.refreshList();
     this.startPolling();
   }
 
@@ -518,18 +518,22 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
    * Poll only while something is mid-transcode, and only when a tick can tell you something new.
    * A hidden tab is skipped too — a background page polling a free-tier host burns its monthly
    * instance-hours while nobody is watching.
+   *
+   * <p>Nothing is fetched here on the way in: the constructor's effect has already done the
+   * initial load.
    */
   private startPolling(): void {
     if (this.poller) return;
     this.poller = setInterval(() => {
       if (document.hidden) return;
+      if (this.serverError()) return;        // the server is known to be down; stop knocking
       if (this.videos.uploading()) return;   // the upload's own progress events already drive the UI
       if (this.cards().some((card) => card.video.status === 'PROCESSING')) this.refreshList();
     }, VideoAdminComponent.POLL_MS);
   }
 
   ngOnDestroy(): void {
-    if (this.poller) clearInterval(this.poller);
+    this.stopPolling();
     // Deliberately does NOT cancel an in-flight upload. Unsubscribing an HttpClient request aborts
     // the XHR, so tearing it down here meant navigating away silently killed a part-done upload.
     // The service owns that subscription now; only an explicit Cancel stops it.
@@ -537,17 +541,27 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
 
   // ---- data ----------------------------------------------------------------
 
+  /**
+   * The storage banner. Skipped once we know the server is down, and silent on failure — the list
+   * request beside it is the one that decides whether there is an outage and says so.
+   */
   private refreshStatus(): void {
-    this.videos.status().subscribe({ next: (s) => this.status.set(s) });
+    if (this.serverError()) return;
+    this.videos.status().subscribe({
+      next: (s) => this.status.set(s),
+      error: () => {},
+    });
   }
 
   /**
-   * Refresh the list, and back off when the server is unreachable.
+   * Refresh the list, and stop knocking when the server is unreachable.
    *
-   * <p>The 2 s poll had no error branch, so a backend that was down (spun down, restarting, or
-   * crashed) got hammered thirty times a minute, each failure throwing an unhandled rejection into
-   * the console. Worse, the retries kept the page silent about the real problem. After three
-   * consecutive failures polling stops and the reason is shown instead.
+   * <p>Originally there was no error branch at all, so a backend that was down got hammered every
+   * poll tick. Then it took three consecutive failures to give up — which is right for a one-off
+   * blip, but wrong for the common case here: a container that has been restarted mid-transcode
+   * answers nothing at all for a minute or more, and three more requests into a dead socket tell
+   * nobody anything. A transport-level failure (status 0) or a gateway error is conclusive on the
+   * first try, so it trips the outage immediately; anything else still gets the three attempts.
    */
   private refreshList(): void {
     this.videos.listAll().subscribe({
@@ -558,15 +572,29 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         this.consecutiveFailures++;
-        if (this.consecutiveFailures >= 3) {
-          if (this.poller) {
-            clearInterval(this.poller);
-            this.poller = null;
-          }
+        if (this.isServerDown(err) || this.consecutiveFailures >= 3) {
+          this.stopPolling();
           this.serverError.set(this.describeOutage(err));
         }
       },
     });
+  }
+
+  /**
+   * True when the response could only have come from the platform's proxy, not the application.
+   * Status 0 means the request never completed at all — including the "blocked by CORS" case,
+   * which is what a browser reports when an error page arrives without CORS headers.
+   */
+  private isServerDown(err: unknown): boolean {
+    const status = (err as { status?: number })?.status;
+    return status === 0 || status === 502 || status === 503 || status === 504;
+  }
+
+  private stopPolling(): void {
+    if (this.poller) {
+      clearInterval(this.poller);
+      this.poller = null;
+    }
   }
 
   /**
@@ -577,14 +605,15 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   private describeOutage(err: unknown): string {
     const status = (err as { status?: number })?.status;
     if (status === 0) {
-      return 'Cannot reach the server. It is most likely asleep or restarting — free hosting tiers '
-           + 'suspend a service after a period of inactivity and it can take a minute to wake, or '
-           + 'fail to wake if it crashes on boot. Any "CORS" error in the console is a side effect '
-           + 'of that, not the cause. Check the server logs, then reload.';
+      return 'Cannot reach the server. It is asleep, restarting, or was just restarted — free '
+           + 'hosting tiers suspend a service after a period of inactivity, and a transcode that '
+           + 'exhausts the instance can get the container killed mid-job. Any "CORS" error in the '
+           + 'console is a side effect of that, not the cause: an error page from the platform\'s '
+           + 'proxy carries no CORS headers. Check the server logs, then reload.';
     }
     if (status === 502 || status === 503 || status === 504) {
-      return `The server returned ${status}. It is starting up, overloaded, or crashing on boot — `
-           + 'check the server logs. Reload once it is back.';
+      return `The server returned ${status}. It is starting up, overloaded, or was killed while `
+           + 'transcoding — check the server logs. Reload once it is back.';
     }
     return 'Could not load the video list. Reload to try again.';
   }

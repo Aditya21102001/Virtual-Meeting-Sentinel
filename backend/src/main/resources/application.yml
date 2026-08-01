@@ -93,6 +93,13 @@ video:
     # Rungs are capped to the source resolution, so a 720p upload only produces 720p and below.
     ladder: ${VIDEO_LADDER:1080,720,480,360}
     preset: ${VIDEO_X264_PRESET:veryfast}
+    # Encode every rung in ONE ffmpeg run (one decode, N simultaneous encoders)? Off by default.
+    # One pass is faster in wall-clock terms, but every x264 encoder allocates its buffers at
+    # start-up, so peak memory is the sum of the whole ladder and it arrives seconds into the job.
+    # That is how a small container ends up killed at 2% of a transcode regardless of how short the
+    # video is. Sequential makes the peak the cost of the LARGEST SINGLE RUNG instead, at the price
+    # of decoding the source once per rung. Turn on only where there is memory to spare.
+    parallel-rungs: ${VIDEO_HLS_PARALLEL_RUNGS:false}
     thumbnail-interval-seconds: ${VIDEO_THUMB_INTERVAL:10}
   tools:
     # Set false to forbid transcoding on this host even if ffmpeg is installed. Transcoding is by
@@ -106,6 +113,12 @@ video:
     # of CPU, which is what makes a platform health check time out and restart the container in the
     # middle of a transcode.
     threads: ${VIDEO_FFMPEG_THREADS:1}
+    # Scheduling priority for ffmpeg, 0 (normal) to 19 (lowest). Linux only; ignored if `nice` is
+    # missing. Capping threads limits how much work ffmpeg does at once; this limits how much it
+    # does at the JVM's expense. On a fractional-CPU instance that is the difference between the
+    # health check still being answered during a transcode and the platform restarting the
+    # container because it went unanswered. 0 disables.
+    niceness: ${VIDEO_FFMPEG_NICENESS:15}
     # FFmpeg does the segmentation. Without it, uploads still play — served progressively over
     # HTTP Range instead of as an adaptive ladder — and can be re-processed once it's installed.
     ffmpeg: ${FFMPEG_PATH:ffmpeg}
