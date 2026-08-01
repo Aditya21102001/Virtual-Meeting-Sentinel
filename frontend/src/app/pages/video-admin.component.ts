@@ -485,6 +485,17 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   readonly serverError = signal('');
   private consecutiveFailures = 0;
 
+  /**
+   * How often to re-read the list while something is transcoding.
+   *
+   * <p>12 s, not the 5 s it used to be. A transcode reports whole percentages and a big one moves
+   * a percent every several seconds, so the faster poll was mostly re-fetching a number that had
+   * not changed — and each tick re-serialises the entire library, mints a playback ticket per card
+   * and wakes a free-tier instance that is meant to be spending its CPU on ffmpeg. Progress
+   * arriving a few seconds late costs nothing; the transcode finishing sooner is worth a lot.
+   */
+  private static readonly POLL_MS = 12_000;
+
   private poller: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
@@ -500,16 +511,21 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.refreshStatus();
     this.refreshList();
-    // Poll only while something is mid-transcode; the interval stops itself otherwise.
-    // 5 s, not 2 s, and only when it can tell you something new: a transcode reports whole
-    // percentages, so polling faster than the number changes just triples the request count. Also
-    // skipped for a hidden tab — a background page polling a free-tier host consumes its monthly
-    // instance-hours while nobody is watching.
+    this.startPolling();
+  }
+
+  /**
+   * Poll only while something is mid-transcode, and only when a tick can tell you something new.
+   * A hidden tab is skipped too — a background page polling a free-tier host burns its monthly
+   * instance-hours while nobody is watching.
+   */
+  private startPolling(): void {
+    if (this.poller) return;
     this.poller = setInterval(() => {
       if (document.hidden) return;
       if (this.videos.uploading()) return;   // the upload's own progress events already drive the UI
       if (this.cards().some((card) => card.video.status === 'PROCESSING')) this.refreshList();
-    }, 5000);
+    }, VideoAdminComponent.POLL_MS);
   }
 
   ngOnDestroy(): void {
@@ -628,13 +644,7 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
     this.serverError.set('');
     this.refreshStatus();
     this.refreshList();
-    if (!this.poller) {
-      this.poller = setInterval(() => {
-        if (document.hidden) return;
-        if (this.videos.uploading()) return;
-        if (this.cards().some((card) => card.video.status === 'PROCESSING')) this.refreshList();
-      }, 5000);
-    }
+    this.startPolling();
   }
 
   // ---- manage --------------------------------------------------------------

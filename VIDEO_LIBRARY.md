@@ -58,7 +58,7 @@ is exactly what the pipeline below does.
 ```
  Moderator                Backend (Spring)                     NAS            Postgres
  ─────────                ────────────────                     ───            ────────
- POST /api/admin/videos
+ POST /api/admin/videos/upload-video
    multipart file  ─────► validate ext + size
                           save row  ───────────────────────────────────────►  videos (UPLOADED)
                           stream bytes ──────────────────────► source.mp4
@@ -79,7 +79,7 @@ is exactly what the pipeline below does.
 
  Member
  ──────
- GET /api/videos            ─► catalogue + a playback ticket per video
+ POST /api/videos/list-library            ─► catalogue + a playback ticket per video
  GET …/master.m3u8?t=…      ─► variant list (URIs rewritten, ticket carried forward)
  GET …/r/720p/index.m3u8?t= ─► segment list (ticket appended to every segment URI)
  GET …/r/720p/seg_00007.ts  ─► one ~6s slice        ← repeated as playback advances
@@ -89,7 +89,7 @@ Three properties worth calling out:
 
 **The upload response does not wait for the transcode.** A 45-minute recording takes minutes to
 segment; holding the HTTP request open for that would time out. The POST returns as soon as the
-bytes are safely on the NAS, and the admin UI polls `GET /api/admin/videos/{id}` for
+bytes are safely on the NAS, and the admin UI polls `POST /api/admin/videos/video-details` for
 `progressPercent`.
 
 **The job is queued after commit, not during.** `VideoLibraryService.upload` publishes a
@@ -172,8 +172,14 @@ segments — more than a free-tier Postgres allowance (Neon free is 0.5 GB). Dat
 - **The mode is recorded per video** (`videos.storage_mode`), not read from config at serve time.
   Changing the server default therefore cannot strand recordings written the other way — an old
   filesystem video keeps being served from the filesystem.
+- **Segments are stored as they are produced, not in one pass at the end.**
+  `VideoSegmentDrainer` sweeps the rung directories every few seconds while FFmpeg is still
+  encoding, moves each finished segment into `video_assets` in its own transaction, and deletes it
+  from disk. This is what makes the length of a recording irrelevant to the resources a transcode
+  needs — see [§4a](#4a-why-the-drain-exists).
 - **Ingestion happens before the video is marked READY.** A client must never be told a recording is
-  playable while its bytes still live only in a directory about to be deleted.
+  playable while its bytes still live only in a directory about to be deleted. The playlists, poster
+  and sprite are the only things left to ingest at that point; the drain has already taken the rest.
 - **The original is dropped by default** (`video.database.keep-source=false`). It is only needed for
   re-processing and is far larger than every segment combined. Re-processing then returns a 409
   explaining exactly that, rather than failing obscurely. Set `keep-source=true` to retain it — at
@@ -183,6 +189,53 @@ segments — more than a free-tier Postgres allowance (Neon free is 0.5 GB). Dat
 - **A per-file ceiling** (`video.database.max-asset-bytes`, default 64 MiB) rejects writes that would
   buffer something enormous in heap. Segments are a few MB so it never triggers for HLS output; it
   exists to catch an un-segmented source, which is what you get when FFmpeg is missing.
+
+---
+
+## 4a. Why the drain exists
+
+Database mode originally transcoded the whole ladder, then walked the output directory and read
+every file into the database in a single transaction. That works fine until the recording gets long,
+and then it fails in a way that looks like the host being flaky rather than a bug:
+
+| | short clip | hour-long recording |
+|---|---|---|
+| Files produced | ~60 | ~2,400 (4 rungs × 6 s segments) |
+| Held in heap at commit | ~50 MB | **~2 GB** of `byte[]`, doubled by Hibernate's dirty-check snapshots |
+| Peak disk | source + ladder | source + ladder, all at once |
+| Outcome on a 512 MB container | fine | OOM-killed part-way through; row stranded in `PROCESSING` |
+
+Nothing in that failure names the real cause. The container simply dies, the platform restarts it,
+and `recoverInterrupted()` marks the video FAILED at boot with a generic message.
+
+Draining fixes the shape of the cost rather than raising a limit:
+
+```
+FFmpeg ──writes seg_00042.ts.tmp ──rename──► seg_00042.ts
+                                                  │
+                        every few seconds         ▼
+                    VideoSegmentDrainer ──► video_assets row (own transaction)
+                                                  │
+                                                  ▼
+                                            deleted from disk
+```
+
+- **Peak heap is one segment** (a few MB), not the whole ladder. It no longer grows with duration.
+- **Peak disk is the handful of segments** produced since the last sweep, on top of the source.
+- **Work already done survives a crash.** Each segment is committed on its own, so a container
+  restart at 90% no longer discards 90% of the encode.
+- **The budget is enforced continuously.** Running out of `video.database.max-total-bytes` now
+  aborts the encode within a sweep instead of after another hour of work that could not be stored.
+
+Two independent guarantees stop a half-written segment being stored: `-hls_flags temp_file` makes
+FFmpeg rename each segment into place only once it is closed, and mid-run the drain also holds back
+the highest-numbered file in each rung. The final sweep, after FFmpeg has exited, takes everything.
+
+Because a failed run now leaves real rows behind, both `VideoProcessingWorker`'s failure path and
+`recoverInterrupted()` clear the partial ladder — the segment index is written last, so nothing can
+be referencing it, and leaving it would silently eat the storage budget.
+
+Turn it off with `video.database.drain-segments=false` to get the old one-pass behaviour back.
 
 ---
 
@@ -208,7 +261,8 @@ SELECT * FROM video_segments
  ORDER BY start_seconds DESC LIMIT 1;
 ```
 
-That is `GET /api/videos/{id}/segment-at?seconds=1290` — "which slice covers 21:30". The upper bound
+That is `POST /api/videos/find-segment-at` with `{"seconds": 1290}` — "which slice covers
+21:30". The upper bound
 matters: without it, any position past the end of the video would return the final segment and a
 nonsense timestamp would look like a valid seek target.
 
@@ -300,10 +354,10 @@ and playback still work.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/videos` | catalogue of READY videos, each with a ticket + media URLs |
-| GET | `/api/videos/{id}` | one entry |
-| GET | `/api/videos/{id}/segments?rendition=720p` | the segment index |
-| GET | `/api/videos/{id}/segment-at?seconds=1290` | which slice covers that second |
+| POST | `/api/videos/list-library` | catalogue of READY videos, each with a ticket + media URLs |
+| POST | `/api/videos/video-details` | one entry |
+| POST | `/api/videos/list-segments` | the segment index |
+| POST | `/api/videos/find-segment-at` | which slice covers that second |
 
 ### Media (ticket in the URL; no auth header possible)
 
@@ -322,13 +376,13 @@ get `private, max-age=1y, immutable` — re-watching or scrubbing backwards cost
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/admin/videos/status` | NAS reachability, free space, ffmpeg version, ladder, limits |
-| GET | `/api/admin/videos` | all videos, including PROCESSING / FAILED |
-| GET | `/api/admin/videos/{id}` | poll transcode progress |
-| POST | `/api/admin/videos` | multipart upload (`file`, `title?`, `description?`) |
-| PATCH | `/api/admin/videos/{id}` | edit title / description |
-| POST | `/api/admin/videos/{id}/reprocess` | rebuild the ladder from the stored original |
-| DELETE | `/api/admin/videos/{id}` | remove rows + the whole NAS folder |
+| POST | `/api/admin/videos/storage-status` | NAS reachability, free space, ffmpeg version, ladder, limits |
+| POST | `/api/admin/videos/list-all-videos` | all videos, including PROCESSING / FAILED |
+| POST | `/api/admin/videos/video-details` | poll transcode progress |
+| POST | `/api/admin/videos/upload-video` | multipart upload (`file`, `title?`, `description?`) |
+| POST  | `/api/admin/videos/update-video-details` | edit title / description |
+| POST | `/api/admin/videos/reprocess-video` | rebuild the ladder from the stored original |
+| POST   | `/api/admin/videos/delete-video` | remove rows + the whole NAS folder |
 
 ---
 
@@ -374,6 +428,8 @@ All optional — the defaults run locally with no setup.
 | `VIDEO_STORAGE_MODE` | `filesystem` | `filesystem` or `database` — see [§4](#4-storage-modes) |
 | `VIDEO_DB_MAX_ASSET_BYTES` | `67108864` (64 MiB) | database mode: per-file ceiling |
 | `VIDEO_DB_KEEP_SOURCE` | `false` | database mode: also store the original (doubles usage) |
+| `VIDEO_DB_DRAIN_SEGMENTS` | `true` | database mode: store segments as FFmpeg produces them — see [§4a](#4a-why-the-drain-exists) |
+| `VIDEO_DB_DRAIN_SWEEP_SECONDS` | `5` | database mode: how often the drain sweeps for finished segments |
 | `VIDEO_NAS_PATH` | `./var/nas/videos` | **the NAS share** — also the working directory in database mode |
 | `VIDEO_REQUIRE_NAS` | `false` | `true` = refuse to serve uploads if the share is unreachable |
 | `VIDEO_FALLBACK_PATH` | `./var/videos` | used only when the NAS is unreachable and the above is `false` |

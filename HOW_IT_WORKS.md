@@ -18,7 +18,7 @@ questions into a ranked, deduplicated, cited board for moderators.
 
 ```
 Attendee types question
-   → POST /api/questions (Spring Boot)
+   → POST /api/questions/submit-question (Spring Boot)
    → save to Postgres
    → POST /ingest (Python): embed → nearest-centroid cluster (dedup at sim ≥ 0.78)
    → save clusterId back to Postgres
@@ -74,7 +74,7 @@ See the **MFA / WebAuthn deep dive** below for the full ceremony.
 
 When an attendee types a question and hits submit:
 
-1. **Browser → Backend.** `POST /api/questions` hits `QuestionController`
+1. **Browser → Backend.** `POST /api/questions/submit-question` hits `QuestionController`
    (`backend/.../controller/QuestionController.java:19-22`) → `QuestionService.submit()`.
 2. **Persist.** The question is saved to Postgres immediately
    (`backend/.../service/QuestionService.java:35`) — durable record before any AI work.
@@ -159,7 +159,7 @@ Postgres.
 
 ```
 Moderator uploads recording
-   → POST /api/admin/videos (multipart, up to 2 GB)
+   → POST /api/admin/videos/upload-video (multipart, up to 2 GB)
    → stream bytes to the NAS share (never buffered in the JVM heap)
    → save row as PROCESSING, return 200 IMMEDIATELY
    → publish VideoQueuedEvent, consumed AFTER COMMIT by the transcode worker
@@ -169,7 +169,7 @@ Moderator uploads recording
         → read the generated playlists back → one DB row per segment
         → READY
 Member opens /recordings
-   → GET /api/videos: catalogue + a signed playback ticket per video
+   → POST /api/videos/list-library: catalogue + a signed playback ticket per video
    → GET master.m3u8: variant list, URIs rewritten to carry the ticket
    → GET r/720p/index.m3u8: segment list, ticket appended to each URI
    → GET r/720p/seg_00007.ts: ONE ~6s slice, repeated as playback advances

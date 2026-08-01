@@ -138,7 +138,7 @@ export class ChatService {
 
   async loadContacts(): Promise<void> {
     const cs = await firstValueFrom(
-      this.http.get<Contact[]>(`${this.base}/api/chat/contacts`, { headers: this.headers }));
+      this.http.post<Contact[]>(`${this.base}/api/chat/list-contacts`, {}, { headers: this.headers }));
     this.contacts.set(cs);
     this.online.set(new Set(cs.filter((c) => c.online).map((c) => c.username)));
   }
@@ -147,7 +147,7 @@ export class ChatService {
     this.activePeer.set(peer);
     this.typingPeer.set(null);
     const msgs = await firstValueFrom(
-      this.http.get<ChatMessage[]>(`${this.base}/api/chat/messages/${encodeURIComponent(peer)}`, { headers: this.headers }));
+      this.http.post<ChatMessage[]>(`${this.base}/api/chat/load-thread`, { peer }, { headers: this.headers }));
     this.messages.set(msgs);
     this.loadContacts();   // unread badge for this peer clears
   }
@@ -156,7 +156,7 @@ export class ChatService {
     const peer = this.activePeer();
     if (!peer) return;
     const saved = await firstValueFrom(
-      this.http.post<ChatMessage>(`${this.base}/api/chat/messages`, { to: peer, body }, { headers: this.headers }));
+      this.http.post<ChatMessage>(`${this.base}/api/chat/send-message`, { to: peer, body }, { headers: this.headers }));
     this.messages.update((list) => [...list, saved]);
   }
 
@@ -169,7 +169,7 @@ export class ChatService {
     };
     this.messages.update((list) => [...list, mine]);
     const res = await firstValueFrom(
-      this.http.post<AiChatResult>(`${this.base}/api/chat/ai`, { body }, { headers: this.headers }));
+      this.http.post<AiChatResult>(`${this.base}/api/chat/ask-assistant`, { body }, { headers: this.headers }));
     const reply: ChatMessage = {
       id: 'ai-' + res.answer.length, sender: AI_PEER, recipient: this.auth.username() ?? 'me',
       body: res.answer, sentAt: new Date().toISOString(), readAt: null, kind: 'AI',
@@ -184,6 +184,6 @@ export class ChatService {
   private async markRead(peer: string): Promise<void> {
     // Re-fetching the thread marks peer→me messages read server-side and emits the receipt.
     await firstValueFrom(
-      this.http.get<ChatMessage[]>(`${this.base}/api/chat/messages/${encodeURIComponent(peer)}`, { headers: this.headers }));
+      this.http.post<ChatMessage[]>(`${this.base}/api/chat/load-thread`, { peer }, { headers: this.headers }));
   }
 }

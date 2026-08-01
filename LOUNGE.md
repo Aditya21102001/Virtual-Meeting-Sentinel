@@ -49,7 +49,7 @@ principal — never a request‑body field — so a client cannot spoof another 
 | `SHAREHOLDER` | the Lounge (chat + AI) | promoted in `/members` |
 | `ATTENDEE` | anonymous question submission | ephemeral token (no user row) |
 
-`ADMIN`/`SHAREHOLDER` were previously unreachable; `UserController` (`/api/users`) + the
+`ADMIN`/`SHAREHOLDER` were previously unreachable; `UserController` (`/api/users/list-members`) + the
 `/members` screen now make them assignable. Roles are constants in `security/Roles.java`.
 
 ---
@@ -57,11 +57,11 @@ principal — never a request‑body field — so a client cannot spoof another 
 ## API surface
 
 **REST** (`ChatController`, gated ADMIN/MODERATOR/SHAREHOLDER):
-- `GET  /api/chat/contacts` — directory + last message + unread + online.
-- `GET  /api/chat/messages/{peer}` — full thread; marks peer→me messages read.
-- `POST /api/chat/messages` — `{to, body}` → persist + push to recipient.
-- `POST /api/chat/ai` — `{body}` → RAG answer `{answer, citations}` (stored as "AI Assistant").
-- `GET  /api/users`, `PATCH /api/users/{id}/role` — member directory + role assignment (MOD/ADMIN).
+- `POST  /api/chat/list-contacts` — directory + last message + unread + online.
+- `POST  /api/chat/load-thread` — full thread; marks peer→me messages read.
+- `POST /api/chat/send-message` — `{to, body}` → persist + push to recipient.
+- `POST /api/chat/ask-assistant` — `{body}` → RAG answer `{answer, citations}` (stored as "AI Assistant").
+- `POST  /api/users/list-members`, `POST /api/users/set-member-role` — member directory + role assignment (MOD/ADMIN).
 
 **WebSocket** (STOMP over SockJS at `/ws`):
 - send: `/app/typing` `{to}` — ephemeral "typing…" ping.

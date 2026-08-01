@@ -24,27 +24,30 @@ public class ChatController {
         this.chat = chat;
     }
 
+    /** Names the other side of a conversation. In the body, so the route keeps a readable name. */
+    public record PeerRef(String peer) { }
+
     /** Conversation list (registered members + last message + unread + online). */
-    @GetMapping("/contacts")
-    public List<ContactDto> contacts(Principal me) {
+    @PostMapping("/list-contacts")
+    public List<ContactDto> listContacts(Principal me) {
         return chat.contacts(me.getName());
     }
 
     /** Full thread with a peer; marks their messages to me as read. */
-    @GetMapping("/messages/{peer}")
-    public List<ChatMessageDto> thread(@PathVariable String peer, Principal me) {
-        return chat.thread(me.getName(), peer);
+    @PostMapping("/load-thread")
+    public List<ChatMessageDto> loadThread(@RequestBody PeerRef req, Principal me) {
+        return chat.thread(me.getName(), req.peer());
     }
 
     /** Send a 1-on-1 message. */
-    @PostMapping("/messages")
-    public ChatMessageDto send(@Valid @RequestBody SendMessageRequest req, Principal me) {
+    @PostMapping("/send-message")
+    public ChatMessageDto sendMessage(@Valid @RequestBody SendMessageRequest req, Principal me) {
         return chat.send(me.getName(), req.to(), req.body());
     }
 
     /** Ask the GenAI assistant (RAG-grounded on the annual report). */
-    @PostMapping("/ai")
-    public ResponseEntity<AiChatResult> ai(@Valid @RequestBody AiChatRequest req, Principal me) {
+    @PostMapping("/ask-assistant")
+    public ResponseEntity<AiChatResult> askAssistant(@Valid @RequestBody AiChatRequest req, Principal me) {
         return ResponseEntity.ok(chat.askAi(me.getName(), req.body()));
     }
 }

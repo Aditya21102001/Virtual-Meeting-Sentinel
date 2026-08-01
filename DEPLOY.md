@@ -91,10 +91,12 @@ Two caveats specific to free tiers:
      library or a Postgres you control. See
      [VIDEO_LIBRARY.md §4](VIDEO_LIBRARY.md#4-storage-modes).
 - **Transcoding is CPU-bound** and will saturate a 1-vCPU free instance for the length of the job,
-  which makes the rest of the API sluggish while it runs. For a demo, upload short clips — or
-  pre-process recordings and skip straight to a NAS folder. The realistic production shape is a
-  separate transcode worker, which is what `VideoProcessingWorker` and its dedicated pool are already
-  factored for.
+  which makes the rest of the API sluggish while it runs. It will not, however, run the instance out
+  of memory or disk on a long recording: segments are moved into storage as FFmpeg produces them, so
+  a three-hour upload costs the same resident memory as a three-minute one and simply takes longer
+  ([VIDEO_LIBRARY.md §4a](VIDEO_LIBRARY.md#4a-why-the-drain-exists)). The realistic production shape
+  is still a separate transcode worker, which is what `VideoProcessingWorker` and its dedicated pool
+  are already factored for.
 
 If FFmpeg isn't available in the image, uploads still play — progressively over HTTP Range instead of
 as an adaptive ladder. See [VIDEO_LIBRARY.md §7](VIDEO_LIBRARY.md#7-the-progressive-fallback-no-ffmpeg).

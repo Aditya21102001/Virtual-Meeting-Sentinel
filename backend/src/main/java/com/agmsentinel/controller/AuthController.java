@@ -32,8 +32,8 @@ public class AuthController {
     }
 
     /** Tells the SPA which login methods to show (Google button, OTP demo hint). */
-    @GetMapping("/config")
-    public AuthConfig config() {
+    @PostMapping("/login-options")
+    public AuthConfig loginOptions() {
         return new AuthConfig(googleClientId != null && !googleClientId.isBlank(), otpDemoMode);
     }
 
@@ -71,7 +71,7 @@ public class AuthController {
     }
 
     // ---- enrollment (requires a full access token) --------------------------
-    @GetMapping("/enroll/status")
+    @PostMapping("/enroll/status")
     public MfaStatus status(Authentication authn) {
         return auth.status(authn.getName());
     }

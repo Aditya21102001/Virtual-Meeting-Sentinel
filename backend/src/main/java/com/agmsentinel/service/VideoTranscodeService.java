@@ -89,6 +89,23 @@ public class VideoTranscodeService {
     /** One rung of the ladder, already capped to the source resolution. */
     private record Rung(String name, int height, int videoKbps, int audioKbps) { }
 
+    /**
+     * Byte size of a segment that is no longer on disk because it was moved into database storage
+     * mid-transcode, addressed as {@code hls/720p/seg_00042.ts}. Returns -1 when unknown.
+     *
+     * <p>The segment index is built by stat-ing the files ffmpeg's playlists name, so without this
+     * every drained segment would be indexed as zero bytes.
+     *
+     * @see VideoSegmentDrainer
+     */
+    @FunctionalInterface
+    public interface DrainedSizes {
+        long sizeOf(String relPath);
+
+        /** Nothing has been drained — every segment is still where ffmpeg left it. */
+        DrainedSizes NONE = relPath -> -1;
+    }
+
     // ---- tool discovery ------------------------------------------------------
 
     /** True when both ffmpeg and ffprobe can be executed. Probed once, then cached. */
@@ -218,10 +235,14 @@ public class VideoTranscodeService {
      * Cut {@code source} into an HLS ladder under {@code <videoDir>/hls}, then read the generated
      * playlists back into a segment index.
      *
-     * @param progress receives 0-100 as ffmpeg reports its output timestamp
+     * @param progress receives 0-100 as ffmpeg reports its output timestamp. Throwing from it
+     *                 aborts the encode — that is how a drain that has run out of database budget
+     *                 stops the run instead of letting it finish into storage that cannot hold it.
+     * @param drained  sizes of segments already moved into database storage and deleted from disk
      */
     public TranscodeOutput transcodeToHls(Path videoDir, Path source, MediaInfo info,
-                                          IntConsumer progress) throws IOException, InterruptedException {
+                                          IntConsumer progress, DrainedSizes drained)
+            throws IOException, InterruptedException {
         List<Rung> ladder = buildLadder(info);
         Path hlsDir = videoDir.resolve(HLS_DIR);
         Files.createDirectories(hlsDir);
@@ -257,7 +278,8 @@ public class VideoTranscodeService {
                 log.warn("Rendition {} produced no playlist — skipping.", rung.name());
                 continue;
             }
-            List<SegmentInfo> segments = readMediaPlaylist(playlist);
+            String rungRel = HLS_DIR + "/" + rung.name() + "/";
+            List<SegmentInfo> segments = readMediaPlaylist(playlist, rungRel, drained);
             int[] measured = actual.get(rung.name());
             int width = measured != null && measured[0] > 0 ? measured[0] : evenWidth(info, rung.height());
             int height = measured != null && measured[1] > 0 ? measured[1] : rung.height();
@@ -392,7 +414,11 @@ public class VideoTranscodeService {
                 "-f", "hls",
                 "-hls_time", String.valueOf(segmentSeconds),
                 "-hls_playlist_type", "vod",
-                "-hls_flags", "independent_segments",
+                // temp_file writes each segment as seg_00042.ts.tmp and renames it only when the
+                // segment is closed. That rename is what makes it safe for the drain to move
+                // finished segments into the database while this is still running: any .ts it can
+                // see is complete, so it can never store a half-written one.
+                "-hls_flags", "independent_segments+temp_file",
                 "-hls_segment_type", "mpegts",
                 "-hls_list_size", "0",
                 "-hls_segment_filename", hlsDir.resolve("%v").resolve("seg_%05d.ts").toString(),
@@ -493,8 +519,13 @@ public class VideoTranscodeService {
      * Read a media playlist into the segment index. Each {@code #EXTINF:<seconds>,} line is
      * followed by the segment's filename; accumulating the durations gives every segment's start
      * time, which is what turns "seek to 21:30" into "fetch segment 215".
+     *
+     * @param rungRel prefix identifying this rung's directory, e.g. {@code hls/720p/}
+     * @param drained sizes for segments already moved into database storage; consulted only when
+     *                the file is no longer on disk
      */
-    private List<SegmentInfo> readMediaPlaylist(Path playlist) throws IOException {
+    private List<SegmentInfo> readMediaPlaylist(Path playlist, String rungRel, DrainedSizes drained)
+            throws IOException {
         List<SegmentInfo> segments = new ArrayList<>();
         Path dir = playlist.getParent();
         double cursor = 0;
@@ -513,15 +544,25 @@ public class VideoTranscodeService {
                 }
             } else if (!line.startsWith("#")) {
                 double duration = pendingDuration != null ? pendingDuration : 0;
-                long size = 0;
-                Path file = dir.resolve(line);
-                if (Files.exists(file)) size = Files.size(file);
-                segments.add(new SegmentInfo(seq++, line, duration, cursor, size));
+                segments.add(new SegmentInfo(seq++, line, duration, cursor,
+                                             segmentSize(dir, rungRel, line, drained)));
                 cursor += duration;
                 pendingDuration = null;
             }
         }
         return segments;
+    }
+
+    /**
+     * Size of one segment, wherever it now lives. A drained segment has been deleted from disk, so
+     * the drain's own record of what it stored is the only source left — falling through to 0 would
+     * make the inspector report a whole ladder of empty segments.
+     */
+    private long segmentSize(Path dir, String rungRel, String filename, DrainedSizes drained)
+            throws IOException {
+        Path file = dir.resolve(filename);
+        if (Files.exists(file)) return Files.size(file);
+        return Math.max(0, drained.sizeOf(rungRel + filename));
     }
 
     /** Rendition name -> { width, height } as declared by ffmpeg in the master playlist. */
@@ -645,7 +686,18 @@ public class VideoTranscodeService {
                     int percent = (int) Math.min(99, Math.max(0, seconds / durationSeconds * 100));
                     if (percent != lastReported) {
                         lastReported = percent;
-                        progress.accept(percent);
+                        // The callback is also the abort channel — the segment drain raises here
+                        // when it runs out of storage budget. Without destroying the process first,
+                        // an escaping exception would close our end of the pipes and leave ffmpeg
+                        // running unattended for the rest of the encode, burning the CPU of a host
+                        // that has just proven it has none to spare.
+                        try {
+                            progress.accept(percent);
+                        } catch (RuntimeException ex) {
+                            process.destroyForcibly();
+                            errPump.join(2000);
+                            throw ex;
+                        }
                     }
                 }
             }

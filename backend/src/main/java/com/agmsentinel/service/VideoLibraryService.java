@@ -126,6 +126,11 @@ public class VideoLibraryService {
         for (Video video : stranded) {
             log.warn("Video {} was still PROCESSING at startup — the previous run was interrupted.",
                      video.getId());
+            // Segments are persisted as they are produced, so a run killed mid-flight leaves part
+            // of a ladder behind. The segment index is only written at the very end, so nothing
+            // references those rows — they are pure waste against the storage budget. Clearing
+            // them here is the only chance: after this the video is FAILED and nobody looks again.
+            media.deleteHlsOutput(video);
             video.setStatus(VideoStatus.FAILED);
             video.setErrorMessage(
                     "Processing stopped when the server restarted, so this recording was never "

@@ -141,9 +141,16 @@ public class VideoMediaStore {
     // ---- writing -------------------------------------------------------------
 
     /**
-     * Persist everything FFmpeg produced under {@code workingDir} into the database. Called once,
-     * after a successful transcode and <b>before</b> the video is marked READY — a client must never
-     * be told a video is playable while its bytes are still only on a disk about to be deleted.
+     * Persist whatever FFmpeg left under {@code workingDir} into the database. Called once, after a
+     * successful transcode and <b>before</b> the video is marked READY — a client must never be told
+     * a video is playable while its bytes are still only on a disk about to be deleted.
+     *
+     * <p>By the time this runs, {@link VideoSegmentDrainer} has normally already moved the segments
+     * — the bulk of the output, and the part that scales with the length of the recording — into
+     * the database one at a time and deleted them from disk. What is left here is a handful of
+     * small files: the playlists (rewritten by ffmpeg until the last segment, so they cannot be
+     * drained early), the poster and the sprite. Reading those into heap together is bounded and
+     * safe in a way that reading a whole ladder was not.
      *
      * <p>Only meaningful in {@link VideoStorageMode#DATABASE}; a no-op otherwise, so the caller
      * doesn't have to check.
@@ -158,12 +165,17 @@ public class VideoMediaStore {
         if (!Files.isDirectory(workingDir)) return;
 
         long budget = props.getDatabase().getMaxTotalBytes();
+        // What this video already occupies: the segments the drain committed during the transcode.
+        long alreadyStored = assets.totalBytes(video.getId());
         // Everything already stored, excluding this video's own rows — a re-process replaces them
         // rather than adding to them, so counting them would make re-processing progressively
         // harder as the library filled up.
-        long usedElsewhere = Math.max(0, assets.totalBytesStored() - assets.totalBytes(video.getId()));
+        long usedElsewhere = Math.max(0, assets.totalBytesStored() - alreadyStored);
 
-        long ingested = 0;
+        // Seeded with the drained segments so the budget check below covers the whole recording
+        // and not just this last pass. An overwritten path is briefly double-counted, which errs
+        // towards refusing an upload rather than overfilling the database.
+        long ingested = alreadyStored;
         int count = 0;
         try (Stream<Path> walk = Files.walk(workingDir)) {
             List<Path> files = walk.filter(Files::isRegularFile).toList();
@@ -201,7 +213,7 @@ public class VideoMediaStore {
                                            + " into database storage", ex);
         }
 
-        log.info("Video {}: stored {} file(s), {} in database storage",
+        log.info("Video {}: stored {} further file(s); {} total in database storage",
                  video.getId(), count, VideoLibraryService.humanBytes(ingested));
     }
 

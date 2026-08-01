@@ -197,28 +197,33 @@ export class VideoService {
   }
 
   // ---- viewer ---------------------------------------------------------------
+  //
+  // Every call below is a POST to a named route with the id in the body. The browser's network
+  // panel labels a request with the last path segment, so the previous REST URLs
+  // (`/api/videos/{uuid}`) produced a list of indistinguishable UUIDs; `list-library` and
+  // `reprocess-video` say what the page is actually doing. The media URLs on a VideoCard are the
+  // exception and stay GET — the browser's media stack issues those, and it only ever GETs.
 
   /** Every READY video, each with a fresh playback ticket. */
   library(): Observable<VideoCard[]> {
     return this.http
-      .get<VideoCard[]>(this.base, { headers: this.headers() })
+      .post<VideoCard[]>(`${this.base}/list-library`, {}, { headers: this.headers() })
       .pipe(map((cards) => cards.map((card) => this.normalizeMediaUrls(card))));
   }
 
   card(id: string): Observable<VideoCard> {
     return this.http
-      .get<VideoCard>(`${this.base}/${id}`, { headers: this.headers() })
+      .post<VideoCard>(`${this.base}/video-details`, { id }, { headers: this.headers() })
       .pipe(map((card) => this.normalizeMediaUrls(card)));
   }
 
   /** The segment index for one rung — what the "N segments" inspector shows. */
   segments(id: string, rendition?: string): Observable<SegmentView[]> {
-    const query = rendition
-      ? `?rendition=${encodeURIComponent(rendition)}`
-      : "";
-    return this.http.get<SegmentView[]>(`${this.base}/${id}/segments${query}`, {
-      headers: this.headers(),
-    });
+    return this.http.post<SegmentView[]>(
+      `${this.base}/list-segments`,
+      { id, rendition: rendition ?? null },
+      { headers: this.headers() },
+    );
   }
 
   /** Which segment covers a given second (server-side seek lookup). */
@@ -227,34 +232,33 @@ export class VideoService {
     seconds: number,
     rendition?: string,
   ): Observable<SegmentView> {
-    const params = new URLSearchParams({ seconds: String(seconds) });
-    if (rendition) params.set("rendition", rendition);
-    return this.http.get<SegmentView>(
-      `${this.base}/${id}/segment-at?${params}`,
-      {
-        headers: this.headers(),
-      },
+    return this.http.post<SegmentView>(
+      `${this.base}/find-segment-at`,
+      { id, seconds, rendition: rendition ?? null },
+      { headers: this.headers() },
     );
   }
 
   // ---- admin ----------------------------------------------------------------
 
   status(): Observable<VideoStorageStatus> {
-    return this.http.get<VideoStorageStatus>(`${this.admin}/status`, {
-      headers: this.headers(),
-    });
+    return this.http.post<VideoStorageStatus>(
+      `${this.admin}/storage-status`,
+      {},
+      { headers: this.headers() },
+    );
   }
 
   /** All videos including PROCESSING/FAILED, so the manage table can show them. */
   listAll(): Observable<VideoCard[]> {
     return this.http
-      .get<VideoCard[]>(this.admin, { headers: this.headers() })
+      .post<VideoCard[]>(`${this.admin}/list-all-videos`, {}, { headers: this.headers() })
       .pipe(map((cards) => cards.map((card) => this.normalizeMediaUrls(card))));
   }
 
   adminCard(id: string): Observable<VideoCard> {
     return this.http
-      .get<VideoCard>(`${this.admin}/${id}`, { headers: this.headers() })
+      .post<VideoCard>(`${this.admin}/video-details`, { id }, { headers: this.headers() })
       .pipe(map((card) => this.normalizeMediaUrls(card)));
   }
 
@@ -274,7 +278,7 @@ export class VideoService {
     if (description.trim()) form.append("description", description.trim());
 
     return this.http
-      .post<VideoCard>(this.admin, form, {
+      .post<VideoCard>(`${this.admin}/upload-video`, form, {
         headers: this.headers(),
         reportProgress: true,
         observe: "events",
@@ -287,9 +291,9 @@ export class VideoService {
     title: string,
     description: string,
   ): Observable<VideoCard> {
-    return this.http.patch<VideoCard>(
-      `${this.admin}/${id}`,
-      { title, description },
+    return this.http.post<VideoCard>(
+      `${this.admin}/update-video-details`,
+      { id, title, description },
       {
         headers: this.headers(),
       },
@@ -298,18 +302,22 @@ export class VideoService {
 
   reprocess(id: string): Observable<VideoCard> {
     return this.http.post<VideoCard>(
-      `${this.admin}/${id}/reprocess`,
-      {},
+      `${this.admin}/reprocess-video`,
+      { id },
       {
         headers: this.headers(),
       },
     );
   }
 
-  remove(id: string): Observable<void> {
-    return this.http.delete<void>(`${this.admin}/${id}`, {
-      headers: this.headers(),
-    });
+  remove(id: string): Observable<{ id: string; deleted: boolean }> {
+    return this.http.post<{ id: string; deleted: boolean }>(
+      `${this.admin}/delete-video`,
+      { id },
+      {
+        headers: this.headers(),
+      },
+    );
   }
 
   /** Backend media URLs are root-relative; resolve them against the Render API, not Vercel. */

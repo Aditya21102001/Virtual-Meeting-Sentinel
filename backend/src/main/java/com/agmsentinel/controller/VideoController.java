@@ -41,6 +41,15 @@ import java.util.regex.Pattern;
  * throughput drops the player switches to a lower rung at the next boundary instead of stalling —
  * that is the "never buffers" behaviour, and it is why the file is segmented in the first place.
  *
+ * <h2>Why the media routes are still GET</h2>
+ * Every data endpoint in this application is a named POST, but media delivery cannot be: the
+ * requests are issued by the browser itself, not by application code. {@code <video src>},
+ * {@code <img src>} and native HLS only ever issue GET, hls.js fetches each segment URI listed in a
+ * playlist with GET, and HTTP Range — the mechanism progressive seeking is built on — is defined
+ * for GET. A POST here would simply never be sent. These are also the routes where the URL is
+ * already self-describing in the network panel ({@code master.m3u8}, {@code seg_00042.ts}), which
+ * is what the POST convention exists to achieve elsewhere.
+ *
  * <h2>Authorisation</h2>
  * Media requests come from the browser's media stack, which cannot attach an Authorization header,
  * so each URL carries a short-lived {@link PlaybackTicketService} ticket scoped to one video. Because
@@ -82,21 +91,32 @@ public class VideoController {
     }
 
     // ---- catalogue -----------------------------------------------------------
+    //
+    // Named POST routes with the video id in the body. The network panel labels a request with the
+    // last path segment, so "/api/videos/{uuid}" showed up as a raw UUID and told you nothing about
+    // which call it was. See VideoAdminController for the full rationale. The media routes below
+    // are the exception and stay GET.
+
+    /** Identifies one video, optionally narrowed to a single rung of the ladder. */
+    public record VideoRef(UUID id, String rendition) { }
+
+    /** A seek lookup: which slice of {@code rendition} covers {@code seconds}. */
+    public record SegmentAtRequest(UUID id, double seconds, String rendition) { }
 
     /**
      * The member library: playable videos, each with a fresh ticket so posters and playback work
      * immediately, plus any recording still being segmented so an upload in progress is visible
      * rather than absent. A non-{@code READY} card carries no ticket or stream URL.
      */
-    @GetMapping
-    public List<VideoCard> list() {
+    @PostMapping("/list-library")
+    public List<VideoCard> listLibrary() {
         String subject = currentSubject();
         return library.listVisible().stream().map(v -> urls.card(v, subject)).toList();
     }
 
-    @GetMapping("/{id}")
-    public VideoCard one(@PathVariable UUID id) {
-        return urls.card(library.getPlayable(id), currentSubject());
+    @PostMapping("/video-details")
+    public VideoCard videoDetails(@RequestBody VideoRef req) {
+        return urls.card(library.getPlayable(req.id()), currentSubject());
     }
 
     /**
@@ -104,11 +124,11 @@ public class VideoController {
      * every slice. The player doesn't need this (the playlist carries the same information), but it
      * makes the segmentation inspectable and drives the "N segments" detail in the UI.
      */
-    @GetMapping("/{id}/segments")
-    public List<SegmentView> segments(@PathVariable UUID id,
-                                     @RequestParam(required = false) String rendition) {
+    @PostMapping("/list-segments")
+    public List<SegmentView> listSegments(@RequestBody VideoRef req) {
+        UUID id = req.id();
         Video video = library.getPlayable(id);
-        VideoRendition chosen = library.pickRendition(video, rendition);
+        VideoRendition chosen = library.pickRendition(video, req.rendition());
         String ticket = tickets.issue(currentSubject(), id);
         return library.segmentsOf(id, chosen.getName()).stream()
                 .map(s -> SegmentView.of(s,
@@ -120,15 +140,14 @@ public class VideoController {
      * Which segment covers a given second — the DB-side seek lookup. Handy for "resume where you
      * left off" and for verifying that a seek really only needs one segment.
      */
-    @GetMapping("/{id}/segment-at")
-    public SegmentView segmentAt(@PathVariable UUID id,
-                                @RequestParam double seconds,
-                                @RequestParam(required = false) String rendition) {
+    @PostMapping("/find-segment-at")
+    public SegmentView findSegmentAt(@RequestBody SegmentAtRequest req) {
+        UUID id = req.id();
         Video video = library.getPlayable(id);
-        VideoRendition chosen = library.pickRendition(video, rendition);
-        VideoSegment segment = library.segmentAt(id, chosen.getName(), seconds)
+        VideoRendition chosen = library.pickRendition(video, req.rendition());
+        VideoSegment segment = library.segmentAt(id, chosen.getName(), req.seconds())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "No segment covers " + seconds + "s."));
+                        "No segment covers " + req.seconds() + "s."));
         String ticket = tickets.issue(currentSubject(), id);
         return SegmentView.of(segment, urls.segmentUrl(id, chosen.getName(), segment.getFilename(), ticket));
     }

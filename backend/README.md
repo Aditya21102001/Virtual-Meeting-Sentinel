@@ -17,9 +17,9 @@ The enterprise core: auth, question ingest, AI orchestration, and the live moder
 | Method | Path | Role | Purpose |
 |---|---|---|---|
 | POST | `/api/auth/login` | public | issue a demo JWT (`{username, role}`) |
-| POST | `/api/questions` | attendee/mod | submit a question → cluster assignment |
-| GET | `/api/clusters` | moderator | current ranked board |
-| POST | `/api/clusters/{id}/draft` | moderator | RAG-draft an answer |
+| POST | `/api/questions/submit-question` | attendee/mod | submit a question → cluster assignment |
+| POST | `/api/clusters/question-board` | moderator | current ranked board |
+| POST | `/api/clusters/draft-answer` | moderator | RAG-draft an answer |
 | WS | `/ws` → subscribe `/topic/board` | — | live board push |
 
 ## Run locally

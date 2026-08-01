@@ -123,8 +123,8 @@ boundary is a plain HTTP call, so any service can be replaced without touching t
 | Class                                  | Job                                                    |
 | -------------------------------------- | ------------------------------------------------------ |
 | `controller/AuthController`            | Issue demo JWT (`/api/auth/login`)                     |
-| `controller/QuestionController`        | Attendee submits (`POST /api/questions`)               |
-| `controller/ClusterController`         | Board + draft (`/api/clusters…`)                       |
+| `controller/QuestionController`        | Attendee submits (`POST /api/questions/submit-question`)               |
+| `controller/ClusterController`         | Board + draft (`/api/clusters/…`)                       |
 | `controller/AdminController`           | Upload report + question bank (`/api/admin…`)          |
 | `controller/SourceController`          | Serve source PDFs publicly (`/api/source/{file}`)      |
 | `service/QuestionService`              | Orchestrates ingest → cluster → broadcast; bulk ingest |
@@ -138,7 +138,7 @@ boundary is a plain HTTP call, so any service can be replaced without touching t
 
 | Class                              | Job                                                             |
 | ---------------------------------- | --------------------------------------------------------------- |
-| `controller/VideoAdminController`  | Upload + manage recordings (`/api/admin/videos…`)               |
+| `controller/VideoAdminController`  | Upload + manage recordings (`/api/admin/videos/…`)               |
 | `controller/VideoController`       | Catalogue, segment index, media bytes, **manifest rewriting**, Range |
 | `service/VideoLibraryService`      | Upload, lifecycle, the short state-transition transactions       |
 | `service/VideoProcessingWorker`    | The `@Async` transcode job (separate bean so the proxy applies)  |
@@ -169,7 +169,7 @@ What happens when an attendee submits a question.
 
 ```
 Attendee (browser)        Backend (8080)                 AI service (8000)
-     │  POST /api/questions     │                              │
+     │  POST /api/questions/submit-question     │                              │
      │  {text, attendeeId} +JWT │                              │
      │─────────────────────────►│                              │
      │                          │  save Question (H2)          │
@@ -202,7 +202,7 @@ What happens when a moderator clicks **Draft answer** (or a cluster auto-drafts 
 
 ```
 Moderator            Backend                    AI service (rag.py)
-   │ POST /api/clusters/{id}/draft │                    │
+   │ POST /api/clusters/draft-answer │                    │
    │──────────────────────────────►│  POST /draft       │
    │                               │───────────────────►│
    │                               │        embed(question)
@@ -253,7 +253,7 @@ Setup page → the report becomes the RAG knowledge base at runtime (no restart)
 
 ```
 Moderator (Setup)     Backend                       AI service (rag.py)
-   │ POST /api/admin/knowledge (multipart PDF) +JWT │
+   │ POST /api/admin/upload-annual-report (multipart PDF) +JWT │
    │───────────────────────────►│  POST /knowledge/upload (multipart)
    │                            │────────────────────────►│
    │                            │      read PDF bytes
@@ -274,7 +274,7 @@ Setup page → bulk-ingest a list of questions, clustered like live ones.
 
 ```
 Moderator (Setup)     Backend (QuestionService.submitBulk)      AI service
-   │ POST /api/admin/question-bank (.txt/.csv) +JWT │
+   │ POST /api/admin/upload-question-bank (.txt/.csv) +JWT │
    │───────────────────────────►│  split into lines (skip blanks/header)
    │                            │  for each line:  POST /ingest → cluster it
    │                            │  broadcast board ONCE at the end
@@ -293,7 +293,7 @@ stream it without downloading it. Full design in **[VIDEO_LIBRARY.md](VIDEO_LIBR
 
 ```
 Moderator (/videos)        Backend                              NAS         Postgres
-   │ POST /api/admin/videos (multipart, up to 2 GB) +JWT
+   │ POST /api/admin/videos/upload-video (multipart, up to 2 GB) +JWT
    │────────────────────────►│ validate extension + size
    │                         │ save row, stream bytes ─────────► source.mp4
    │                         │ status = PROCESSING ───────────────────────► videos
@@ -303,13 +303,13 @@ Moderator (/videos)        Backend                              NAS         Post
    │                         │            VideoProcessingWorker (@Async pool)
    │                         │              ffprobe → duration, w×h, fps ──► videos
    │                         │              ffmpeg  → hls/{720p,480p,360p}/seg_*.ts
-   │  GET /api/admin/videos/{id}  (poll)      progress 0…100  ──────────► videos
+   │  POST /api/admin/videos/video-details  (poll)      progress 0…100  ──────────► videos
    │ ◄── {PROCESSING, 45%} ──│              poster + filmstrip
    │                         │              read playlists → segment index ─► video_renditions
    │ ◄── {READY, 100%} ──────│                                              └► video_segments
 
 Member (/recordings)
-   │ GET /api/videos ───────►│ catalogue + a signed playback ticket per video
+   │ POST /api/videos/list-library ───────►│ catalogue + a signed playback ticket per video
    │ GET …/master.m3u8?t= ──►│ variant list, URIs rewritten to carry the ticket
    │ GET …/r/720p/index.m3u8?t= ► segment list, ticket appended to each segment URI
    │ GET …/r/720p/seg_00007.ts?t= ► ONE ~6s slice   ← repeated as playback advances
@@ -403,12 +403,12 @@ and live cluster state. They're linked by `cluster_id`.
 | Method | Path                       | Role         | Purpose                            |
 | ------ | -------------------------- | ------------ | ---------------------------------- |
 | POST   | `/api/auth/login`          | public       | Get a demo JWT                     |
-| POST   | `/api/questions`           | attendee/mod | Submit a question                  |
-| GET    | `/api/clusters`            | moderator    | Ranked board (with citations)      |
-| POST   | `/api/clusters/{id}/draft` | moderator    | Draft a grounded answer            |
-| GET    | `/api/admin/knowledge`     | moderator    | Knowledge-base status              |
-| POST   | `/api/admin/knowledge`     | moderator    | Upload annual report (PDF)         |
-| POST   | `/api/admin/question-bank` | moderator    | Upload question bank               |
+| POST   | `/api/questions/submit-question`           | attendee/mod | Submit a question                  |
+| POST   | `/api/clusters/question-board`            | moderator    | Ranked board (with citations)      |
+| POST   | `/api/clusters/draft-answer` | moderator    | Draft a grounded answer            |
+| POST   | `/api/admin/knowledge-status`     | moderator    | Knowledge-base status              |
+| POST   | `/api/admin/upload-annual-report`     | moderator    | Upload annual report (PDF)         |
+| POST   | `/api/admin/upload-question-bank` | moderator    | Upload question bank               |
 | GET    | `/api/source/{filename}`   | public       | Serve a source PDF (citation link) |
 | WS     | `/ws` → `/topic/board`     | —            | Live board push                    |
 
@@ -416,16 +416,16 @@ and live cluster state. They're linked by `cluster_id`.
 
 | Method | Path                                   | Role      | Purpose                              |
 | ------ | -------------------------------------- | --------- | ------------------------------------ |
-| GET    | `/api/videos`                          | member    | Catalogue + a playback ticket each   |
-| GET    | `/api/videos/{id}/segments`            | member    | The segment index                    |
-| GET    | `/api/videos/{id}/segment-at?seconds=` | member    | Which slice covers that second       |
+| POST   | `/api/videos/list-library`                          | member    | Catalogue + a playback ticket each   |
+| POST   | `/api/videos/list-segments`            | member    | The segment index                    |
+| POST   | `/api/videos/find-segment-at` | member    | Which slice covers that second       |
 | GET    | `/api/videos/{id}/master.m3u8?t=`      | ticket    | Variant list (rewritten)             |
 | GET    | `/api/videos/{id}/r/{rung}/*.ts?t=`    | ticket    | One segment                          |
 | GET    | `/api/videos/{id}/raw?t=`              | ticket    | Progressive fallback (`Range`-aware) |
-| GET    | `/api/admin/videos/status`             | moderator | NAS + ffmpeg health                  |
-| POST   | `/api/admin/videos`                    | moderator | Upload a recording (multipart)       |
-| POST   | `/api/admin/videos/{id}/reprocess`     | moderator | Rebuild the ladder                   |
-| DELETE | `/api/admin/videos/{id}`               | moderator | Remove rows + the NAS folder         |
+| POST   | `/api/admin/videos/storage-status`             | moderator | NAS + ffmpeg health                  |
+| POST   | `/api/admin/videos/upload-video`                    | moderator | Upload a recording (multipart)       |
+| POST   | `/api/admin/videos/reprocess-video`     | moderator | Rebuild the ladder                   |
+| POST   | `/api/admin/videos/delete-video`               | moderator | Remove rows + the NAS folder         |
 
 ### AI service (backend → ai-service)
 

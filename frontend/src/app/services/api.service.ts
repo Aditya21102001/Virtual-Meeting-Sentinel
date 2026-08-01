@@ -50,6 +50,15 @@ export function parseCitation(source: string): { filename: string; page: number 
   return { filename, page, url: page ? `${base}#page=${page}` : base };
 }
 
+/**
+ * Board / setup / member-directory calls.
+ *
+ * Every endpoint is a POST to a named route, with identifiers in the body rather than the URL.
+ * The browser's network panel labels a request with the last path segment, so REST-style routes
+ * showed up as a column of bare ids; `submit-question` and `set-member-role` are readable at a
+ * glance. The only GETs left in the app are the ones the browser issues itself and cannot be
+ * asked to POST: video media, and the PDF behind a citation link (see `parseCitation`).
+ */
 @Injectable({ providedIn: 'root' })
 export class ApiService {
   private token: string | null = null;
@@ -74,22 +83,24 @@ export class ApiService {
 
   submitQuestion(text: string, attendeeId: string, weight: number): Observable<IngestResult> {
     return this.http.post<IngestResult>(
-      `${environment.apiBase}/api/questions`,
+      `${environment.apiBase}/api/questions/submit-question`,
       { text, attendeeId, weight },
       { headers: this.authHeaders() },
     );
   }
 
   getBoard(): Observable<ClusterView[]> {
-    return this.http.get<ClusterView[]>(`${environment.apiBase}/api/clusters`, {
-      headers: this.authHeaders(),
-    });
+    return this.http.post<ClusterView[]>(
+      `${environment.apiBase}/api/clusters/question-board`,
+      {},
+      { headers: this.authHeaders() },
+    );
   }
 
   requestDraft(clusterId: string, representativeQuestion: string): Observable<unknown> {
     return this.http.post(
-      `${environment.apiBase}/api/clusters/${clusterId}/draft`,
-      { representativeQuestion },
+      `${environment.apiBase}/api/clusters/draft-answer`,
+      { clusterId, representativeQuestion },
       { headers: this.authHeaders() },
     );
   }
@@ -97,9 +108,11 @@ export class ApiService {
   // ---- Setup / admin (moderator) ------------------------------------------
 
   knowledgeStatus(): Observable<KnowledgeStatus> {
-    return this.http.get<KnowledgeStatus>(`${environment.apiBase}/api/admin/knowledge`, {
-      headers: this.authHeaders(),
-    });
+    return this.http.post<KnowledgeStatus>(
+      `${environment.apiBase}/api/admin/knowledge-status`,
+      {},
+      { headers: this.authHeaders() },
+    );
   }
 
   /** Upload the annual-report PDF -> indexed into the RAG knowledge base. */
@@ -107,7 +120,7 @@ export class ApiService {
     const form = new FormData();
     form.append('file', file, file.name);
     return this.http.post<{ filename: string; chunks_indexed: number } & KnowledgeStatus>(
-      `${environment.apiBase}/api/admin/knowledge`,
+      `${environment.apiBase}/api/admin/upload-annual-report`,
       form,
       { headers: this.authHeaders() },
     );
@@ -119,7 +132,7 @@ export class ApiService {
     form.append('file', file, file.name);
     form.append('weight', String(weight));
     return this.http.post<{ received: number; ingested: number }>(
-      `${environment.apiBase}/api/admin/question-bank`,
+      `${environment.apiBase}/api/admin/upload-question-bank`,
       form,
       { headers: this.authHeaders() },
     );
@@ -128,13 +141,17 @@ export class ApiService {
   // ---- Member directory / role management (moderator/admin) ----------------
 
   listUsers(): Observable<Member[]> {
-    return this.http.get<Member[]>(`${environment.apiBase}/api/users`, { headers: this.authHeaders() });
+    return this.http.post<Member[]>(
+      `${environment.apiBase}/api/users/list-members`,
+      {},
+      { headers: this.authHeaders() },
+    );
   }
 
   setUserRole(id: string, role: string): Observable<Member> {
-    return this.http.patch<Member>(
-      `${environment.apiBase}/api/users/${id}/role`,
-      { role },
+    return this.http.post<Member>(
+      `${environment.apiBase}/api/users/set-member-role`,
+      { id, role },
       { headers: this.authHeaders() },
     );
   }

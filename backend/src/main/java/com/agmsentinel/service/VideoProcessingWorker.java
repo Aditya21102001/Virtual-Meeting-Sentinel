@@ -39,6 +39,11 @@ import java.util.UUID;
  * directory regardless of {@link VideoStorageMode}. In {@code DATABASE} mode that directory is a
  * <em>working</em> directory: its contents are persisted to the database and it is then deleted, so
  * the host's disk is free to be ephemeral.
+ *
+ * <p>Persisting is incremental rather than a single pass at the end — see
+ * {@link VideoSegmentDrainer}. That is what keeps the resident cost of a transcode independent of
+ * how long the recording is, which is the difference between a small host segmenting an hour-long
+ * upload and being killed part-way through one.
  */
 @Component
 public class VideoProcessingWorker {
@@ -50,6 +55,7 @@ public class VideoProcessingWorker {
     private final VideoStorageService storage;
     private final VideoMediaStore media;
     private final VideoTranscodeService transcoder;
+    private final VideoSegmentDrainer drainer;
     private final VideoProperties props;
 
     public VideoProcessingWorker(VideoRepository videos,
@@ -57,12 +63,14 @@ public class VideoProcessingWorker {
                                  VideoStorageService storage,
                                  VideoMediaStore media,
                                  VideoTranscodeService transcoder,
+                                 VideoSegmentDrainer drainer,
                                  VideoProperties props) {
         this.videos = videos;
         this.library = library;
         this.storage = storage;
         this.media = media;
         this.transcoder = transcoder;
+        this.drainer = drainer;
         this.props = props;
     }
 
@@ -130,18 +138,35 @@ public class VideoProcessingWorker {
                      Math.round(info.frameRate()), info.hasAudio());
             library.storeProbe(videoId, info);
 
-            TranscodeOutput output = transcoder.transcodeToHls(
-                    videoDir, source, info, percent -> library.updateProgress(videoId, percent));
+            TranscodeOutput output;
+            // Segments move into the database as ffmpeg finishes them, so neither heap nor disk
+            // has to hold the whole ladder at once. Without this the cost of a transcode scales
+            // with the length of the recording and a long one kills a small container outright.
+            try (VideoSegmentDrainer.Drain drain = drainer.start(video, videoDir)) {
+                output = transcoder.transcodeToHls(videoDir, source, info,
+                        percent -> {
+                            // Surfaces a drain that has run out of storage budget, which aborts
+                            // the encode here rather than an hour later.
+                            drain.raiseIfFailed();
+                            library.updateProgress(videoId, percent);
+                        },
+                        drain::sizeOf);
 
-            // Poster and filmstrip are cosmetic — a failure in either must not fail the video, so
-            // both return null rather than throwing.
-            String poster = transcoder.renderPoster(videoDir, source, info);
-            SpriteInfo sprite = transcoder.renderSprite(videoDir, source, info);
+                // Poster and filmstrip are cosmetic — a failure in either must not fail the video,
+                // so both return null rather than throwing.
+                String poster = transcoder.renderPoster(videoDir, source, info);
+                SpriteInfo sprite = transcoder.renderSprite(videoDir, source, info);
 
-            // Persist BEFORE marking READY: a client must never be told a video is playable while
-            // its bytes still live only in a directory that is about to be deleted.
-            media.ingest(video, videoDir, skipList(video));
-            library.storeResult(videoId, output, poster, sprite);
+                // Sweep up the segments produced since the last sweep, then persist what the drain
+                // deliberately left behind: the playlists (ffmpeg rewrites them until the very end)
+                // plus the poster and sprite. All small, all read in one pass.
+                drain.finish();
+
+                // Persist BEFORE marking READY: a client must never be told a video is playable
+                // while its bytes still live only in a directory that is about to be deleted.
+                media.ingest(video, videoDir, skipList(video));
+                library.storeResult(videoId, output, poster, sprite);
+            }
             discardWorkingDir(video, videoDir);
 
             log.info("Video {} ready — {} rendition(s), {} segment(s) indexed", videoId,
@@ -150,10 +175,35 @@ public class VideoProcessingWorker {
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             log.warn("Transcode of {} was interrupted", videoId);
+            discardPartialOutput(video);
             library.markFailed(videoId, "Processing was interrupted (server shutting down?).");
         } catch (Exception ex) {
             log.error("Transcode failed for video {}", videoId, ex);
+            discardPartialOutput(video);
             library.markFailed(videoId, ex.getMessage());
+        }
+    }
+
+    /**
+     * Drop the half-written ladder of a transcode that did not finish.
+     *
+     * <p>Only needed since segments started being persisted as they are produced: a run that dies
+     * at 80% now leaves 80% of a ladder in {@code video_assets} that nothing indexes and nothing
+     * can play, because the segment index and the READY flip happen together at the very end. Left
+     * alone those rows would sit against the storage budget forever and, on a small database,
+     * a couple of failed uploads would be enough to start refusing good ones.
+     *
+     * <p>Safe precisely because the index is written last: if we are here, no {@code VideoSegment}
+     * row references any of this. The original upload is untouched, so Re-process still works.
+     */
+    private void discardPartialOutput(Video video) {
+        if (video.getStorageMode() != VideoStorageMode.DATABASE) return;
+        try {
+            media.deleteHlsOutput(video);
+        } catch (RuntimeException ex) {
+            // Best-effort: the video is already failing, and a cleanup error must not replace the
+            // real reason with a misleading one.
+            log.warn("Could not clear partial output for video {}: {}", video.getId(), ex.getMessage());
         }
     }
 

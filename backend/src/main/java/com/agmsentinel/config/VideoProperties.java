@@ -111,6 +111,23 @@ public class VideoProperties {
          */
         private boolean keepSource = false;
 
+        /**
+         * Move each finished segment into the database while ffmpeg is still encoding, rather than
+         * ingesting the whole ladder in one pass at the end.
+         *
+         * <p>On by default, because the one-pass ingest is what makes a long recording fail on a
+         * small host: every produced file is held in heap as a managed blob entity until the
+         * transaction commits, so peak memory scales with the length of the video and the whole
+         * ladder has to fit on the container's disk at the same time. Draining bounds both to a
+         * single segment. Turn it off only to reproduce the old behaviour.
+         *
+         * @see com.agmsentinel.service.VideoSegmentDrainer
+         */
+        private boolean drainSegments = true;
+
+        /** How often the drain sweeps for finished segments. Small enough to bound disk use. */
+        private int drainSweepSeconds = 5;
+
         public long getMaxUploadBytes() { return maxUploadBytes; }
         public void setMaxUploadBytes(long maxUploadBytes) { this.maxUploadBytes = maxUploadBytes; }
         public long getMaxTotalBytes() { return maxTotalBytes; }
@@ -121,6 +138,10 @@ public class VideoProperties {
         public void setMaxAssetBytes(long maxAssetBytes) { this.maxAssetBytes = maxAssetBytes; }
         public boolean isKeepSource() { return keepSource; }
         public void setKeepSource(boolean keepSource) { this.keepSource = keepSource; }
+        public boolean isDrainSegments() { return drainSegments; }
+        public void setDrainSegments(boolean drainSegments) { this.drainSegments = drainSegments; }
+        public int getDrainSweepSeconds() { return drainSweepSeconds; }
+        public void setDrainSweepSeconds(int seconds) { this.drainSweepSeconds = seconds; }
     }
 
     public static class Hls {

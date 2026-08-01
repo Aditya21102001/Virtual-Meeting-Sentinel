@@ -14,7 +14,7 @@ keeps centroids in memory, so a restart used to lose every cluster. Now it doesn
 
 ```
                           QUEUE_MODE=kafka
- Attendee ─► POST /api/questions (Spring Boot)
+ Attendee ─► POST /api/questions/submit-question (Spring Boot)
                  │  1. save question to Postgres
                  │  2. produce event ──► ┌────────────────────────────┐
                  └───────────────────────►│  Kafka: questions.incoming │  ◄── retained log
@@ -118,7 +118,7 @@ always reproducible from Kafka.
 
 ## Notes & trade-offs
 
-- **Async ingest.** In kafka mode, `POST /api/questions` returns immediately with
+- **Async ingest.** In kafka mode, `POST /api/questions/submit-question` returns immediately with
   `cluster_id: "pending"` (the assignment happens asynchronously in the AI consumer). The board
   reflects the new cluster on the next scheduled push (`board.refresh-ms`, default 10s) — lower
   it for a snappier demo.

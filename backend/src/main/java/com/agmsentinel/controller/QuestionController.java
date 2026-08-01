@@ -16,8 +16,8 @@ public class QuestionController {
     }
 
     /** Attendees submit questions here. Returns the cluster the question folded into. */
-    @PostMapping
-    public IngestResult submit(@Valid @RequestBody SubmitQuestionRequest req) {
+    @PostMapping("/submit-question")
+    public IngestResult submitQuestion(@Valid @RequestBody SubmitQuestionRequest req) {
         return service.submit(req);
     }
 }

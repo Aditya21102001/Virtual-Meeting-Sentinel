@@ -133,6 +133,14 @@ video:
     # Keep the original upload in the database as well as the segments? Off by default: it is
     # only needed to re-process, and it is far larger than every segment combined.
     keep-source: ${VIDEO_DB_KEEP_SOURCE:false}
+    # Move each finished segment into the database while FFmpeg is still encoding, instead of
+    # ingesting the whole ladder in one transaction at the end. On by default: the one-pass ingest
+    # holds every produced file in heap until it commits, so its cost grows with the length of the
+    # recording and a long upload will OOM a small container. Draining bounds heap and disk to a
+    # single segment. Only set false to reproduce the old behaviour.
+    drain-segments: ${VIDEO_DB_DRAIN_SEGMENTS:true}
+    # How often the drain sweeps for finished segments.
+    drain-sweep-seconds: ${VIDEO_DB_DRAIN_SWEEP_SECONDS:5}
 
 # Python AI service base URL (Docker: http://ai-service:8000 ; HF Spaces URL in prod)
 ai:

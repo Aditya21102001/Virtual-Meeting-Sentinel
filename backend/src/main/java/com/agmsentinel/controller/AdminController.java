@@ -30,7 +30,7 @@ public class AdminController {
     }
 
     /** Current knowledge-base status (which reports are indexed, chunk count). */
-    @GetMapping("/knowledge")
+    @PostMapping("/knowledge-status")
     public Map<String, Object> knowledgeStatus() {
         return ai.knowledgeStatus();
     }
@@ -43,7 +43,7 @@ public class AdminController {
     private static final long MAX_PDF_BYTES = 25L * 1024 * 1024;
 
     /** Upload an annual-report PDF -> indexed into RAG at runtime. */
-    @PostMapping("/knowledge")
+    @PostMapping("/upload-annual-report")
     public ResponseEntity<?> uploadKnowledge(@RequestParam("file") MultipartFile file) throws IOException {
         if (file.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "No file provided."));
@@ -63,7 +63,7 @@ public class AdminController {
      * Upload a question bank (one question per line; .txt or .csv). A first line equal to
      * "question" is treated as a header and skipped. Each line is clustered like a live question.
      */
-    @PostMapping("/question-bank")
+    @PostMapping("/upload-question-bank")
     public Map<String, Object> uploadQuestionBank(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "weight", defaultValue = "0.1") float weight) throws IOException {

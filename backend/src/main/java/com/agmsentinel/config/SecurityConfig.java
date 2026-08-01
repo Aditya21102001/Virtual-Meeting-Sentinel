@@ -63,7 +63,8 @@ public class SecurityConfig {
                 // Media URLs are fetched by the browser's own media stack (<video src>, native HLS,
                 // <img> posters), which cannot attach an Authorization header. They are permitted
                 // here and authorised inside VideoController by a short-lived, video-scoped
-                // playback ticket — see PlaybackTicketService. GET only: nothing is mutated.
+                // playback ticket — see PlaybackTicketService. GET only: nothing is mutated, and
+                // these are the only video routes that are not POST for exactly that reason.
                 .requestMatchers(HttpMethod.GET,
                                  "/api/videos/*/master.m3u8",
                                  "/api/videos/*/r/**",
@@ -79,8 +80,10 @@ public class SecurityConfig {
                 // everyone can see the directory of registered users and use the chat / AI assistant.
                 .requestMatchers("/api/chat/**").authenticated()
                 // Member directory: any authenticated user may READ the roster; only
-                // moderators/admins may CHANGE roles (PATCH /api/users/{id}/role).
-                .requestMatchers(HttpMethod.GET, "/api/users").authenticated()
+                // moderators/admins may CHANGE roles. Both are POST now, so the two are told apart
+                // by path rather than by method — list-members first, since the /** rule below
+                // would otherwise swallow it.
+                .requestMatchers("/api/users/list-members").authenticated()
                 .requestMatchers("/api/users/**").hasAnyRole("MODERATOR", "ADMIN")
                 .anyRequest().authenticated())
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
@@ -108,7 +111,10 @@ public class SecurityConfig {
                 "https://virtual-meeting-sentinel.vercel.app",
                 "http://localhost:4200",
                 "http://127.0.0.1:4200"));
-        cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        // The API is POST-only; GET remains for media and PDF sources, which the browser fetches
+        // itself. PUT/PATCH/DELETE are no longer used by anything, so they are not advertised —
+        // a preflight for one now fails loudly instead of reaching a route that would 405.
+        cfg.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
         cfg.setAllowedHeaders(List.of("*"));
         cfg.setAllowCredentials(true);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

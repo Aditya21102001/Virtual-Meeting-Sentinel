@@ -4,14 +4,13 @@ import com.agmsentinel.dto.VideoDtos.VideoCard;
 import com.agmsentinel.dto.VideoDtos.VideoStorageStatus;
 import com.agmsentinel.service.VideoLibraryService;
 import com.agmsentinel.service.VideoUrlFactory;
-import org.springframework.http.ResponseEntity;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -21,9 +20,19 @@ import java.util.UUID;
  * MODERATOR/ADMIN.
  *
  * <p>The upload returns as soon as the bytes are on the NAS, with {@code status=PROCESSING} and
- * {@code progressPercent=0}. Segmentation happens on the transcode worker, and the UI polls
- * {@code GET /api/admin/videos/{id}} for progress — holding the HTTP request open for the length of
- * an ffmpeg run would simply time out for anything longer than a few minutes.
+ * {@code progressPercent=0}. Segmentation happens on the transcode worker and the UI polls
+ * {@code /api/admin/videos/video-details} for progress — holding the HTTP request open for the
+ * length of an ffmpeg run would simply time out for anything longer than a few minutes.
+ *
+ * <h2>Why every route is a named POST</h2>
+ * Each endpoint is {@code POST} to a fixed, verb-shaped path, with any identifier in the request
+ * body rather than the URL. The browser's network panel labels a request with the last path
+ * segment, so the previous REST-style routes showed a column of bare UUIDs — indistinguishable from
+ * each other and useless for debugging a page that fires several calls at once. {@code upload-video}
+ * and {@code reprocess-video} say what happened. One verb across the whole API also removes the
+ * class of bug where a route is reachable by a method its security rule did not anticipate.
+ *
+ * <p>Media delivery is the deliberate exception and stays {@code GET} — see {@link VideoController}.
  */
 @RestController
 @RequestMapping("/api/admin/videos")
@@ -37,38 +46,49 @@ public class VideoAdminController {
         this.urls = urls;
     }
 
+    /** Identifies one video. In the body rather than the path, so the URL stays a readable name. */
+    public record VideoRef(@NotNull UUID id) { }
+
+    public record UpdateVideoRequest(@NotNull UUID id, String title, String description) { }
+
+    /** Acknowledges a delete. A 204 would carry nothing for the caller to check. */
+    public record DeletedResponse(UUID id, boolean deleted) { }
+
     /** Storage + ffmpeg health, shown as a banner so a misconfigured NAS is obvious before upload. */
-    @GetMapping("/status")
-    public VideoStorageStatus status() {
+    @PostMapping("/storage-status")
+    public VideoStorageStatus storageStatus() {
         return library.status();
     }
 
     /** Every video regardless of state, so failures and in-flight transcodes are visible. */
-    @GetMapping
-    public List<VideoCard> list() {
+    @PostMapping("/list-all-videos")
+    public List<VideoCard> listAllVideos() {
         String subject = currentSubject();
         return library.listAll().stream().map(v -> urls.card(v, subject)).toList();
     }
 
-    @GetMapping("/{id}")
-    public VideoCard one(@PathVariable UUID id) {
-        return urls.card(library.get(id), currentSubject());
+    @PostMapping("/video-details")
+    public VideoCard videoDetails(@RequestBody VideoRef req) {
+        return urls.card(library.get(req.id()), currentSubject());
     }
 
     /**
      * Upload a recording. {@code file} streams to the NAS; {@code title}/{@code description} are
      * optional (the filename becomes the title when omitted).
+     *
+     * <p>Multipart rather than JSON, so the bytes are never base64-inflated and the browser can
+     * report real upload progress.
      */
-    @PostMapping
-    public VideoCard upload(@RequestParam("file") MultipartFile file,
-                           @RequestParam(required = false) String title,
-                           @RequestParam(required = false) String description) {
+    @PostMapping("/upload-video")
+    public VideoCard uploadVideo(@RequestParam("file") MultipartFile file,
+                                 @RequestParam(required = false) String title,
+                                 @RequestParam(required = false) String description) {
         return urls.card(library.upload(file, title, description, currentSubject()), currentSubject());
     }
 
-    @PatchMapping("/{id}")
-    public VideoCard update(@PathVariable UUID id, @RequestBody Map<String, String> body) {
-        return urls.card(library.updateMetadata(id, body.get("title"), body.get("description")),
+    @PostMapping("/update-video-details")
+    public VideoCard updateVideoDetails(@RequestBody UpdateVideoRequest req) {
+        return urls.card(library.updateMetadata(req.id(), req.title(), req.description()),
                 currentSubject());
     }
 
@@ -76,16 +96,16 @@ public class VideoAdminController {
      * Re-run segmentation from the stored original — the fix for a failed transcode, a changed
      * ladder, or a video that landed while ffmpeg was missing.
      */
-    @PostMapping("/{id}/reprocess")
-    public VideoCard reprocess(@PathVariable UUID id) {
-        return urls.card(library.reprocess(id), currentSubject());
+    @PostMapping("/reprocess-video")
+    public VideoCard reprocessVideo(@RequestBody VideoRef req) {
+        return urls.card(library.reprocess(req.id()), currentSubject());
     }
 
     /** Remove the catalogue row, its segment index, and the whole folder on the NAS. */
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable UUID id) {
-        library.delete(id);
-        return ResponseEntity.noContent().build();
+    @PostMapping("/delete-video")
+    public DeletedResponse deleteVideo(@RequestBody VideoRef req) {
+        library.delete(req.id());
+        return new DeletedResponse(req.id(), true);
     }
 
     private String currentSubject() {

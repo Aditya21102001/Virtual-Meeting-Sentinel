@@ -407,12 +407,12 @@ SELECT * FROM video_segments
 | Method | Path                             | Role         | Purpose                                        |
 | ------ | -------------------------------- | ------------ | ---------------------------------------------- |
 | POST   | `/api/auth/login`                | public       | Issue a demo JWT `{username, role}`            |
-| POST   | `/api/questions`                 | attendee/mod | Submit a question → returns cluster assignment |
-| GET    | `/api/clusters?limit=N`          | moderator    | Current ranked board (includes citations)      |
-| POST   | `/api/clusters/{id}/draft`       | moderator    | Trigger RAG draft for a cluster                |
-| GET    | `/api/admin/knowledge`           | moderator    | Knowledge-base status (sources, chunk count)   |
-| POST   | `/api/admin/knowledge`           | moderator    | Upload annual-report PDF (indexed into RAG)    |
-| POST   | `/api/admin/question-bank`       | moderator    | Upload question bank (bulk-ingested)           |
+| POST   | `/api/questions/submit-question`                 | attendee/mod | Submit a question → returns cluster assignment |
+| POST   | `/api/clusters/question-board`          | moderator    | Current ranked board (includes citations)      |
+| POST   | `/api/clusters/draft-answer`       | moderator    | Trigger RAG draft for a cluster                |
+| POST   | `/api/admin/knowledge-status`           | moderator    | Knowledge-base status (sources, chunk count)   |
+| POST   | `/api/admin/upload-annual-report`           | moderator    | Upload annual-report PDF (indexed into RAG)    |
+| POST   | `/api/admin/upload-question-bank`       | moderator    | Upload question bank (bulk-ingested)           |
 | GET    | `/api/source/{filename}`         | public       | Serve a source PDF (citation-link target)      |
 | WS     | `/ws` → subscribe `/topic/board` | —            | Live board push                                |
 
@@ -421,22 +421,22 @@ playback ticket in the URL, because the browser's media stack cannot send an `Au
 
 | Method | Path                                        | Role      | Purpose                                   |
 | ------ | ------------------------------------------- | --------- | ----------------------------------------- |
-| GET    | `/api/videos`                               | member    | Catalogue of READY videos + a ticket each |
-| GET    | `/api/videos/{id}`                          | member    | One catalogue entry                       |
-| GET    | `/api/videos/{id}/segments?rendition=`      | member    | The segment index for a rung              |
-| GET    | `/api/videos/{id}/segment-at?seconds=`      | member    | Which segment covers that second          |
+| POST   | `/api/videos/list-library`                               | member    | Catalogue of READY videos + a ticket each |
+| POST   | `/api/videos/video-details`                          | member    | One catalogue entry                       |
+| POST   | `/api/videos/list-segments`      | member    | The segment index for a rung              |
+| POST   | `/api/videos/find-segment-at`      | member    | Which segment covers that second          |
 | GET    | `/api/videos/{id}/master.m3u8?t=`           | ticket    | Variant list (URIs rewritten)             |
 | GET    | `/api/videos/{id}/r/{rung}/index.m3u8?t=`   | ticket    | Media playlist (URIs rewritten)           |
 | GET    | `/api/videos/{id}/r/{rung}/seg_NNNNN.ts?t=` | ticket    | One ~6s segment                           |
 | GET    | `/api/videos/{id}/raw?t=`                   | ticket    | Progressive fallback, `Range`-aware       |
 | GET    | `/api/videos/{id}/poster.jpg?t=`            | ticket    | Catalogue thumbnail                       |
 | GET    | `/api/videos/{id}/sprite.jpg?t=`            | ticket    | Seek-preview filmstrip                    |
-| GET    | `/api/admin/videos/status`                  | moderator | NAS reachability, free space, FFmpeg      |
-| GET    | `/api/admin/videos`                         | moderator | All videos incl. PROCESSING / FAILED      |
-| POST   | `/api/admin/videos`                         | moderator | Upload a recording (multipart)            |
-| PATCH  | `/api/admin/videos/{id}`                    | moderator | Edit title / description                  |
-| POST   | `/api/admin/videos/{id}/reprocess`          | moderator | Rebuild the ladder from the original      |
-| DELETE | `/api/admin/videos/{id}`                    | moderator | Delete rows + the NAS folder              |
+| POST   | `/api/admin/videos/storage-status`                  | moderator | NAS reachability, free space, FFmpeg      |
+| POST   | `/api/admin/videos/list-all-videos`                         | moderator | All videos incl. PROCESSING / FAILED      |
+| POST   | `/api/admin/videos/upload-video`                         | moderator | Upload a recording (multipart)            |
+| POST   | `/api/admin/videos/update-video-details`                    | moderator | Edit title / description                  |
+| POST   | `/api/admin/videos/reprocess-video`          | moderator | Rebuild the ladder from the original      |
+| POST   | `/api/admin/videos/delete-video`                    | moderator | Delete rows + the NAS folder              |
 
 ### Python AI service
 
@@ -463,7 +463,7 @@ GET  /clusters
 
 ## 12. Data Flow
 
-1. Attendee submits a question in the Angular app → `POST /api/questions` (with JWT).
+1. Attendee submits a question in the Angular app → `POST /api/questions/submit-question` (with JWT).
 2. Spring Boot persists the question, calls the AI service `POST /ingest`.
 3. AI service embeds the text, runs online clustering, returns the cluster assignment.
 4. Spring Boot stores the `cluster_id`; if the cluster just turned "hot" (≥3 asks), it triggers

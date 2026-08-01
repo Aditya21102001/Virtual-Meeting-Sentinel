@@ -1,11 +1,9 @@
 package com.agmsentinel.controller;
 
-import com.agmsentinel.dto.ChatDtos.SetRoleRequest;
 import com.agmsentinel.dto.ChatDtos.UserDto;
 import com.agmsentinel.model.AppUser;
 import com.agmsentinel.repository.AppUserRepository;
 import com.agmsentinel.security.Roles;
-import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -28,21 +26,27 @@ public class UserController {
         this.users = users;
     }
 
-    @GetMapping
-    public List<UserDto> list() {
+    /** The user whose role is changing, alongside the role to give them. */
+    public record SetRoleFor(UUID id, String role) { }
+
+    @PostMapping("/list-members")
+    public List<UserDto> listMembers() {
         return users.findAll().stream()
                 .map(u -> new UserDto(u.getId().toString(), u.getUsername(), u.getEmail(), u.getRole()))
                 .toList();
     }
 
-    @PatchMapping("/{id}/role")
-    public UserDto setRole(@PathVariable UUID id, @Valid @RequestBody SetRoleRequest req) {
+    @PostMapping("/set-member-role")
+    public UserDto setMemberRole(@RequestBody SetRoleFor req) {
+        if (req.id() == null || req.role() == null || req.role().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "id and role are required.");
+        }
         String role = req.role().toUpperCase();
         if (!Roles.isAssignable(role)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Role must be one of " + Roles.ASSIGNABLE);
         }
-        AppUser user = users.findById(id)
+        AppUser user = users.findById(req.id())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found."));
         user.setRole(role);
         users.save(user);

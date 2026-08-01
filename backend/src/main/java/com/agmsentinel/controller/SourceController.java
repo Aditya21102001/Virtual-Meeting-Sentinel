@@ -11,6 +11,11 @@ import org.springframework.web.bind.annotation.*;
  * the browser's PDF viewer opens these in a new tab and won't send the Authorization header,
  * and an annual report is a public disclosure anyway. Path traversal is blocked by the AI
  * service (it basenames the filename before resolving).
+ *
+ * <p>The one data route that is still {@code GET}, and for the same reason the video media routes
+ * are: a citation is an ordinary link the user clicks, and a browser navigation is a GET. Turning
+ * this into a POST would mean the PDF could no longer simply be opened in a tab. The filename is
+ * also exactly the label you want to see in the network panel, so nothing is lost.
  */
 @RestController
 @RequestMapping("/api/source")

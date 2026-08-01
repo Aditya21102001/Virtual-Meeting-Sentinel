@@ -129,7 +129,7 @@ export class AuthService {
 
   // ---- public config (which login methods to show) -----------------------
   config(): Observable<AuthConfig> {
-    return this.http.get<AuthConfig>(`${this.base}/api/auth/config`);
+    return this.http.post<AuthConfig>(`${this.base}/api/auth/login-options`, {});
   }
 
   // ---- passwordless OTP login (email / SMS) ------------------------------
@@ -160,9 +160,11 @@ export class AuthService {
 
   // ---- enrollment (needs a full access token) ----------------------------
   enrollStatus(): Observable<MfaStatus> {
-    return this.http.get<MfaStatus>(`${this.base}/api/auth/enroll/status`, {
-      headers: this.authHeaders(),
-    });
+    return this.http.post<MfaStatus>(
+      `${this.base}/api/auth/enroll/status`,
+      {},
+      { headers: this.authHeaders() },
+    );
   }
   setPin(pin: string): Observable<MfaStatus> {
     return this.http.post<MfaStatus>(
