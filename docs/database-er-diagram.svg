@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1400" viewBox="0 0 1600 1400" role="img" aria-labelledby="title desc">
+  <title id="title">Virtual Meeting Sentinel Database ER Diagram</title>
+  <desc id="desc">Entity relationship diagram for users, authentication, chat, questions, clusters, and the video library.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 2; rx: 8; }
+      .head { fill: #0f172a; }
+      .head-text { fill: #ffffff; font: 700 18px Arial, sans-serif; }
+      .field { fill: #1e293b; font: 14px Arial, sans-serif; }
+      .key { fill: #0369a1; font-weight: 700; }
+      .note { fill: #475569; font: 13px Arial, sans-serif; }
+      .line { stroke: #64748b; stroke-width: 2; fill: none; }
+      .dash { stroke-dasharray: 7 6; }
+      .label { fill: #475569; font: 700 12px Arial, sans-serif; }
+      .section { fill: #0f172a; font: 700 22px Arial, sans-serif; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1600" height="1100"/>
+  <text x="50" y="48" class="section">Virtual Meeting Sentinel Database</text>
+  <text x="50" y="75" class="note">Solid lines are enforced foreign keys. Dashed lines are logical application relationships.</text>
+
+  <!-- Users and security -->
+  <rect class="box" x="50" y="120" width="300" height="230"/>
+  <rect class="head" x="50" y="120" width="300" height="38" rx="8"/>
+  <text class="head-text" x="70" y="145">app_users</text>
+  <text class="field key" x="70" y="183">PK id : UUID</text>
+  <text class="field" x="70" y="207">username : unique</text>
+  <text class="field" x="70" y="231">email, phone</text>
+  <text class="field" x="70" y="255">password_hash</text>
+  <text class="field" x="70" y="279">role</text>
+  <text class="field" x="70" y="303">pin_hash, totp_secret</text>
+  <text class="field" x="70" y="327">totp_enabled, created_at</text>
+
+  <rect class="box" x="430" y="150" width="310" height="190"/>
+  <rect class="head" x="430" y="150" width="310" height="38" rx="8"/>
+  <text class="head-text" x="450" y="175">webauthn_credentials</text>
+  <text class="field key" x="450" y="213">PK id : UUID</text>
+  <text class="field key" x="450" y="237">FK user_id : UUID</text>
+  <text class="field" x="450" y="261">credential_id : unique</text>
+  <text class="field" x="450" y="285">public_key_cose</text>
+  <text class="field" x="450" y="309">sign_count, created_at</text>
+
+  <rect class="box" x="850" y="120" width="310" height="205"/>
+  <rect class="head" x="850" y="120" width="310" height="38" rx="8"/>
+  <text class="head-text" x="870" y="145">direct_messages</text>
+  <text class="field key" x="870" y="183">PK id : UUID</text>
+  <text class="field" x="870" y="207">sender : username</text>
+  <text class="field" x="870" y="231">recipient : username</text>
+  <text class="field" x="870" y="255">body, kind</text>
+  <text class="field" x="870" y="279">sent_at, read_at</text>
+  <text class="note" x="870" y="307">No FK; username-based chat</text>
+
+  <path class="line" d="M 350 215 L 430 215" marker-end="url(#arrow)"/>
+  <text class="label" x="365" y="205">1 : N</text>
+  <path class="line dash" d="M 350 270 C 520 390, 700 390, 850 270"/>
+  <text class="label" x="570" y="395">logical username links</text>
+
+  <!-- Questions -->
+  <rect class="box" x="50" y="450" width="310" height="220"/>
+  <rect class="head" x="50" y="450" width="310" height="38" rx="8"/>
+  <text class="head-text" x="70" y="475">questions</text>
+  <text class="field key" x="70" y="513">PK id : UUID</text>
+  <text class="field" x="70" y="537">text</text>
+  <text class="field" x="70" y="561">attendee_id, weight</text>
+  <text class="field key" x="70" y="585">cluster_id : UUID</text>
+  <text class="field" x="70" y="609">embedding : vector(384)</text>
+  <text class="field" x="70" y="633">created_at</text>
+  <text class="note" x="70" y="657">cluster_id is logical, not FK</text>
+
+  <rect class="box" x="500" y="450" width="330" height="220"/>
+  <rect class="head" x="500" y="450" width="330" height="38" rx="8"/>
+  <text class="head-text" x="520" y="475">clusters</text>
+  <text class="field key" x="520" y="513">PK id : UUID</text>
+  <text class="field" x="520" y="537">representative_question</text>
+  <text class="field" x="520" y="561">centroid : vector(384)</text>
+  <text class="field" x="520" y="585">size, weight_sum</text>
+  <text class="field" x="520" y="609">priority_score</text>
+  <text class="field" x="520" y="633">draft_answer, timestamps</text>
+
+  <path class="line dash" d="M 360 550 L 500 550"/>
+  <text class="label" x="390" y="540">N : 1 logical</text>
+
+  <!-- Video domain -->
+  <rect class="box" x="50" y="780" width="330" height="245"/>
+  <rect class="head" x="50" y="780" width="330" height="38" rx="8"/>
+  <text class="head-text" x="70" y="805">videos</text>
+  <text class="field key" x="70" y="843">PK id : UUID</text>
+  <text class="field" x="70" y="867">title, description</text>
+  <text class="field" x="70" y="891">original_filename, size_bytes</text>
+  <text class="field" x="70" y="915">storage_dir, source_rel</text>
+  <text class="field" x="70" y="939">status, delivery_mode</text>
+  <text class="field" x="70" y="963">storage_mode, progress_percent</text>
+  <text class="field" x="70" y="987">duration, dimensions, timestamps</text>
+  <text class="note" x="70" y="1011">Catalogue; bytes usually live on NAS</text>
+
+  <rect class="box" x="550" y="780" width="330" height="220"/>
+  <rect class="head" x="550" y="780" width="330" height="38" rx="8"/>
+  <text class="head-text" x="570" y="805">video_renditions</text>
+  <text class="field key" x="570" y="843">PK id : UUID</text>
+  <text class="field key" x="570" y="867">FK video_id : UUID</text>
+  <text class="field" x="570" y="891">name : 720p, 480p, ...</text>
+  <text class="field" x="570" y="915">width, height</text>
+  <text class="field" x="570" y="939">video/audio bitrates</text>
+  <text class="field" x="570" y="963">playlist_rel, segment_count</text>
+  <text class="field" x="570" y="987">total_bytes</text>
+
+  <rect class="box" x="1050" y="780" width="300" height="220"/>
+  <rect class="head" x="1050" y="780" width="300" height="38" rx="8"/>
+  <text class="head-text" x="1070" y="805">video_segments</text>
+  <text class="field key" x="1070" y="843">PK id : UUID</text>
+  <text class="field key" x="1070" y="867">FK rendition_id : UUID</text>
+  <text class="field" x="1070" y="891">seq : unique per rendition</text>
+  <text class="field" x="1070" y="915">filename</text>
+  <text class="field" x="1070" y="939">duration_seconds</text>
+  <text class="field" x="1070" y="963">start_seconds</text>
+  <text class="field" x="1070" y="987">byte_size</text>
+
+  <rect class="box" x="1050" y="470" width="300" height="190"/>
+  <rect class="head" x="1050" y="470" width="300" height="38" rx="8"/>
+  <text class="head-text" x="1070" y="495">video_assets</text>
+  <text class="field key" x="1070" y="533">PK id : UUID</text>
+  <text class="field key" x="1070" y="557">FK video_id : UUID</text>
+  <text class="field" x="1070" y="581">rel_path : unique per video</text>
+  <text class="field" x="1070" y="605">content_type, byte_size</text>
+  <text class="field" x="1070" y="629">data : BYTEA</text>
+  <text class="note" x="1070" y="653">Used in DATABASE storage mode</text>
+
+  <path class="line" d="M 380 875 L 550 875" marker-end="url(#arrow)"/>
+  <text class="label" x="420" y="865">1 : N</text>
+  <path class="line" d="M 880 875 L 1050 875" marker-end="url(#arrow)"/>
+  <text class="label" x="920" y="865">1 : N</text>
+  <path class="line" d="M 250 780 C 250 720, 1080 720, 1080 660" marker-end="url(#arrow)"/>
+  <text class="label" x="700" y="715">1 : N</text>
+
+  <text x="50" y="1070" class="note">ON DELETE CASCADE: videos -> renditions/assets; renditions -> segments.</text>
+
+  <!-- Descriptions and use cases -->
+  <rect class="box" x="50" y="1090" width="1500" height="260"/>
+  <rect class="head" x="50" y="1090" width="1500" height="38" rx="8"/>
+  <text class="head-text" x="70" y="1115">Table descriptions and database use cases</text>
+
+  <text class="field" x="70" y="1150"><tspan class="key">app_users:</tspan> registered moderator/admin accounts and MFA settings.</text>
+  <text class="field" x="70" y="1172"><tspan class="key">webauthn_credentials:</tspan> passkey public keys linked to users.</text>
+  <text class="field" x="70" y="1194"><tspan class="key">direct_messages:</tspan> user-to-user and AI-assistant lounge history.</text>
+  <text class="field" x="70" y="1216"><tspan class="key">questions:</tspan> attendee questions, weights, embeddings, and cluster assignment.</text>
+  <text class="field" x="70" y="1238"><tspan class="key">clusters:</tspan> deduplicated topics, ranking data, and cached RAG answers.</text>
+  <text class="field" x="70" y="1260"><tspan class="key">videos:</tspan> recording catalogue, processing state, and storage metadata.</text>
+  <text class="field" x="70" y="1282"><tspan class="key">video_renditions / video_segments:</tspan> quality levels and time-ordered HLS slices.</text>
+  <text class="field" x="70" y="1304"><tspan class="key">video_assets:</tspan> optional media bytes when database storage is enabled.</text>
+  <text class="field" x="800" y="1150"><tspan class="key">Question flow:</tspan> submit -> embed -> assign/update cluster -> rank -> draft answer.</text>
+  <text class="field" x="800" y="1172"><tspan class="key">Video flow:</tspan> upload -> transcode -> store renditions/index -> stream and seek.</text>
+  <text class="field" x="800" y="1194"><tspan class="key">Security flow:</tspan> authenticate user -> verify MFA/passkey -> authorize API access.</text>
+  <text class="field" x="800" y="1216"><tspan class="key">Storage flow:</tspan> use NAS by default, or persist media in video_assets.</text>
+</svg>

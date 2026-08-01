@@ -36,7 +36,10 @@ import { AuthService } from "./services/auth.service";
           <a routerLink="/chat" routerLinkActive="active" (click)="close()"
             >💬 Lounge</a
           >
-          <a routerLink="/recordings" routerLinkActive="active" (click)="close()"
+          <a
+            routerLink="/recordings"
+            routerLinkActive="active"
+            (click)="close()"
             >🎬 Recordings</a
           >
         }

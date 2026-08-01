@@ -111,20 +111,20 @@ real-time question stream. VIRTUAL MEETING Sentinel solves this specific, high-v
 
 ## 5. Technology Stack
 
-| Layer         | Technology                                                               | Rationale                                                  |
-| ------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| Frontend      | **Angular 22** (standalone, **zoneless**, signals), STOMP/SockJS         | Real-time board UI; current best-practice change detection |
-| Core API      | **Spring Boot 3 / Java 17**                                              | Enterprise auth, WebSocket fan-out, transactional store    |
-| AI Service    | **Python 3.11 · FastAPI · LangChain**                                    | The entire LLM/embeddings ecosystem lives in Python        |
-| Embeddings    | **sentence-transformers** `all-MiniLM-L6-v2` (local)                     | Runs in-process; zero API cost                             |
-| LLM           | **Groq (Llama 3.3 70B)** / **Google Gemini** — swappable to Azure OpenAI | Free inference; LangChain abstracts the provider           |
-| Vector search | **FAISS** (knowledge base) + **pgvector** (persistence)                  | Fast similarity search without a paid vector DB            |
-| Database      | **PostgreSQL + pgvector** (Neon free tier)                               | Relational + vector in one store                           |
-| Messaging     | **Redis Streams** (Upstash free tier) — optional                         | Backpressure for high-volume ingest                        |
-| Auth          | **JWT (JJWT)**                                                           | Stateless role separation                                  |
-| Video storage | **NAS share** (SMB/UNC or mounted path), or PostgreSQL `bytea`           | Filesystem by default; database mode for hosts with no persistent volume |
-| Video transcode | **FFmpeg** → HLS (H.264/AAC, MPEG-TS segments)                        | Adaptive-bitrate segmentation; the industry-standard tool   |
-| Video playback | **hls.js** over Media Source Extensions                                 | HLS in every browser, plus a manual quality menu and metrics |
+| Layer           | Technology                                                               | Rationale                                                                |
+| --------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Frontend        | **Angular 22** (standalone, **zoneless**, signals), STOMP/SockJS         | Real-time board UI; current best-practice change detection               |
+| Core API        | **Spring Boot 3 / Java 17**                                              | Enterprise auth, WebSocket fan-out, transactional store                  |
+| AI Service      | **Python 3.11 · FastAPI · LangChain**                                    | The entire LLM/embeddings ecosystem lives in Python                      |
+| Embeddings      | **sentence-transformers** `all-MiniLM-L6-v2` (local)                     | Runs in-process; zero API cost                                           |
+| LLM             | **Groq (Llama 3.3 70B)** / **Google Gemini** — swappable to Azure OpenAI | Free inference; LangChain abstracts the provider                         |
+| Vector search   | **FAISS** (knowledge base) + **pgvector** (persistence)                  | Fast similarity search without a paid vector DB                          |
+| Database        | **PostgreSQL + pgvector** (Neon free tier)                               | Relational + vector in one store                                         |
+| Messaging       | **Redis Streams** (Upstash free tier) — optional                         | Backpressure for high-volume ingest                                      |
+| Auth            | **JWT (JJWT)**                                                           | Stateless role separation                                                |
+| Video storage   | **NAS share** (SMB/UNC or mounted path), or PostgreSQL `bytea`           | Filesystem by default; database mode for hosts with no persistent volume |
+| Video transcode | **FFmpeg** → HLS (H.264/AAC, MPEG-TS segments)                           | Adaptive-bitrate segmentation; the industry-standard tool                |
+| Video playback  | **hls.js** over Media Source Extensions                                  | HLS in every browser, plus a manual quality menu and metrics             |
 
 **Why polyglot?** Java gives transactional, secure, high-concurrency business logic; Python
 gives first-class access to embeddings, vector stores, and LLM orchestration. Splitting them
@@ -174,39 +174,39 @@ each service single-responsibility and independently deployable.
 
 ### 7.1 Frontend (Angular) — `frontend/`
 
-| File                           | Responsibility                                                  |
-| ------------------------------ | --------------------------------------------------------------- |
-| `app.config.ts`                | **Zoneless** change detection, router, HttpClient providers     |
-| `pages/attendee.component.ts`  | Question submission; shows new-topic vs. merged result          |
-| `pages/moderator.component.ts` | Live ranked board; draft generation; **citation links**         |
-| `pages/admin.component.ts`     | **Setup**: upload annual report + question bank                 |
-| `services/api.service.ts`      | REST calls + `parseCitation()` (builds page-anchored PDF links) |
-| `services/board.service.ts`    | STOMP/SockJS subscription to `/topic/board` (signals)           |
-| `pages/videos.component.ts`    | Recordings library + segment inspector (lazy-loaded route)      |
-| `pages/video-admin.component.ts` | Upload / manage recordings, with live transcode progress       |
+| File                                   | Responsibility                                                                       |
+| -------------------------------------- | ------------------------------------------------------------------------------------ |
+| `app.config.ts`                        | **Zoneless** change detection, router, HttpClient providers                          |
+| `pages/attendee.component.ts`          | Question submission; shows new-topic vs. merged result                               |
+| `pages/moderator.component.ts`         | Live ranked board; draft generation; **citation links**                              |
+| `pages/admin.component.ts`             | **Setup**: upload annual report + question bank                                      |
+| `services/api.service.ts`              | REST calls + `parseCitation()` (builds page-anchored PDF links)                      |
+| `services/board.service.ts`            | STOMP/SockJS subscription to `/topic/board` (signals)                                |
+| `pages/videos.component.ts`            | Recordings library + segment inspector (lazy-loaded route)                           |
+| `pages/video-admin.component.ts`       | Upload / manage recordings, with live transcode progress                             |
 | `components/video-player.component.ts` | **hls.js player**: quality menu, speed, filmstrip seek preview, PiP, keyboard, stats |
-| `services/video.service.ts`    | Video API client + upload-progress stream                       |
+| `services/video.service.ts`            | Video API client + upload-progress stream                                            |
 
 ### 7.2 Backend (Spring Boot) — `backend/`
 
-| Class                                             | Responsibility                                                       |
-| ------------------------------------------------- | -------------------------------------------------------------------- |
-| `QuestionService`                                 | Orchestrates persist → AI cluster → broadcast; bulk ingest           |
-| `AiClient`                                        | WebClient over the Python service (ingest, draft, upload, fetch PDF) |
-| `controller/AdminController`                      | Upload annual report + question bank (moderator)                     |
-| `controller/SourceController`                     | Serve source PDFs publicly (citation-link target)                    |
-| `WebSocketConfig`                                 | STOMP broker on `/topic`, endpoint `/ws`                             |
-| `BoardRefreshScheduler`                           | Periodic board re-broadcast + keep-warm ping                         |
-| `SecurityConfig` / `JwtService` / `JwtAuthFilter` | JWT auth + role rules                                                |
-| `Question` / `QuestionRepository`                 | JPA persistence                                                      |
+| Class                                             | Responsibility                                                        |
+| ------------------------------------------------- | --------------------------------------------------------------------- |
+| `QuestionService`                                 | Orchestrates persist → AI cluster → broadcast; bulk ingest            |
+| `AiClient`                                        | WebClient over the Python service (ingest, draft, upload, fetch PDF)  |
+| `controller/AdminController`                      | Upload annual report + question bank (moderator)                      |
+| `controller/SourceController`                     | Serve source PDFs publicly (citation-link target)                     |
+| `WebSocketConfig`                                 | STOMP broker on `/topic`, endpoint `/ws`                              |
+| `BoardRefreshScheduler`                           | Periodic board re-broadcast + keep-warm ping                          |
+| `SecurityConfig` / `JwtService` / `JwtAuthFilter` | JWT auth + role rules                                                 |
+| `Question` / `QuestionRepository`                 | JPA persistence                                                       |
 | `VideoLibraryService`                             | Video upload, lifecycle, short state-transition transactions          |
 | `VideoProcessingWorker`                           | The `@Async` transcode job (separate bean, so the proxy applies)      |
 | `VideoTranscodeService`                           | ffprobe + HLS ladder + poster + seek filmstrip                        |
 | `VideoStorageService`                             | The NAS: path-traversal boundary + bounded ranged reads               |
-| `PlaybackTicketService` / `VideoUrlFactory`        | Video-scoped playback tickets + ticketed URL construction             |
+| `PlaybackTicketService` / `VideoUrlFactory`       | Video-scoped playback tickets + ticketed URL construction             |
 | `controller/VideoController`                      | Catalogue, segment index, media bytes, manifest rewriting, HTTP Range |
 | `controller/VideoAdminController`                 | Upload + manage recordings (moderator)                                |
-| `Video` / `VideoRendition` / `VideoSegment`        | Catalogue, ladder rungs, and the segment index                        |
+| `Video` / `VideoRendition` / `VideoSegment`       | Catalogue, ladder rungs, and the segment index                        |
 
 ### 7.3 AI Service (Python) — `ai-service/`
 
@@ -284,6 +284,20 @@ Because the LLM is accessed through LangChain's provider abstraction (`llm.py`),
 ## 10. Database Design
 
 `ai-service/db/init.sql` (PostgreSQL + pgvector):
+
+### Table purpose summary
+
+| Table                  | Description                                                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `app_users`            | Registered moderators and administrators, including login credentials, roles, PIN/TOTP settings, and account details.     |
+| `webauthn_credentials` | Public WebAuthn/passkey credentials linked to registered users. Private keys and biometric data never enter the database. |
+| `direct_messages`      | One-to-one lounge messages, including conversations with the AI assistant. Sender and recipient are stored as usernames.  |
+| `questions`            | Raw attendee questions, their weights, vector embeddings, and the cluster assigned by the AI service.                     |
+| `clusters`             | Deduplicated question topics with centroid vectors, ranking data, and cached grounded draft answers.                      |
+| `videos`               | Video catalogue and processing state: metadata, storage paths, HLS manifest paths, delivery mode, and errors.             |
+| `video_renditions`     | Quality levels generated from a source video, such as 720p or 480p, including bitrate and playlist metadata.              |
+| `video_segments`       | Ordered time-to-segment index used for HLS playback and efficient seeking.                                                |
+| `video_assets`         | Optional media byte storage for database mode when the deployment has no persistent filesystem volume.                    |
 
 **`questions`**
 | Column | Type | Notes |
@@ -368,6 +382,22 @@ SELECT * FROM video_segments
  ORDER BY start_seconds DESC LIMIT 1;
 ```
 
+### Database use cases
+
+| Use case                    | Main tables                                                    | Description                                                                                                                                                      |
+| --------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Submit a question           | `questions`                                                    | An attendee submits text and a weight. The question is persisted before the AI service assigns it to a topic.                                                    |
+| Deduplicate and rank topics | `questions`, `clusters`                                        | The AI service compares embeddings with cluster centroids, updates an existing cluster or creates a new one, and recalculates priority.                          |
+| Draft a grounded answer     | `clusters`                                                     | A moderator requests an answer for a topic. The generated draft and citations are cached on the cluster for later board refreshes.                               |
+| Authenticate a moderator    | `app_users`                                                    | Login verifies the stored password, role, and optional MFA factors before issuing a JWT.                                                                         |
+| Sign in with a passkey      | `app_users`, `webauthn_credentials`                            | The server loads a user credential and verifies the authenticator assertion using the stored public key and signature counter.                                   |
+| Send lounge messages        | `direct_messages`                                              | User-to-user and AI-assistant messages are stored so conversation history survives page refreshes.                                                               |
+| Upload a recording          | `videos`                                                       | The catalogue row is created with `UPLOADED` status, then the background worker processes the source asynchronously.                                             |
+| Generate adaptive video     | `videos`, `video_renditions`, `video_segments`                 | FFmpeg creates quality rungs and approximately six-second segments; the database stores the manifest and segment index.                                          |
+| Play and seek a video       | `videos`, `video_renditions`, `video_segments`                 | The player reads the selected rendition and uses `start_seconds` to fetch only the segment covering the requested position.                                      |
+| Store media in PostgreSQL   | `videos`, `video_assets`                                       | When `storage_mode = DATABASE`, manifests, posters, segments, and optionally the original source are stored as assets instead of relying on a persistent volume. |
+| Delete a recording          | `videos`, `video_renditions`, `video_segments`, `video_assets` | Deleting the video removes dependent rendition, segment, and database-asset rows through cascading foreign keys.                                                 |
+
 ---
 
 ## 11. API Reference
@@ -389,24 +419,24 @@ SELECT * FROM video_segments
 **Video library** — `member` = any signed-in user; `ticket` = authorised by a signed, video-scoped
 playback ticket in the URL, because the browser's media stack cannot send an `Authorization` header.
 
-| Method | Path                                       | Role      | Purpose                                  |
-| ------ | ------------------------------------------ | --------- | ---------------------------------------- |
-| GET    | `/api/videos`                              | member    | Catalogue of READY videos + a ticket each |
-| GET    | `/api/videos/{id}`                         | member    | One catalogue entry                      |
-| GET    | `/api/videos/{id}/segments?rendition=`     | member    | The segment index for a rung             |
-| GET    | `/api/videos/{id}/segment-at?seconds=`     | member    | Which segment covers that second         |
-| GET    | `/api/videos/{id}/master.m3u8?t=`          | ticket    | Variant list (URIs rewritten)            |
-| GET    | `/api/videos/{id}/r/{rung}/index.m3u8?t=`  | ticket    | Media playlist (URIs rewritten)          |
-| GET    | `/api/videos/{id}/r/{rung}/seg_NNNNN.ts?t=`| ticket    | One ~6s segment                          |
-| GET    | `/api/videos/{id}/raw?t=`                  | ticket    | Progressive fallback, `Range`-aware      |
-| GET    | `/api/videos/{id}/poster.jpg?t=`           | ticket    | Catalogue thumbnail                      |
-| GET    | `/api/videos/{id}/sprite.jpg?t=`           | ticket    | Seek-preview filmstrip                   |
-| GET    | `/api/admin/videos/status`                 | moderator | NAS reachability, free space, FFmpeg     |
-| GET    | `/api/admin/videos`                        | moderator | All videos incl. PROCESSING / FAILED     |
-| POST   | `/api/admin/videos`                        | moderator | Upload a recording (multipart)           |
-| PATCH  | `/api/admin/videos/{id}`                   | moderator | Edit title / description                 |
-| POST   | `/api/admin/videos/{id}/reprocess`         | moderator | Rebuild the ladder from the original     |
-| DELETE | `/api/admin/videos/{id}`                   | moderator | Delete rows + the NAS folder             |
+| Method | Path                                        | Role      | Purpose                                   |
+| ------ | ------------------------------------------- | --------- | ----------------------------------------- |
+| GET    | `/api/videos`                               | member    | Catalogue of READY videos + a ticket each |
+| GET    | `/api/videos/{id}`                          | member    | One catalogue entry                       |
+| GET    | `/api/videos/{id}/segments?rendition=`      | member    | The segment index for a rung              |
+| GET    | `/api/videos/{id}/segment-at?seconds=`      | member    | Which segment covers that second          |
+| GET    | `/api/videos/{id}/master.m3u8?t=`           | ticket    | Variant list (URIs rewritten)             |
+| GET    | `/api/videos/{id}/r/{rung}/index.m3u8?t=`   | ticket    | Media playlist (URIs rewritten)           |
+| GET    | `/api/videos/{id}/r/{rung}/seg_NNNNN.ts?t=` | ticket    | One ~6s segment                           |
+| GET    | `/api/videos/{id}/raw?t=`                   | ticket    | Progressive fallback, `Range`-aware       |
+| GET    | `/api/videos/{id}/poster.jpg?t=`            | ticket    | Catalogue thumbnail                       |
+| GET    | `/api/videos/{id}/sprite.jpg?t=`            | ticket    | Seek-preview filmstrip                    |
+| GET    | `/api/admin/videos/status`                  | moderator | NAS reachability, free space, FFmpeg      |
+| GET    | `/api/admin/videos`                         | moderator | All videos incl. PROCESSING / FAILED      |
+| POST   | `/api/admin/videos`                         | moderator | Upload a recording (multipart)            |
+| PATCH  | `/api/admin/videos/{id}`                    | moderator | Edit title / description                  |
+| POST   | `/api/admin/videos/{id}/reprocess`          | moderator | Rebuild the ladder from the original      |
+| DELETE | `/api/admin/videos/{id}`                    | moderator | Delete rows + the NAS folder              |
 
 ### Python AI service
 
@@ -462,7 +492,7 @@ PDF and the browser jumps to the cited page.
 - **Input validation** via Bean Validation (`@NotBlank`, size limits) on submissions.
 - **Playback tickets for media.** `<video src>`, hls.js and `<img>` are fetched by the browser's
   media stack, which cannot attach an `Authorization` header, so those routes are permitted in the
-  filter chain (GET only) and authorised in code. The credential is *not* the session JWT — it is a
+  filter chain (GET only) and authorised in code. The credential is _not_ the session JWT — it is a
   signed token scoped to **one video id** and short-lived (6h default), so a leaked media URL grants
   read access to one recording for a bounded time rather than the whole API. A ticket for video A is
   rejected on video B.

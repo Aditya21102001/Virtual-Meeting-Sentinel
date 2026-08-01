@@ -1,13 +1,13 @@
-import { HttpClient, HttpEvent, HttpEventType } from '@angular/common/http';
-import { Injectable, computed, inject, signal } from '@angular/core';
-import { Observable, Subscription, map } from 'rxjs';
-import { environment } from '../../environments/environment';
-import { AuthService } from './auth.service';
+import { HttpClient, HttpEvent, HttpEventType } from "@angular/common/http";
+import { Injectable, computed, inject, signal } from "@angular/core";
+import { Observable, Subscription, map } from "rxjs";
+import { environment } from "../../environments/environment";
+import { AuthService } from "./auth.service";
 
-export type VideoStatus = 'UPLOADED' | 'PROCESSING' | 'READY' | 'FAILED';
-export type DeliveryMode = 'HLS' | 'PROGRESSIVE';
+export type VideoStatus = "UPLOADED" | "PROCESSING" | "READY" | "FAILED";
+export type DeliveryMode = "HLS" | "PROGRESSIVE";
 /** Where the media bytes live: the NAS share, or rows in `video_assets`. */
-export type StorageMode = 'FILESYSTEM' | 'DATABASE';
+export type StorageMode = "FILESYSTEM" | "DATABASE";
 
 /** One rung of the adaptive ladder, as the quality menu sees it. */
 export interface RenditionView {
@@ -105,10 +105,10 @@ export interface VideoStorageStatus {
 
 /** Upload progress, or the finished card once the server responds. */
 export type UploadProgress =
-  | { kind: 'progress'; sentBytes: number; totalBytes: number; percent: number }
-  | { kind: 'done'; card: VideoCard };
+  | { kind: "progress"; sentBytes: number; totalBytes: number; percent: number }
+  | { kind: "done"; card: VideoCard };
 
-@Injectable({ providedIn: 'root' })
+@Injectable({ providedIn: "root" })
 export class VideoService {
   private readonly base = `${environment.apiBase}/api/videos`;
   private readonly admin = `${environment.apiBase}/api/admin/videos`;
@@ -128,8 +128,8 @@ export class VideoService {
   readonly uploadSentBytes = signal(0);
   readonly uploadTotalBytes = signal(0);
   /** Set once on completion/failure so a returning page can show the outcome it missed. */
-  readonly uploadMessage = signal('');
-  readonly uploadError = signal('');
+  readonly uploadMessage = signal("");
+  readonly uploadError = signal("");
   readonly uploading = computed(() => this.uploadingName() !== null);
 
   private uploadSub: Subscription | null = null;
@@ -149,12 +149,12 @@ export class VideoService {
     this.uploadPercent.set(0);
     this.uploadSentBytes.set(0);
     this.uploadTotalBytes.set(file.size);
-    this.uploadMessage.set('');
-    this.uploadError.set('');
+    this.uploadMessage.set("");
+    this.uploadError.set("");
 
     this.uploadSub = this.upload(file, title, description).subscribe({
       next: (event) => {
-        if (event.kind === 'progress') {
+        if (event.kind === "progress") {
           this.uploadPercent.set(event.percent);
           this.uploadSentBytes.set(event.sentBytes);
           this.uploadTotalBytes.set(event.totalBytes);
@@ -169,7 +169,10 @@ export class VideoService {
       error: (err) => {
         this.uploadingName.set(null);
         this.uploadError.set(
-          '✗ ' + (err?.error?.message ?? err?.error?.error ?? 'Upload failed. Is the server running?'),
+          "✗ " +
+            (err?.error?.message ??
+              err?.error?.error ??
+              "Upload failed. Is the server running?"),
         );
       },
     });
@@ -180,7 +183,7 @@ export class VideoService {
     this.uploadSub?.unsubscribe();
     this.uploadSub = null;
     this.uploadingName.set(null);
-    this.uploadError.set('Upload cancelled.');
+    this.uploadError.set("Upload cancelled.");
   }
 
   /**
@@ -197,51 +200,62 @@ export class VideoService {
 
   /** Every READY video, each with a fresh playback ticket. */
   library(): Observable<VideoCard[]> {
-    return this.http.get<VideoCard[]>(this.base, { headers: this.headers() }).pipe(
-      map((cards) => cards.map((card) => this.normalizeMediaUrls(card))),
-    );
+    return this.http
+      .get<VideoCard[]>(this.base, { headers: this.headers() })
+      .pipe(map((cards) => cards.map((card) => this.normalizeMediaUrls(card))));
   }
 
   card(id: string): Observable<VideoCard> {
-    return this.http.get<VideoCard>(`${this.base}/${id}`, { headers: this.headers() }).pipe(
-      map((card) => this.normalizeMediaUrls(card)),
-    );
+    return this.http
+      .get<VideoCard>(`${this.base}/${id}`, { headers: this.headers() })
+      .pipe(map((card) => this.normalizeMediaUrls(card)));
   }
 
   /** The segment index for one rung — what the "N segments" inspector shows. */
   segments(id: string, rendition?: string): Observable<SegmentView[]> {
-    const query = rendition ? `?rendition=${encodeURIComponent(rendition)}` : '';
+    const query = rendition
+      ? `?rendition=${encodeURIComponent(rendition)}`
+      : "";
     return this.http.get<SegmentView[]>(`${this.base}/${id}/segments${query}`, {
       headers: this.headers(),
     });
   }
 
   /** Which segment covers a given second (server-side seek lookup). */
-  segmentAt(id: string, seconds: number, rendition?: string): Observable<SegmentView> {
+  segmentAt(
+    id: string,
+    seconds: number,
+    rendition?: string,
+  ): Observable<SegmentView> {
     const params = new URLSearchParams({ seconds: String(seconds) });
-    if (rendition) params.set('rendition', rendition);
-    return this.http.get<SegmentView>(`${this.base}/${id}/segment-at?${params}`, {
-      headers: this.headers(),
-    });
+    if (rendition) params.set("rendition", rendition);
+    return this.http.get<SegmentView>(
+      `${this.base}/${id}/segment-at?${params}`,
+      {
+        headers: this.headers(),
+      },
+    );
   }
 
   // ---- admin ----------------------------------------------------------------
 
   status(): Observable<VideoStorageStatus> {
-    return this.http.get<VideoStorageStatus>(`${this.admin}/status`, { headers: this.headers() });
+    return this.http.get<VideoStorageStatus>(`${this.admin}/status`, {
+      headers: this.headers(),
+    });
   }
 
   /** All videos including PROCESSING/FAILED, so the manage table can show them. */
   listAll(): Observable<VideoCard[]> {
-    return this.http.get<VideoCard[]>(this.admin, { headers: this.headers() }).pipe(
-      map((cards) => cards.map((card) => this.normalizeMediaUrls(card))),
-    );
+    return this.http
+      .get<VideoCard[]>(this.admin, { headers: this.headers() })
+      .pipe(map((cards) => cards.map((card) => this.normalizeMediaUrls(card))));
   }
 
   adminCard(id: string): Observable<VideoCard> {
-    return this.http.get<VideoCard>(`${this.admin}/${id}`, { headers: this.headers() }).pipe(
-      map((card) => this.normalizeMediaUrls(card)),
-    );
+    return this.http
+      .get<VideoCard>(`${this.admin}/${id}`, { headers: this.headers() })
+      .pipe(map((card) => this.normalizeMediaUrls(card)));
   }
 
   /**
@@ -249,35 +263,53 @@ export class VideoService {
    * XHR upload ticks into a usable percentage — a plain post() would give no feedback at all,
    * which is unusable for a multi-hundred-megabyte file.
    */
-  upload(file: File, title: string, description: string): Observable<UploadProgress> {
+  upload(
+    file: File,
+    title: string,
+    description: string,
+  ): Observable<UploadProgress> {
     const form = new FormData();
-    form.append('file', file, file.name);
-    if (title.trim()) form.append('title', title.trim());
-    if (description.trim()) form.append('description', description.trim());
+    form.append("file", file, file.name);
+    if (title.trim()) form.append("title", title.trim());
+    if (description.trim()) form.append("description", description.trim());
 
     return this.http
       .post<VideoCard>(this.admin, form, {
         headers: this.headers(),
         reportProgress: true,
-        observe: 'events',
+        observe: "events",
       })
       .pipe(map((event) => this.toProgress(event, file.size)));
   }
 
-  updateMetadata(id: string, title: string, description: string): Observable<VideoCard> {
-    return this.http.patch<VideoCard>(`${this.admin}/${id}`, { title, description }, {
-      headers: this.headers(),
-    });
+  updateMetadata(
+    id: string,
+    title: string,
+    description: string,
+  ): Observable<VideoCard> {
+    return this.http.patch<VideoCard>(
+      `${this.admin}/${id}`,
+      { title, description },
+      {
+        headers: this.headers(),
+      },
+    );
   }
 
   reprocess(id: string): Observable<VideoCard> {
-    return this.http.post<VideoCard>(`${this.admin}/${id}/reprocess`, {}, {
-      headers: this.headers(),
-    });
+    return this.http.post<VideoCard>(
+      `${this.admin}/${id}/reprocess`,
+      {},
+      {
+        headers: this.headers(),
+      },
+    );
   }
 
   remove(id: string): Observable<void> {
-    return this.http.delete<void>(`${this.admin}/${id}`, { headers: this.headers() });
+    return this.http.delete<void>(`${this.admin}/${id}`, {
+      headers: this.headers(),
+    });
   }
 
   /** Backend media URLs are root-relative; resolve them against the Render API, not Vercel. */
@@ -296,29 +328,37 @@ export class VideoService {
 
   // ---- helpers --------------------------------------------------------------
 
-  private toProgress(event: HttpEvent<VideoCard>, fallbackTotal: number): UploadProgress {
+  private toProgress(
+    event: HttpEvent<VideoCard>,
+    fallbackTotal: number,
+  ): UploadProgress {
     if (event.type === HttpEventType.UploadProgress) {
       const total = event.total ?? fallbackTotal;
       return {
-        kind: 'progress',
+        kind: "progress",
         sentBytes: event.loaded,
         totalBytes: total,
         percent: total ? Math.round((event.loaded / total) * 100) : 0,
       };
     }
     if (event.type === HttpEventType.Response && event.body) {
-      return { kind: 'done', card: event.body };
+      return { kind: "done", card: event.body };
     }
     // Sent / ResponseHeader / user events: nothing meaningful to show yet.
-    return { kind: 'progress', sentBytes: 0, totalBytes: fallbackTotal, percent: 0 };
+    return {
+      kind: "progress",
+      sentBytes: 0,
+      totalBytes: fallbackTotal,
+      percent: 0,
+    };
   }
 }
 
 /** "1.4 GB" — used in upload limits, segment sizes and the storage banner. */
 export function humanBytes(bytes: number | null | undefined): string {
-  if (bytes == null) return '—';
+  if (bytes == null) return "—";
   if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
+  const units = ["KB", "MB", "GB", "TB"];
   let value = bytes / 1024;
   let unit = 0;
   while (value >= 1024 && unit < units.length - 1) {
@@ -330,11 +370,12 @@ export function humanBytes(bytes: number | null | undefined): string {
 
 /** "1:23:45" / "4:07" — omit the hour component when the video is under an hour. */
 export function timecode(seconds: number | null | undefined): string {
-  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '0:00';
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0)
+    return "0:00";
   const total = Math.floor(seconds);
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  const pad = (n: number) => String(n).padStart(2, '0');
+  const pad = (n: number) => String(n).padStart(2, "0");
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
