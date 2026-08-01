@@ -69,6 +69,7 @@ import { AuthService } from "./services/auth.service";
       </div>
     </nav>
     <router-outlet></router-outlet>
+    <footer class="site-footer">Copyright © 2026 Aditya Yadav</footer>
   `,
   styles: [
     `
@@ -119,6 +120,12 @@ import { AuthService } from "./services/auth.service";
       }
       .nav-user {
         white-space: nowrap;
+      }
+      .site-footer {
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+        padding: 24px 16px;
       }
 
       /* On phones/tablets the brand + hamburger share one bar and the links drop
