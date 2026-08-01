@@ -65,6 +65,10 @@ public class VideoTranscodeService {
     private volatile Boolean toolsPresent;
     private volatile String toolsVersion;
 
+    /** Resolved once: the `nice` binary to prefix ffmpeg with, or null for normal priority. */
+    private volatile boolean niceProbed;
+    private volatile String nicePath;
+
     public VideoTranscodeService(VideoProperties props) {
         this.props = props;
     }
@@ -147,6 +151,41 @@ public class VideoTranscodeService {
     public String toolsVersion() {
         toolsAvailable();
         return toolsVersion;
+    }
+
+    /**
+     * Path to {@code nice}, or null when ffmpeg should run at normal priority.
+     *
+     * <p>Probed by looking for the binary rather than by trying it: a missing {@code nice} makes
+     * {@link ProcessBuilder} throw, which would turn "we could not lower the priority" into "the
+     * transcode failed". Resolved once and cached — {@code niceProbed} being the flag rather than
+     * a null {@code nicePath}, since null is also the answer we cache on Windows.
+     */
+    private String niceBinary() {
+        if (niceProbed) return nicePath;
+        synchronized (this) {
+            if (niceProbed) return nicePath;
+            String resolved = null;
+            if (props.getTools().getNiceness() > 0
+                    && !System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
+                for (String candidate : List.of("/usr/bin/nice", "/bin/nice")) {
+                    if (Files.isExecutable(Path.of(candidate))) {
+                        resolved = candidate;
+                        break;
+                    }
+                }
+                if (resolved == null) {
+                    log.info("`nice` not found — ffmpeg will run at normal priority. On a small "
+                             + "instance a transcode may then starve the API of CPU.");
+                } else {
+                    log.info("ffmpeg will run at nice +{} so the API keeps its share of the CPU.",
+                             props.getTools().getNiceness());
+                }
+            }
+            nicePath = resolved;
+            niceProbed = true;
+            return nicePath;
+        }
     }
 
     // ---- probe ---------------------------------------------------------------
@@ -252,9 +291,30 @@ public class VideoTranscodeService {
             Files.createDirectories(hlsDir.resolve(rung.name()));
         }
 
+        log.info("Transcoding {} into {} rendition(s): {} ({})", source.getFileName(), ladder.size(),
+                 ladder.stream().map(Rung::name).toList(),
+                 props.getHls().isParallelRungs() ? "one pass" : "one rung at a time");
+
+        List<RenditionOutput> renditions = props.getHls().isParallelRungs()
+                ? encodeInOnePass(hlsDir, source, info, ladder, progress, drained)
+                : encodeRungByRung(hlsDir, source, info, ladder, progress, drained);
+
+        if (renditions.isEmpty()) {
+            throw new IOException("Transcode produced no playable renditions.");
+        }
+        return new TranscodeOutput(HLS_DIR + "/" + MASTER_PLAYLIST, renditions);
+    }
+
+    /**
+     * One ffmpeg run, one decode, every rung encoded simultaneously. Fastest, and the reason the
+     * default is the other one: N x264 encoders allocate their frame buffers at start-up, so peak
+     * memory is the sum of the whole ladder and it arrives within seconds of the job beginning.
+     */
+    private List<RenditionOutput> encodeInOnePass(Path hlsDir, Path source, MediaInfo info,
+                                                  List<Rung> ladder, IntConsumer progress,
+                                                  DrainedSizes drained)
+            throws IOException, InterruptedException {
         List<String> command = buildFfmpegCommand(hlsDir, source, info, ladder);
-        log.info("Transcoding {} into {} rendition(s): {}", source.getFileName(), ladder.size(),
-                 ladder.stream().map(Rung::name).toList());
         log.debug("ffmpeg command: {}", String.join(" ", command));
 
         ProcessResult result = runWithProgress(command, info.durationSeconds(), progress);
@@ -278,19 +338,98 @@ public class VideoTranscodeService {
                 log.warn("Rendition {} produced no playlist — skipping.", rung.name());
                 continue;
             }
-            String rungRel = HLS_DIR + "/" + rung.name() + "/";
-            List<SegmentInfo> segments = readMediaPlaylist(playlist, rungRel, drained);
             int[] measured = actual.get(rung.name());
             int width = measured != null && measured[0] > 0 ? measured[0] : evenWidth(info, rung.height());
             int height = measured != null && measured[1] > 0 ? measured[1] : rung.height();
-            renditions.add(new RenditionOutput(rung.name(), width, height,
-                    rung.videoKbps(), rung.audioKbps(),
-                    HLS_DIR + "/" + rung.name() + "/" + MEDIA_PLAYLIST, segments));
+            renditions.add(renditionOf(hlsDir, rung, width, height, drained));
         }
-        if (renditions.isEmpty()) {
-            throw new IOException("Transcode produced no playable renditions.");
+        return renditions;
+    }
+
+    /**
+     * One ffmpeg run per rung, in sequence. The source is decoded once per rung — genuinely more
+     * total work — but only ever one encoder exists at a time, so the peak memory of the job is the
+     * cost of its largest rung rather than of the whole ladder.
+     *
+     * <p>This is the default because the failure it avoids is not a slow transcode, it is the
+     * container being killed. A recording that takes three times as long still arrives; one that
+     * takes the server down with it never does, and takes every other request with it on the way.
+     *
+     * <p>A rung that fails is logged and skipped rather than failing the whole job: three working
+     * quality levels are worth more than none, and the ladder degrades gracefully.
+     */
+    private List<RenditionOutput> encodeRungByRung(Path hlsDir, Path source, MediaInfo info,
+                                                   List<Rung> ladder, IntConsumer progress,
+                                                   DrainedSizes drained)
+            throws IOException, InterruptedException {
+        List<RenditionOutput> renditions = new ArrayList<>();
+        int total = ladder.size();
+
+        for (int i = 0; i < total; i++) {
+            Rung rung = ladder.get(i);
+            final int done = i;
+            List<String> command = buildSingleRungCommand(hlsDir, source, info, rung);
+            log.info("Encoding rung {}/{}: {}", i + 1, total, rung.name());
+            log.debug("ffmpeg command: {}", String.join(" ", command));
+
+            // Each rung covers its own slice of the overall bar, so the percentage the admin sees
+            // still runs 0-100 across the job rather than resetting for every rung.
+            ProcessResult result = runWithProgress(command, info.durationSeconds(),
+                    percent -> progress.accept((done * 100 + percent) / total));
+
+            if (result.exitCode() != 0) {
+                if (renditions.isEmpty() && i == total - 1) {
+                    throw new IOException("ffmpeg exited with code " + result.exitCode()
+                                          + ": " + result.tail());
+                }
+                log.warn("Rendition {} failed (exit {}): {} — continuing with the other rungs.",
+                         rung.name(), result.exitCode(), result.tail());
+                continue;
+            }
+            Path playlist = hlsDir.resolve(rung.name()).resolve(MEDIA_PLAYLIST);
+            if (!Files.exists(playlist)) {
+                log.warn("Rendition {} produced no playlist — skipping.", rung.name());
+                continue;
+            }
+            renditions.add(renditionOf(hlsDir, rung, evenWidth(info, rung.height()), rung.height(),
+                                       drained));
         }
-        return new TranscodeOutput(HLS_DIR + "/" + MASTER_PLAYLIST, renditions);
+
+        // Nobody wrote a master: -master_pl_name only applies to a multi-variant run.
+        writeMasterPlaylist(hlsDir, renditions);
+        return renditions;
+    }
+
+    private RenditionOutput renditionOf(Path hlsDir, Rung rung, int width, int height,
+                                        DrainedSizes drained) throws IOException {
+        String rungRel = HLS_DIR + "/" + rung.name() + "/";
+        Path playlist = hlsDir.resolve(rung.name()).resolve(MEDIA_PLAYLIST);
+        List<SegmentInfo> segments = readMediaPlaylist(playlist, rungRel, drained);
+        return new RenditionOutput(rung.name(), width, height, rung.videoKbps(), rung.audioKbps(),
+                                   rungRel + MEDIA_PLAYLIST, segments);
+    }
+
+    /**
+     * Write the variant list by hand for the rung-by-rung path.
+     *
+     * <p>{@code BANDWIDTH} is what the player actually selects on, so it is the one attribute that
+     * must be right; {@code RESOLUTION} lets a quality menu label the rungs. {@code CODECS} is
+     * deliberately omitted — it is optional, and a player will refuse a variant whose declared
+     * codec string is wrong, which is a worse outcome than not declaring one.
+     */
+    private void writeMasterPlaylist(Path hlsDir, List<RenditionOutput> renditions) throws IOException {
+        StringBuilder master = new StringBuilder("#EXTM3U\n#EXT-X-VERSION:3\n");
+        for (RenditionOutput rendition : renditions) {
+            long bandwidth = (rendition.videoKbps() + rendition.audioKbps()) * 1000L;
+            master.append("#EXT-X-STREAM-INF:BANDWIDTH=").append(bandwidth);
+            if (rendition.width() > 0 && rendition.height() > 0) {
+                master.append(",RESOLUTION=").append(rendition.width())
+                      .append('x').append(rendition.height());
+            }
+            master.append('\n')
+                  .append(rendition.name()).append('/').append(MEDIA_PLAYLIST).append('\n');
+        }
+        Files.writeString(hlsDir.resolve(MASTER_PLAYLIST), master.toString(), StandardCharsets.UTF_8);
     }
 
     /**
@@ -341,17 +480,33 @@ public class VideoTranscodeService {
         return value % 2 == 0 ? value : value + 1;
     }
 
-    private List<String> buildFfmpegCommand(Path hlsDir, Path source, MediaInfo info, List<Rung> ladder) {
-        int segmentSeconds = Math.max(2, props.getHls().getSegmentSeconds());
-        // Keyframe every segment: a segment must start on a keyframe to be independently
-        // decodable, and matching the GOP to the segment length is what lets the player switch
-        // rungs (and seek) at any segment boundary.
-        int gop = Math.max(1, (int) Math.round((info.frameRate() > 0 ? info.frameRate() : 25) * segmentSeconds));
+    /**
+     * {@code nice ffmpeg <args>}.
+     *
+     * <p>Running the encoder below the JVM is what keeps the application answerable while it works.
+     * Capping threads bounds how much ffmpeg does at once; this bounds how much it does <em>at the
+     * JVM's expense</em>, which is what decides whether the health check is still answered during a
+     * transcode — and therefore whether the platform leaves the container alone or restarts it
+     * mid-job.
+     */
+    private List<String> ffmpegCommand(List<String> args) {
+        List<String> cmd = new ArrayList<>();
+        String nice = niceBinary();
+        if (nice != null) {
+            cmd.addAll(List.of(nice, "-n", String.valueOf(props.getTools().getNiceness())));
+        }
+        cmd.add(props.getTools().getFfmpeg());
+        cmd.addAll(args);
+        return cmd;
+    }
 
-        List<String> cmd = new ArrayList<>(List.of(
-                props.getTools().getFfmpeg(),
-                "-hide_banner", "-nostdin", "-y",
-                "-progress", "pipe:1", "-nostats"));
+    /**
+     * The invocation prefix every <em>encoding</em> run shares: {@link #ffmpegCommand} plus the
+     * progress stream and the thread cap.
+     */
+    private List<String> ffmpegPrefix() {
+        List<String> cmd = ffmpegCommand(
+                List.of("-hide_banner", "-nostdin", "-y", "-progress", "pipe:1", "-nostats"));
 
         // Cap ffmpeg's parallelism BEFORE the input so it applies to decoding, filtering and every
         // encoder. A container sees the host's core count rather than its own CPU share, so left to
@@ -364,7 +519,67 @@ public class VideoTranscodeService {
                                "-filter_threads", String.valueOf(threads),
                                "-filter_complex_threads", String.valueOf(threads)));
         }
+        return cmd;
+    }
 
+    /**
+     * Everything needed to produce one rung, as its own ffmpeg run.
+     *
+     * <p>The filter graph mirrors the multi-rung command's — {@code [0:v]} rather than
+     * {@code 0:v:0}, so stream selection picks the same track in both paths — minus the
+     * {@code split}. Options are unqualified because there is exactly one output stream of each
+     * kind here, where the one-pass command has to say {@code -c:v:2} to address a specific rung.
+     */
+    private List<String> buildSingleRungCommand(Path hlsDir, Path source, MediaInfo info, Rung rung) {
+        int segmentSeconds = Math.max(2, props.getHls().getSegmentSeconds());
+        int gop = Math.max(1, (int) Math.round((info.frameRate() > 0 ? info.frameRate() : 25) * segmentSeconds));
+        Path rungDir = hlsDir.resolve(rung.name());
+
+        List<String> cmd = ffmpegPrefix();
+        cmd.addAll(List.of("-i", source.toString()));
+        cmd.addAll(List.of(
+                "-filter_complex",
+                "[0:v]scale=-2:" + rung.height() + ":flags=bicubic,setsar=1[v]",
+                "-map", "[v]",
+                "-c:v", "libx264",
+                "-preset", props.getHls().getPreset(),
+                "-profile:v", rung.height() >= 720 ? "high" : "main",
+                "-b:v", rung.videoKbps() + "k",
+                "-maxrate", (rung.videoKbps() * 107 / 100) + "k",
+                "-bufsize", (rung.videoKbps() * 3 / 2) + "k"));
+
+        if (info.hasAudio()) {
+            cmd.addAll(List.of("-map", "a:0", "-c:a", "aac",
+                               "-b:a", rung.audioKbps() + "k", "-ac", "2"));
+        }
+
+        cmd.addAll(List.of(
+                "-g", String.valueOf(gop),
+                "-keyint_min", String.valueOf(gop),
+                "-sc_threshold", "0",
+                "-force_key_frames:v", "expr:gte(t,n_forced*" + segmentSeconds + ")",
+                // A quarter of the one-pass value: with a single output there is far less to queue,
+                // and the queue is a straight memory cost on a host that has none to spare.
+                "-max_muxing_queue_size", "256",
+                "-f", "hls",
+                "-hls_time", String.valueOf(segmentSeconds),
+                "-hls_playlist_type", "vod",
+                "-hls_flags", "independent_segments+temp_file",
+                "-hls_segment_type", "mpegts",
+                "-hls_list_size", "0",
+                "-hls_segment_filename", rungDir.resolve("seg_%05d.ts").toString(),
+                rungDir.resolve(MEDIA_PLAYLIST).toString()));
+        return cmd;
+    }
+
+    private List<String> buildFfmpegCommand(Path hlsDir, Path source, MediaInfo info, List<Rung> ladder) {
+        int segmentSeconds = Math.max(2, props.getHls().getSegmentSeconds());
+        // Keyframe every segment: a segment must start on a keyframe to be independently
+        // decodable, and matching the GOP to the segment length is what lets the player switch
+        // rungs (and seek) at any segment boundary.
+        int gop = Math.max(1, (int) Math.round((info.frameRate() > 0 ? info.frameRate() : 25) * segmentSeconds));
+
+        List<String> cmd = ffmpegPrefix();
         cmd.addAll(List.of("-i", source.toString()));
 
         // Split the decoded video once and scale each branch — one decode pass for the whole ladder.
@@ -455,15 +670,15 @@ public class VideoTranscodeService {
         double at = info.durationSeconds() > 0 ? Math.min(info.durationSeconds() * 0.1, 30) : 1;
         Path poster = videoDir.resolve(POSTER_FILE);
         try {
-            ProcessResult result = run(List.of(
-                    props.getTools().getFfmpeg(), "-hide_banner", "-nostdin", "-y",
+            ProcessResult result = run(ffmpegCommand(List.of(
+                    "-hide_banner", "-nostdin", "-y",
                     // -ss before -i seeks by keyframe index instead of decoding from zero.
                     "-ss", String.format(Locale.ROOT, "%.3f", at),
                     "-i", source.toString(),
                     "-frames:v", "1",
                     "-vf", "scale=640:-2",
                     "-q:v", "3",
-                    poster.toString()), 120);
+                    poster.toString())), 120);
             return result.exitCode() == 0 && Files.exists(poster) ? POSTER_FILE : null;
         } catch (Exception ex) {
             log.warn("Poster generation failed: {}", ex.getMessage());
@@ -493,15 +708,17 @@ public class VideoTranscodeService {
 
         Path sprite = videoDir.resolve(SPRITE_FILE);
         try {
-            ProcessResult result = run(List.of(
-                    props.getTools().getFfmpeg(), "-hide_banner", "-nostdin", "-y",
+            // Decodes the whole recording to sample one frame every `interval` seconds, so it is
+            // the second-most expensive thing here and gets the same low priority as the encode.
+            ProcessResult result = run(ffmpegCommand(List.of(
+                    "-hide_banner", "-nostdin", "-y",
                     "-i", source.toString(),
                     "-vf", "fps=1/" + interval
                             + ",scale=" + tileWidth + ":" + tileHeight
                             + ",tile=" + columns + "x" + rows,
                     "-frames:v", "1",
                     "-q:v", "4",
-                    sprite.toString()), props.getTools().getTimeoutMinutes() * 60L);
+                    sprite.toString())), props.getTools().getTimeoutMinutes() * 60L);
             if (result.exitCode() != 0 || !Files.exists(sprite)) {
                 log.warn("Sprite generation failed: {}", result.tail());
                 return null;

@@ -157,6 +157,22 @@ public class VideoProperties {
         /** x264 speed/size trade-off. veryfast keeps a 1 h recording tractable on a single box. */
         private String preset = "veryfast";
 
+        /**
+         * Encode every rung in one ffmpeg run (one decode pass, N simultaneous encoders), rather
+         * than one rung at a time.
+         *
+         * <p>Off by default. One pass is faster in wall-clock terms, but it starts every x264
+         * encoder at once and they all allocate up front — on a small container the peak arrives
+         * seconds into the job and the kernel kills the whole process, which the platform surfaces
+         * as a 502 and the browser reports as a CORS error. Encoding sequentially makes peak memory
+         * the cost of the <em>largest single rung</em> instead of the sum of all of them, at the
+         * price of decoding the source once per rung.
+         *
+         * <p>Turn on for a host with memory to spare, where the extra decode passes are the more
+         * expensive half of the trade.
+         */
+        private boolean parallelRungs = false;
+
         /** Seconds between seek-preview thumbnails on the sprite sheet (0 disables the sprite). */
         private int thumbnailIntervalSeconds = 10;
 
@@ -172,6 +188,8 @@ public class VideoProperties {
         public void setLadder(List<Integer> ladder) { this.ladder = ladder; }
         public String getPreset() { return preset; }
         public void setPreset(String preset) { this.preset = preset; }
+        public boolean isParallelRungs() { return parallelRungs; }
+        public void setParallelRungs(boolean parallelRungs) { this.parallelRungs = parallelRungs; }
         public int getThumbnailIntervalSeconds() { return thumbnailIntervalSeconds; }
         public void setThumbnailIntervalSeconds(int v) { this.thumbnailIntervalSeconds = v; }
         public int getThumbnailColumns() { return thumbnailColumns; }
@@ -210,6 +228,19 @@ public class VideoProperties {
          */
         private int threads = 1;
 
+        /**
+         * Scheduling priority for the ffmpeg process, 0 (normal) to 19 (lowest). Linux only;
+         * ignored where the {@code nice} binary is absent.
+         *
+         * <p>Encoding is the only thing here that will happily consume every cycle it is given, and
+         * on a fractional-CPU instance it does exactly that — which starves the JVM badly enough
+         * that the platform's health check times out and the container is restarted mid-transcode.
+         * Nothing reports the real cause; the video simply never finishes and the API 502s while it
+         * tries. Running ffmpeg at a low priority means the web thread always wins the contention:
+         * the transcode takes longer and the application stays answerable throughout.
+         */
+        private int niceness = 15;
+
         /** Kill a transcode that runs longer than this (minutes) so a wedged job can't leak. */
         private int timeoutMinutes = 240;
         /** How many videos may transcode at once. Transcoding is CPU-bound — keep this small. */
@@ -219,6 +250,8 @@ public class VideoProperties {
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
         public int getThreads() { return threads; }
         public void setThreads(int threads) { this.threads = threads; }
+        public int getNiceness() { return niceness; }
+        public void setNiceness(int niceness) { this.niceness = niceness; }
         public String getFfmpeg() { return ffmpeg; }
         public void setFfmpeg(String ffmpeg) { this.ffmpeg = ffmpeg; }
         public String getFfprobe() { return ffprobe; }

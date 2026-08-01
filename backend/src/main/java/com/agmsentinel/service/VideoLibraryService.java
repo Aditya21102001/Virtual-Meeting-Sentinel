@@ -130,7 +130,18 @@ public class VideoLibraryService {
             // of a ladder behind. The segment index is only written at the very end, so nothing
             // references those rows — they are pure waste against the storage budget. Clearing
             // them here is the only chance: after this the video is FAILED and nobody looks again.
-            media.deleteHlsOutput(video);
+            //
+            // Guarded, and deliberately so. This runs from an ApplicationReadyEvent listener, where
+            // an escaping exception aborts startup — a row with an unexpected shape (no storage
+            // directory, say) would turn a recoverable stranded transcode into a server that will
+            // not boot at all. Failing to reclaim some space is a nuisance; failing to start is an
+            // outage.
+            try {
+                media.deleteHlsOutput(video);
+            } catch (RuntimeException ex) {
+                log.warn("Could not clear the partial output of interrupted video {}: {}",
+                         video.getId(), ex.getMessage());
+            }
             video.setStatus(VideoStatus.FAILED);
             video.setErrorMessage(
                     "Processing stopped when the server restarted, so this recording was never "

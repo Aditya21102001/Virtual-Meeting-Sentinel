@@ -237,6 +237,30 @@ be referencing it, and leaving it would silently eat the storage budget.
 
 Turn it off with `video.database.drain-segments=false` to get the old one-pass behaviour back.
 
+### The other half: surviving the encode itself
+
+Draining bounds what *storing* a recording costs. Producing it is a separate budget, and on a
+512 MB / fractional-CPU instance both have to be paid at once. Two things keep that affordable:
+
+- **One rung at a time** (`video.hls.parallel-rungs=false`, the default). Encoding the whole ladder
+  in one FFmpeg run decodes the source once, which is genuinely less total work — but it starts
+  every x264 encoder simultaneously and they allocate their frame buffers up front. Peak memory is
+  therefore the sum of the ladder and it lands *seconds into the job*, which is why the symptom is
+  a container killed at 2% no matter how short the video is. Sequential encoding makes the peak the
+  cost of the largest single rung, at the price of one decode pass per rung.
+- **FFmpeg runs at `nice +15`** (`video.tools.niceness`). Capping `-threads` limits how much work
+  the encoder does at once; niceness limits how much it does at the JVM's expense. On a shared
+  fraction of a CPU that is what decides whether the platform's health check is still answered
+  during a transcode — an unanswered one gets the container restarted, stranding the job.
+
+Both trade wall-clock time for staying up. If the host has real memory and cores, set
+`VIDEO_HLS_PARALLEL_RUNGS=true` and `VIDEO_FFMPEG_NICENESS=0` to get the speed back.
+
+> **Heap headroom.** FFmpeg's memory comes out of the container limit but not the JVM heap, so the
+> heap cap has to leave room for it. The Dockerfile defaults `JAVA_HEAP_PERCENT=35.0` for that
+> reason. Setting it higher in the platform's environment — 50, say — silently overrides the
+> Dockerfile and reintroduces exactly the OOM this section is about.
+
 ---
 
 ## 5. Data model
@@ -428,6 +452,8 @@ All optional — the defaults run locally with no setup.
 | `VIDEO_STORAGE_MODE` | `filesystem` | `filesystem` or `database` — see [§4](#4-storage-modes) |
 | `VIDEO_DB_MAX_ASSET_BYTES` | `67108864` (64 MiB) | database mode: per-file ceiling |
 | `VIDEO_DB_KEEP_SOURCE` | `false` | database mode: also store the original (doubles usage) |
+| `VIDEO_HLS_PARALLEL_RUNGS` | `false` | encode the whole ladder in one FFmpeg run — faster, but peak memory is the sum of every rung |
+| `VIDEO_FFMPEG_NICENESS` | `15` | scheduling priority for FFmpeg, 0–19 (Linux only; 0 disables) |
 | `VIDEO_DB_DRAIN_SEGMENTS` | `true` | database mode: store segments as FFmpeg produces them — see [§4a](#4a-why-the-drain-exists) |
 | `VIDEO_DB_DRAIN_SWEEP_SECONDS` | `5` | database mode: how often the drain sweeps for finished segments |
 | `VIDEO_NAS_PATH` | `./var/nas/videos` | **the NAS share** — also the working directory in database mode |
