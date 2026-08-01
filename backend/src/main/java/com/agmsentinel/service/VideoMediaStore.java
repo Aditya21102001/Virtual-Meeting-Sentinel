@@ -269,6 +269,45 @@ public class VideoMediaStore {
         return target;
     }
 
+    /**
+     * Write one small file into whichever backend this video uses.
+     *
+     * <p>Distinct from {@link #put}, which always writes a database row. That is right for the
+     * transcode path — it only runs in database mode — but wrong for anything that can be added to a
+     * video later, like a transcript: a filesystem-backed video whose captions went into
+     * {@code video_assets} would have {@link #exists} looking on disk and never finding them.
+     */
+    @Transactional
+    public void write(Video video, String relPath, byte[] data, String contentType) {
+        if (inDatabase(video)) {
+            put(video, relPath, data, contentType);
+            return;
+        }
+        try {
+            Path target = filesystem.resolveMedia(video, relPath);
+            Files.createDirectories(target.getParent());
+            Files.write(target, data);
+        } catch (IOException ex) {
+            throw new UncheckedIOException("Could not write " + relPath + " for video "
+                                           + video.getId(), ex);
+        }
+    }
+
+    /** Remove one file from whichever backend holds it. Absent is not an error. */
+    @Transactional
+    public void delete(Video video, String relPath) {
+        if (inDatabase(video)) {
+            assets.findByVideoIdAndRelPath(video.getId(), normalise(relPath))
+                  .ifPresent(assets::delete);
+            return;
+        }
+        try {
+            Files.deleteIfExists(filesystem.resolveMedia(video, relPath));
+        } catch (IOException ex) {
+            log.warn("Could not delete {} for video {}: {}", relPath, video.getId(), ex.getMessage());
+        }
+    }
+
     /** Upsert one asset, so re-processing overwrites in place instead of duplicating the path. */
     @Transactional
     public void put(Video video, String relPath, byte[] data, String contentType) {

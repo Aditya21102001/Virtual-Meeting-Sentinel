@@ -239,6 +239,42 @@ import {
             </p>
           }
 
+          <!--
+            Captions. Uploaded rather than generated: speech-to-text on this host would reintroduce
+            the resource exhaustion the transcode pipeline was reworked to avoid.
+          -->
+          @if (card.video.status === 'READY') {
+            <div class="row transcript-row">
+              @if (card.video.hasTranscript) {
+                <span class="badge">✔ transcript</span>
+                <button
+                  class="link"
+                  (click)="removeTranscript(card)"
+                  [disabled]="transcriptBusy() === card.video.id"
+                >
+                  Remove
+                </button>
+              } @else {
+                <span class="muted">No transcript</span>
+              }
+              <label class="link file-label">
+                {{ card.video.hasTranscript ? 'Replace' : 'Add' }} .vtt / .srt
+                <input
+                  type="file"
+                  accept=".vtt,.srt,text/vtt"
+                  (change)="pickTranscript(card, $event)"
+                  hidden
+                />
+              </label>
+              @if (transcriptBusy() === card.video.id) {
+                <span class="muted">Uploading…</span>
+              }
+            </div>
+            @if (transcriptError()?.id === card.video.id) {
+              <p class="error-box">{{ transcriptError()?.message }}</p>
+            }
+          }
+
           <!-- Rendition breakdown -->
           @if (card.video.renditions.length) {
             <div class="rendition-scroll">
@@ -401,6 +437,15 @@ import {
       .note {
         margin: 8px 0 0;
       }
+      .transcript-row {
+        gap: 10px;
+        margin-top: 10px;
+        align-items: center;
+      }
+      /* A styled label standing in for the hidden file input, so it matches the other links. */
+      .file-label {
+        cursor: pointer;
+      }
       .actions {
         margin-top: 12px;
       }
@@ -480,6 +525,48 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   readonly confirming = signal<string | null>(null);
   /** Why the last action on a specific card failed, shown on that card. */
   readonly actionError = signal<{ id: string; message: string } | null>(null);
+
+  // ---- transcripts -----------------------------------------------------------
+
+  /** Video id whose transcript is being uploaded or removed, so only that row shows progress. */
+  readonly transcriptBusy = signal<string | null>(null);
+  readonly transcriptError = signal<{ id: string; message: string } | null>(null);
+
+  pickTranscript(card: VideoCard, event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    // Clear the input so picking the same file again still fires a change event.
+    input.value = '';
+    if (!file) return;
+
+    this.transcriptBusy.set(card.video.id);
+    this.transcriptError.set(null);
+    this.videos.uploadTranscript(card.video.id, file).subscribe({
+      next: () => {
+        this.transcriptBusy.set(null);
+        this.refreshList();
+      },
+      error: (err) => {
+        this.transcriptBusy.set(null);
+        this.transcriptError.set({ id: card.video.id, message: this.serverMessage(err) });
+      },
+    });
+  }
+
+  removeTranscript(card: VideoCard): void {
+    this.transcriptBusy.set(card.video.id);
+    this.transcriptError.set(null);
+    this.videos.deleteTranscript(card.video.id).subscribe({
+      next: () => {
+        this.transcriptBusy.set(null);
+        this.refreshList();
+      },
+      error: (err) => {
+        this.transcriptBusy.set(null);
+        this.transcriptError.set({ id: card.video.id, message: this.serverMessage(err) });
+      },
+    });
+  }
 
   /** Set when polling gives up, so the page explains the outage instead of failing silently. */
   readonly serverError = signal('');

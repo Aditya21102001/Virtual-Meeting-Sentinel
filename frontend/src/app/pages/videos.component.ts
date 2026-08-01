@@ -1,6 +1,17 @@
-import { Component, OnDestroy, OnInit, computed, signal, viewChild } from '@angular/core';
+import {
+  Component,
+  OnDestroy,
+  OnInit,
+  computed,
+  inject,
+  signal,
+  viewChild,
+} from '@angular/core';
+import { DatePipe } from '@angular/common';
+import { ActivatedRoute } from '@angular/router';
 import { VideoPlayerComponent } from '../components/video-player.component';
 import {
+  CommentView,
   SegmentView,
   VideoCard,
   VideoService,
@@ -17,7 +28,7 @@ import {
 @Component({
   selector: 'app-videos',
   standalone: true,
-  imports: [VideoPlayerComponent],
+  imports: [VideoPlayerComponent, DatePipe],
   template: `
     <div class="container">
       <h1>Meeting recordings</h1>
@@ -42,7 +53,12 @@ import {
       <!-- Now playing -->
       @if (selected(); as card) {
         <div class="card">
-          <app-video-player #player [card]="card" [autoplay]="true"></app-video-player>
+          <app-video-player
+            #player
+            [card]="card"
+            [autoplay]="true"
+            [startAt]="startAt()"
+          ></app-video-player>
 
           <h2 class="title">{{ card.video.title }}</h2>
           @if (card.video.description) {
@@ -66,6 +82,21 @@ import {
               <span class="badge">progressive (HTTP Range)</span>
             }
             <span class="muted">{{ humanBytes(card.video.sizeBytes) }} source</span>
+
+            <button
+              class="link"
+              type="button"
+              [class.liked]="card.engagement?.likedByMe"
+              (click)="toggleLike(card)"
+              [disabled]="liking()"
+              [attr.aria-pressed]="card.engagement?.likedByMe"
+            >
+              {{ card.engagement?.likedByMe ? '♥' : '♡' }}
+              {{ card.engagement?.likes ?? 0 }}
+            </button>
+
+            <button class="link" type="button" (click)="share(card)">⇪ Share</button>
+
             <button
               class="link"
               type="button"
@@ -76,6 +107,9 @@ import {
             </button>
           </div>
 
+          @if (shareNote()) {
+            <p class="muted note">{{ shareNote() }}</p>
+          }
           @if (downloadNote()) {
             <p class="muted note">{{ downloadNote() }}</p>
           }
@@ -150,6 +184,104 @@ import {
               }
             </div>
           }
+
+          <!-- Transcript: searchable, and every line is a seek target. -->
+          @if (cues().length) {
+            <div class="inspector">
+              <button class="link" type="button" (click)="transcriptOpen.set(!transcriptOpen())">
+                {{ transcriptOpen() ? '▾' : '▸' }} Transcript
+                <span class="muted-inline">{{ cues().length }} lines</span>
+              </button>
+              @if (transcriptOpen()) {
+                <input
+                  class="search"
+                  type="search"
+                  placeholder="Search the transcript…"
+                  [value]="transcriptQuery()"
+                  (input)="transcriptQuery.set($any($event.target).value)"
+                />
+                @if (!visibleCues().length) {
+                  <p class="muted note">Nothing matches “{{ transcriptQuery() }}”.</p>
+                } @else {
+                  <div class="cue-scroll">
+                    @for (cue of visibleCues(); track cue.startSeconds) {
+                      <button class="cue" type="button" (click)="jumpToCue(cue.startSeconds)">
+                        <span class="cue-time">{{ timecode(cue.startSeconds) }}</span>
+                        <span class="cue-text">{{ cue.text }}</span>
+                      </button>
+                    }
+                  </div>
+                }
+              }
+            </div>
+          }
+
+          <!-- Comments -->
+          <div class="inspector">
+            <button class="link" type="button" (click)="toggleComments(card)">
+              {{ commentsOpen() ? '▾' : '▸' }} Comments
+              <span class="muted-inline">{{ card.engagement?.comments ?? 0 }}</span>
+            </button>
+
+            @if (commentsOpen()) {
+              <div class="composer">
+                <textarea
+                  rows="2"
+                  placeholder="Add a comment…"
+                  [value]="commentBody()"
+                  (input)="commentBody.set($any($event.target).value)"
+                ></textarea>
+                <div class="row">
+                  <label class="pin">
+                    <input
+                      type="checkbox"
+                      [checked]="pinToTime()"
+                      (change)="pinToTime.set($any($event.target).checked)"
+                    />
+                    at {{ timecode(playheadNow()) }}
+                  </label>
+                  <button (click)="postComment(card)" [disabled]="!commentBody().trim() || posting()">
+                    {{ posting() ? 'Posting…' : 'Post' }}
+                  </button>
+                </div>
+                @if (commentError()) {
+                  <p class="note error-note">{{ commentError() }}</p>
+                }
+              </div>
+
+              @if (commentsLoading()) {
+                <span class="muted">Loading…</span>
+              } @else if (!comments().length) {
+                <p class="muted note">No comments yet. Be the first.</p>
+              } @else {
+                @for (c of comments(); track c.id) {
+                  <div class="comment">
+                    <div class="comment-head">
+                      <strong>{{ c.author }}</strong>
+                      @if (c.atSeconds !== null) {
+                        <button
+                          class="link"
+                          type="button"
+                          (click)="jumpToCue(c.atSeconds!)"
+                          title="Jump to this moment"
+                        >
+                          {{ timecode(c.atSeconds) }}
+                        </button>
+                      }
+                      <span class="muted-inline">{{ c.createdAt | date: 'short' }}</span>
+                      <span style="flex:1"></span>
+                      @if (c.canDelete) {
+                        <button class="link" type="button" (click)="removeComment(card, c)">
+                          Delete
+                        </button>
+                      }
+                    </div>
+                    <p class="comment-body">{{ c.body }}</p>
+                  </div>
+                }
+              }
+            }
+          </div>
         </div>
       }
 
@@ -229,6 +361,89 @@ import {
       }
       .error-note {
         color: #fca5a5;
+      }
+      .liked {
+        color: #fb7185;
+      }
+
+      /* ---- transcript ---- */
+      .search {
+        width: 100%;
+        margin: 8px 0;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: #0b1220;
+        color: inherit;
+        font: inherit;
+      }
+      .cue-scroll {
+        max-height: 260px;
+        overflow-y: auto;
+        border: 1px solid #1f2937;
+        border-radius: 8px;
+      }
+      .cue {
+        display: flex;
+        gap: 10px;
+        width: 100%;
+        padding: 6px 10px;
+        background: none;
+        border: none;
+        border-bottom: 1px solid #16202f;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .cue:hover {
+        background: #16202f;
+      }
+      .cue-time {
+        flex: 0 0 auto;
+        color: #93c5fd;
+        font-variant-numeric: tabular-nums;
+      }
+      .cue-text {
+        flex: 1;
+      }
+
+      /* ---- comments ---- */
+      .composer {
+        margin: 8px 0 12px;
+      }
+      .composer textarea {
+        width: 100%;
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: #0b1220;
+        color: inherit;
+        font: inherit;
+        resize: vertical;
+      }
+      .pin {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .comment {
+        padding: 8px 0;
+        border-top: 1px solid #1f2937;
+      }
+      .comment-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+      }
+      .comment-body {
+        margin: 4px 0 0;
+        /* Comments are user text: keep authored line breaks, and never let a long word overflow. */
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
       .section {
         font-size: 16px;
@@ -414,6 +629,38 @@ export class VideosComponent implements OnInit, OnDestroy {
   /** Whether anything in the library is still being prepared — gates the refresh hint. */
   readonly anyProcessing = computed(() => this.cards().some((card) => this.isProcessing(card)));
 
+  // ---- engagement ------------------------------------------------------------
+
+  readonly liking = signal(false);
+  readonly shareNote = signal('');
+
+  readonly commentsOpen = signal(false);
+  readonly comments = signal<CommentView[]>([]);
+  readonly commentsLoading = signal(false);
+  readonly commentBody = signal('');
+  /** Pin the comment to the current playhead — the default, since most remarks are about a moment. */
+  readonly pinToTime = signal(true);
+  readonly posting = signal(false);
+  readonly commentError = signal('');
+
+  readonly transcriptOpen = signal(false);
+  readonly transcriptQuery = signal('');
+
+  /** Start time from a shared link (`?t=`), applied to the recording that link named. */
+  readonly startAt = signal<number | null>(null);
+
+  /** Captions come from the player, which already loads and parses them for its overlay. */
+  readonly cues = computed(() => this.player()?.cues() ?? []);
+
+  /** Cues matching the search box, or all of them when it is empty. */
+  readonly visibleCues = computed(() => {
+    const needle = this.transcriptQuery().trim().toLowerCase();
+    const all = this.cues();
+    return needle ? all.filter((c) => c.text.toLowerCase().includes(needle)) : all;
+  });
+
+  private readonly route = inject(ActivatedRoute);
+
   constructor(private videos: VideoService) {}
 
   /**
@@ -427,6 +674,29 @@ export class VideosComponent implements OnInit, OnDestroy {
    */
   ngOnInit(): void {
     this.refresh(true);
+  }
+
+  /**
+   * Open the recording a shared link named, at the moment it named.
+   *
+   * <p>Runs after the library has loaded, because a link can only open a card the viewer is actually
+   * allowed to see — the catalogue is already scoped to them, so a link to something they cannot
+   * access simply finds nothing rather than needing a separate permission check.
+   *
+   * <p>The start time is set before selecting so the player sees it on its first load, which is what
+   * lets it begin at that segment instead of fetching from zero and seeking.
+   */
+  private openSharedLink(cards: VideoCard[]): void {
+    const params = this.route.snapshot.queryParamMap;
+    const videoId = params.get('v');
+    if (!videoId) return;
+
+    const target = cards.find((card) => card.video.id === videoId);
+    if (!target || this.isProcessing(target)) return;
+
+    const at = Number(params.get('t'));
+    this.startAt.set(Number.isFinite(at) && at > 0 ? at : null);
+    this.selected.set(target);
   }
 
   /** Explicit user-initiated reload, for when a recording was still processing. */
@@ -449,6 +719,7 @@ export class VideosComponent implements OnInit, OnDestroy {
           const fresh = cards.find((card) => card.video.id === open.video.id);
           if (fresh && fresh.streamUrl && !open.streamUrl) this.selected.set(fresh);
         }
+        if (initial) this.openSharedLink(cards);
       },
       error: (err) => {
         this.loading.set(false);
@@ -475,6 +746,15 @@ export class VideosComponent implements OnInit, OnDestroy {
     this.activeRendition.set(null);
     this.downloadNote.set('');
     this.downloadError.set('');
+    this.shareNote.set('');
+    this.commentsOpen.set(false);
+    this.comments.set([]);
+    this.commentBody.set('');
+    this.commentError.set('');
+    this.transcriptOpen.set(false);
+    this.transcriptQuery.set('');
+    // A start time only applies to the recording the link named; picking another clears it.
+    this.startAt.set(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -578,5 +858,141 @@ export class VideosComponent implements OnInit, OnDestroy {
    */
   jumpTo(segment: SegmentView): void {
     this.player()?.seekTo(segment.startSeconds);
+  }
+
+  /** Seek from a transcript line or a timestamped comment. */
+  jumpToCue(seconds: number): void {
+    this.player()?.seekTo(seconds);
+  }
+
+  /** Current playhead, for the "at 12:04" label on the comment composer. */
+  playheadNow(): number {
+    return this.player()?.currentTime() ?? 0;
+  }
+
+  // ---- likes -----------------------------------------------------------------
+
+  /**
+   * Toggle the like and take the server's counts as the answer.
+   *
+   * <p>Not optimistic: the count is shared state, so guessing it locally would show a number that
+   * disagrees with everyone else's the moment two people press at once. The round trip is one small
+   * call and the button is disabled meanwhile.
+   */
+  toggleLike(card: VideoCard): void {
+    if (this.liking()) return;
+    this.liking.set(true);
+    this.videos.toggleLike(card.video.id).subscribe({
+      next: (engagement) => {
+        this.liking.set(false);
+        this.patchCard(card.video.id, { engagement });
+      },
+      error: () => this.liking.set(false),
+    });
+  }
+
+  // ---- share -----------------------------------------------------------------
+
+  /**
+   * Copy a link to this recording, at the current moment.
+   *
+   * <p>A deep link into this page rather than a public URL: playback is authorised by a short-lived,
+   * per-viewer ticket, so a link that bypassed sign-in would have to bypass that too. The recipient
+   * signs in, opens the same entry, and gets their own ticket — which is also what keeps a shared
+   * link from still working for someone who has since left.
+   */
+  share(card: VideoCard): void {
+    const at = Math.floor(this.playheadNow());
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.searchParams.set('v', card.video.id);
+    if (at > 0) url.searchParams.set('t', String(at));
+    const link = url.toString();
+
+    // Clipboard access needs a secure context and can be denied; fall back to showing the link.
+    navigator.clipboard?.writeText(link).then(
+      () => this.shareNote.set(`Link copied${at > 0 ? ' — starts at ' + timecode(at) : ''}.`),
+      () => this.shareNote.set(link),
+    );
+  }
+
+  // ---- comments --------------------------------------------------------------
+
+  toggleComments(card: VideoCard): void {
+    const open = !this.commentsOpen();
+    this.commentsOpen.set(open);
+    if (open) this.loadComments(card);
+  }
+
+  private loadComments(card: VideoCard): void {
+    this.commentsLoading.set(true);
+    this.commentError.set('');
+    this.videos.comments(card.video.id).subscribe({
+      next: (list) => {
+        this.comments.set(list);
+        this.commentsLoading.set(false);
+      },
+      error: () => {
+        this.comments.set([]);
+        this.commentsLoading.set(false);
+        this.commentError.set('Could not load comments.');
+      },
+    });
+  }
+
+  postComment(card: VideoCard): void {
+    const body = this.commentBody().trim();
+    if (!body || this.posting()) return;
+    this.posting.set(true);
+    this.commentError.set('');
+    const at = this.pinToTime() ? Math.floor(this.playheadNow()) : null;
+
+    this.videos.addComment(card.video.id, body, at).subscribe({
+      next: (comment) => {
+        this.posting.set(false);
+        this.commentBody.set('');
+        this.comments.update((list) => [...list, comment]);
+        this.bumpCommentCount(card.video.id, 1);
+      },
+      error: (err) => {
+        this.posting.set(false);
+        this.commentError.set(
+          err?.error?.message ?? err?.error?.error ?? 'Could not post that comment.',
+        );
+      },
+    });
+  }
+
+  removeComment(card: VideoCard, comment: CommentView): void {
+    this.videos.deleteComment(comment.id).subscribe({
+      next: () => {
+        this.comments.update((list) => list.filter((c) => c.id !== comment.id));
+        this.bumpCommentCount(card.video.id, -1);
+      },
+      error: () => this.commentError.set('Could not delete that comment.'),
+    });
+  }
+
+  /** Keep the header count in step without re-fetching the whole card for a ±1 change. */
+  private bumpCommentCount(videoId: string, delta: number): void {
+    const current = this.selected()?.engagement;
+    if (!current) return;
+    this.patchCard(videoId, {
+      engagement: { ...current, comments: Math.max(0, current.comments + delta) },
+    });
+  }
+
+  /**
+   * Apply a change to a card in both places it appears — the player above and the grid below.
+   *
+   * <p>`selected()` holds its own copy, so updating only `cards()` would leave the header showing a
+   * stale like count until the next reload.
+   */
+  private patchCard(videoId: string, patch: Partial<VideoCard>): void {
+    this.cards.update((list) =>
+      list.map((c) => (c.video.id === videoId ? { ...c, ...patch } : c)),
+    );
+    const open = this.selected();
+    if (open && open.video.id === videoId) this.selected.set({ ...open, ...patch });
   }
 }

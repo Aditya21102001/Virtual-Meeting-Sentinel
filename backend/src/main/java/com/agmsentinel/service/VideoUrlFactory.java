@@ -29,12 +29,18 @@ public class VideoUrlFactory {
         this.tickets = tickets;
     }
 
-    /** Turn an entity into the full client payload, minting a ticket for its media URLs. */
+    /**
+     * Turn an entity into the full client payload, minting a ticket for its media URLs.
+     *
+     * <p>Engagement counts are left null here and filled in by
+     * {@link VideoEngagementService#enrich} — this class builds URLs and must not turn rendering one
+     * card into a database round-trip, which for a library page would mean dozens of them.
+     */
     public VideoCard card(Video video, String subject) {
         VideoView view = VideoView.of(video);
         boolean playable = video.getStatus() == VideoStatus.READY;
         if (!playable) {
-            return new VideoCard(view, null, 0, null, null, null, false);
+            return new VideoCard(view, null, 0, null, null, null, null, false, null);
         }
 
         String ticket = tickets.issue(subject == null ? "anonymous" : subject, video.getId());
@@ -49,7 +55,8 @@ public class VideoUrlFactory {
         return new VideoCard(view, ticket, tickets.ttlSeconds(), stream,
                 video.getPosterRel() != null ? posterUrl(video.getId(), ticket) : null,
                 video.getSpriteRel() != null ? spriteUrl(video.getId(), ticket) : null,
-                adaptive);
+                video.getTranscriptRel() != null ? transcriptUrl(video.getId(), ticket) : null,
+                adaptive, null);
     }
 
     public String masterUrl(UUID videoId, String ticket) {
@@ -89,6 +96,14 @@ public class VideoUrlFactory {
 
     public String spriteUrl(UUID videoId, String ticket) {
         return BASE + "/" + videoId + "/sprite.jpg" + query(ticket);
+    }
+
+    /**
+     * WebVTT captions. GET like the rest of the media, and for the same reason: this one goes into a
+     * {@code <track>} element, which the browser fetches itself.
+     */
+    public String transcriptUrl(UUID videoId, String ticket) {
+        return BASE + "/" + videoId + "/transcript.vtt" + query(ticket);
     }
 
     /**

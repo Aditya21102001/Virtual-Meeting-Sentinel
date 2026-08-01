@@ -59,6 +59,8 @@ public final class VideoDtos {
             Integer segmentSeconds,
             int totalSegments,
             boolean hasPoster,
+            /** Whether WebVTT captions have been uploaded for this recording. */
+            boolean hasTranscript,
             SpriteView sprite,
             List<RenditionView> renditions,
             String uploadedBy,
@@ -80,7 +82,7 @@ public final class VideoDtos {
                     video.getErrorMessage(), video.getDurationSeconds(),
                     video.getWidth(), video.getHeight(), video.getFrameRate(), video.isHasAudio(),
                     video.getSizeBytes(), video.getSegmentSeconds(), video.totalSegments(),
-                    video.getPosterRel() != null, sprite,
+                    video.getPosterRel() != null, video.getTranscriptRel() != null, sprite,
                     video.getRenditions().stream().map(RenditionView::of).toList(),
                     video.getUploadedBy(), video.getCreatedAt(), video.getUpdatedAt());
         }
@@ -105,7 +107,41 @@ public final class VideoDtos {
             String streamUrl,
             String posterUrl,
             String spriteUrl,
-            boolean adaptive) { }
+            /** WebVTT captions, when a transcript has been uploaded. Null otherwise. */
+            String transcriptUrl,
+            boolean adaptive,
+            /** Likes and comments. Null until resolved — see VideoEngagementService.enrich. */
+            VideoEngagement engagement) {
+
+        /** Same card with its engagement counts filled in. */
+        public VideoCard withEngagement(VideoEngagement resolved) {
+            return new VideoCard(video, ticket, ticketExpiresInSeconds, streamUrl, posterUrl,
+                    spriteUrl, transcriptUrl, adaptive, resolved);
+        }
+    }
+
+    /**
+     * Engagement on a recording, resolved per viewer.
+     *
+     * <p>{@code likedByMe} is why likes are rows rather than a counter: the button has to render
+     * differently for the person who already pressed it, and a total cannot say who is in it.
+     */
+    public record VideoEngagement(long likes, boolean likedByMe, long comments) {
+
+        public static final VideoEngagement NONE = new VideoEngagement(0, false, 0);
+    }
+
+    /** One comment as the browser sees it. {@code mine} drives whether Delete is offered. */
+    public record CommentView(
+            UUID id,
+            String author,
+            String body,
+            Double atSeconds,
+            Instant createdAt,
+            Instant editedAt,
+            boolean mine,
+            /** True when the viewer may delete it: their own, or anything if they moderate. */
+            boolean canDelete) { }
 
     /** A segment index page — the "which slice covers this second" view of a rendition. */
     public record SegmentView(int seq, String filename, double durationSeconds,

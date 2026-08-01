@@ -60,6 +60,7 @@ public class VideoLibraryService {
     private final VideoMediaStore media;
     private final VideoTranscodeService transcoder;
     private final VideoProperties props;
+    private final VideoEngagementService engagement;
     private final ApplicationEventPublisher events;
 
     public VideoLibraryService(VideoRepository videos,
@@ -68,6 +69,7 @@ public class VideoLibraryService {
                                VideoMediaStore media,
                                VideoTranscodeService transcoder,
                                VideoProperties props,
+                               VideoEngagementService engagement,
                                ApplicationEventPublisher events) {
         this.videos = videos;
         this.segments = segments;
@@ -75,6 +77,7 @@ public class VideoLibraryService {
         this.media = media;
         this.transcoder = transcoder;
         this.props = props;
+        this.engagement = engagement;
         this.events = events;
     }
 
@@ -412,8 +415,38 @@ public class VideoLibraryService {
     @Transactional
     public void delete(UUID videoId) {
         Video video = get(videoId);
-        media.deleteAll(video);   // database assets and/or the NAS folder
-        videos.delete(video);     // cascades to renditions -> segments
+        media.deleteAll(video);          // database assets and/or the NAS folder
+        engagement.deleteAllFor(videoId); // likes and comments: plain columns, so no cascade
+        videos.delete(video);            // cascades to renditions -> segments
+    }
+
+    // ---- transcript ----------------------------------------------------------
+
+    /** The stored name for uploaded captions. One per video, overwritten on re-upload. */
+    public static final String TRANSCRIPT_FILE = "transcript.vtt";
+
+    /**
+     * Attach captions to a recording. The bytes are already normalised to WebVTT by
+     * {@link SubtitleConverter}; this only decides where they live and records that they exist.
+     */
+    @Transactional
+    public Video saveTranscript(UUID videoId, String webVtt) {
+        Video video = get(videoId);
+        media.write(video, TRANSCRIPT_FILE,
+                    webVtt.getBytes(java.nio.charset.StandardCharsets.UTF_8), "text/vtt");
+        video.setTranscriptRel(TRANSCRIPT_FILE);
+        return videos.save(video);
+    }
+
+    @Transactional
+    public Video deleteTranscript(UUID videoId) {
+        Video video = get(videoId);
+        if (video.getTranscriptRel() != null) {
+            media.delete(video, video.getTranscriptRel());
+            video.setTranscriptRel(null);
+            videos.save(video);
+        }
+        return video;
     }
 
     // ---- state transitions used by the transcode worker ----------------------

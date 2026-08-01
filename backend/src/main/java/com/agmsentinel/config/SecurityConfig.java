@@ -71,6 +71,8 @@ public class SecurityConfig {
                                  "/api/videos/*/raw",
                                  "/api/videos/*/poster.jpg",
                                  "/api/videos/*/sprite.jpg",
+                                 // Captions: fetched by a <track> element, same constraint again.
+                                 "/api/videos/*/transcript.vtt",
                                  // Save-to-disk. A download is a browser navigation, so it carries
                                  // no Authorization header either and authorises the same way.
                                  "/api/videos/*/download").permitAll()

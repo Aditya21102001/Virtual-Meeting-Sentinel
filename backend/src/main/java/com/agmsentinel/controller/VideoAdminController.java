@@ -2,13 +2,18 @@ package com.agmsentinel.controller;
 
 import com.agmsentinel.dto.VideoDtos.VideoCard;
 import com.agmsentinel.dto.VideoDtos.VideoStorageStatus;
+import com.agmsentinel.service.SubtitleConverter;
 import com.agmsentinel.service.VideoLibraryService;
 import com.agmsentinel.service.VideoUrlFactory;
 import jakarta.validation.constraints.NotNull;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.io.IOException;
 
 import java.util.List;
 import java.util.UUID;
@@ -40,10 +45,13 @@ public class VideoAdminController {
 
     private final VideoLibraryService library;
     private final VideoUrlFactory urls;
+    private final SubtitleConverter subtitles;
 
-    public VideoAdminController(VideoLibraryService library, VideoUrlFactory urls) {
+    public VideoAdminController(VideoLibraryService library, VideoUrlFactory urls,
+                                SubtitleConverter subtitles) {
         this.library = library;
         this.urls = urls;
+        this.subtitles = subtitles;
     }
 
     /** Identifies one video. In the body rather than the path, so the URL stays a readable name. */
@@ -99,6 +107,29 @@ public class VideoAdminController {
     @PostMapping("/reprocess-video")
     public VideoCard reprocessVideo(@RequestBody VideoRef req) {
         return urls.card(library.reprocess(req.id()), currentSubject());
+    }
+
+    /**
+     * Attach captions to a recording, from an uploaded {@code .vtt} or {@code .srt}.
+     *
+     * <p>Uploaded rather than generated on purpose. Producing a transcript means speech-to-text, and
+     * running that alongside the transcode on a small instance would reintroduce exactly the
+     * resource exhaustion the segmenting pipeline was reworked to avoid. An SRT is converted to
+     * WebVTT on the way in, because {@code <track>} accepts nothing else.
+     */
+    @PostMapping("/upload-transcript")
+    public VideoCard uploadTranscript(@RequestParam("id") UUID id,
+                                      @RequestParam("file") MultipartFile file) throws IOException {
+        if (file == null || file.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No subtitle file provided.");
+        }
+        String webVtt = subtitles.toWebVtt(file.getOriginalFilename(), file.getBytes());
+        return urls.card(library.saveTranscript(id, webVtt), currentSubject());
+    }
+
+    @PostMapping("/delete-transcript")
+    public VideoCard deleteTranscript(@RequestBody VideoRef req) {
+        return urls.card(library.deleteTranscript(req.id()), currentSubject());
     }
 
     /** Remove the catalogue row, its segment index, and the whole folder on the NAS. */

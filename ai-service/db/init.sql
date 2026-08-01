@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS cluster_drafts (
 
 CREATE INDEX IF NOT EXISTS cluster_drafts_status_idx ON cluster_drafts (draft_status);
 
+
 CREATE INDEX IF NOT EXISTS questions_cluster_idx ON questions (cluster_id);
 
 -- ---------------------------------------------------------------------------
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS videos (
     master_playlist_rel     TEXT,                          -- hls/master.m3u8
     poster_rel              TEXT,
     sprite_rel              TEXT,                          -- seek-preview filmstrip
+    transcript_rel          TEXT,                          -- uploaded WebVTT captions
     sprite_interval_seconds INT,
     sprite_columns          INT,
     sprite_tile_width       INT,
@@ -158,3 +160,31 @@ CREATE TABLE IF NOT EXISTS video_assets (
 );
 
 CREATE INDEX IF NOT EXISTS video_assets_video_idx ON video_assets (video_id);
+
+-- Engagement on recordings. A row per like rather than a counter column on `videos`: a counter
+-- cannot answer "have I liked this", which is the half the button needs, and two simultaneous likes
+-- would race on an increment. The unique constraint makes double-liking impossible at the database
+-- rather than trusting the UI to prevent it.
+CREATE TABLE IF NOT EXISTS video_likes (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    video_id   UUID        NOT NULL,
+    username   TEXT        NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT video_likes_unique_member UNIQUE (video_id, username)
+);
+
+CREATE INDEX IF NOT EXISTS video_likes_video_idx ON video_likes (video_id);
+
+-- Flat, not threaded: a meeting recording attracts questions and corrections, not conversation
+-- trees. `at_seconds` lets a comment point at a moment, which the UI turns into a seek.
+CREATE TABLE IF NOT EXISTS video_comments (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    video_id   UUID        NOT NULL,
+    author     TEXT        NOT NULL,   -- taken from the principal, never from the request body
+    body       TEXT        NOT NULL,
+    at_seconds DOUBLE PRECISION,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    edited_at  TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS video_comments_video_idx ON video_comments (video_id, created_at);

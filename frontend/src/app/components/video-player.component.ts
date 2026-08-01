@@ -14,6 +14,7 @@ import Hls, { ErrorData, Events, Level } from 'hls.js';
 import { PlaybackProgressService } from '../services/playback-progress.service';
 import {
   SegmentLocation,
+  TranscriptCue,
   VideoCard,
   VideoService,
   humanBytes,
@@ -109,6 +110,15 @@ interface QualityOption {
             ✕
           </button>
         </div>
+      }
+
+      <!--
+        Captions, drawn by us rather than by a <track>. A <track> would need
+        crossorigin="anonymous" on the <video> for a cross-origin URL, which also changes how the
+        media and poster are fetched — letting a secondary feature break playback.
+      -->
+      @if (captionsOn() && activeCue(); as cue) {
+        <div class="caption"><span>{{ cue.text }}</span></div>
       }
 
       <!-- Stats: makes the adaptive behaviour visible instead of implied. -->
@@ -256,6 +266,20 @@ interface QualityOption {
             </div>
           }
 
+          <!-- Only offered when there is actually a transcript to show. -->
+          @if (cues().length) {
+            <button
+              class="icon"
+              type="button"
+              [class.on]="captionsOn()"
+              (click)="captionsOn.set(!captionsOn())"
+              [attr.aria-label]="captionsOn() ? 'Hide captions' : 'Show captions'"
+              [attr.aria-pressed]="captionsOn()"
+            >
+              CC
+            </button>
+          }
+
           <button
             class="icon"
             type="button"
@@ -368,6 +392,33 @@ interface QualityOption {
         font-size: 13px;
         color: var(--muted);
         max-width: 420px;
+      }
+
+      /* ---- captions ---- */
+      .caption {
+        position: absolute;
+        /* Above the control bar, so it is not covered when the controls are showing. */
+        bottom: 72px;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: 84%;
+        text-align: center;
+        pointer-events: none;
+        z-index: 2;
+      }
+      .caption span {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 6px;
+        background: #000000b8;
+        color: #fff;
+        font-size: 17px;
+        line-height: 1.35;
+        /* Keeps the text legible over a bright frame without a full-width bar. */
+        text-shadow: 0 1px 2px #000;
+      }
+      .controls-hidden .caption {
+        bottom: 24px;
       }
 
       /* ---- resume notice ---- */
@@ -646,6 +697,14 @@ export class VideoPlayerComponent implements OnDestroy {
   readonly card = input.required<VideoCard>();
   /** Start playing as soon as the manifest is parsed. */
   readonly autoplay = input(false);
+  /**
+   * Second to begin at, overriding any stored resume point.
+   *
+   * <p>Set from a shared link (`?t=`). It wins over the remembered position because it is an
+   * explicit choice by whoever opened the link, and it suppresses the "resumed from" notice — that
+   * exists to explain a jump the viewer did not ask for, which this is not.
+   */
+  readonly startAt = input<number | null>(null);
 
   readonly SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
   readonly timecode = timecode;
@@ -777,6 +836,25 @@ export class VideoPlayerComponent implements OnDestroy {
   /** Where the resume landed in the segment index. Arrives after playback has already begun. */
   readonly resumeLocation = signal<SegmentLocation | null>(null);
 
+  // ---- captions --------------------------------------------------------------
+
+  /** Parsed caption cues, empty when the recording has no transcript. */
+  readonly cues = signal<TranscriptCue[]>([]);
+  /** Whether to draw the caption line over the video. Off by default, like every player. */
+  readonly captionsOn = signal(false);
+
+  /**
+   * The cue covering the playhead.
+   *
+   * <p>A linear scan, and deliberately not indexed: `currentTime` is written every frame, so this
+   * recomputes ~60×/s, but even a three-hour recording is only a few thousand cues and the scan
+   * short-circuits. A binary search would be faster in principle and slower to get right.
+   */
+  readonly activeCue = computed(() => {
+    const at = this.currentTime();
+    return this.cues().find((c) => at >= c.startSeconds && at < c.endSeconds) ?? null;
+  });
+
   /** Ticks of the 500 ms stats timer since the last write; see {@link rememberPosition}. */
   private sinceLastSave = 0;
 
@@ -850,6 +928,23 @@ export class VideoPlayerComponent implements OnDestroy {
     this.resumeLocation.set(null);
     this.sinceLastSave = 0;
     this.activeVideoId = card.video.id;
+    this.cues.set([]);
+    this.loadCaptions(card);
+  }
+
+  /**
+   * Fetch and parse the transcript, if there is one.
+   *
+   * <p>Silent on failure: captions are an enhancement, and a recording plays perfectly without them.
+   * Surfacing an error here would put a warning on a video that is working.
+   */
+  private loadCaptions(card: VideoCard): void {
+    const url = card.transcriptUrl;
+    if (!url) return;
+    this.videos.transcript(url).subscribe({
+      next: (cues) => this.cues.set(cues),
+      error: () => this.cues.set([]),
+    });
   }
 
   ngOnDestroy(): void {
@@ -872,10 +967,14 @@ export class VideoPlayerComponent implements OnDestroy {
     element.playbackRate = this.speed();
 
     // Resolved BEFORE anything is fetched. That ordering is the whole trick — see startHls.
-    const resumeAt = this.progress.resumeAt(card.video.id, card.video.durationSeconds);
+    const requested = this.startAt();
+    const resumeAt = requested !== null && requested > 0
+      ? requested
+      : this.progress.resumeAt(card.video.id, card.video.durationSeconds);
     if (resumeAt !== null) {
-      this.resumedFrom.set(resumeAt);
       this.currentTime.set(resumeAt);
+      // Only announce a jump the viewer did not choose.
+      if (requested === null) this.resumedFrom.set(resumeAt);
       this.locateResumePoint(card, resumeAt);
     }
 

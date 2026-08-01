@@ -1,13 +1,16 @@
 package com.agmsentinel.controller;
 
+import com.agmsentinel.dto.VideoDtos.CommentView;
 import com.agmsentinel.dto.VideoDtos.DownloadPlan;
 import com.agmsentinel.dto.VideoDtos.SegmentLocation;
 import com.agmsentinel.dto.VideoDtos.SegmentView;
 import com.agmsentinel.dto.VideoDtos.VideoCard;
+import com.agmsentinel.dto.VideoDtos.VideoEngagement;
 import com.agmsentinel.model.Video;
 import com.agmsentinel.model.VideoRendition;
 import com.agmsentinel.model.VideoSegment;
 import com.agmsentinel.security.PlaybackTicketService;
+import com.agmsentinel.service.VideoEngagementService;
 import com.agmsentinel.service.VideoLibraryService;
 import com.agmsentinel.service.VideoMediaStore;
 import com.agmsentinel.service.VideoUrlFactory;
@@ -72,6 +75,8 @@ public class VideoController {
 
     private static final MediaType HLS = MediaType.parseMediaType("application/vnd.apple.mpegurl");
     private static final MediaType MP2T = MediaType.parseMediaType("video/mp2t");
+    /** Charset stated explicitly: a transcript is the one media response that is text. */
+    private static final MediaType VTT = MediaType.parseMediaType("text/vtt;charset=UTF-8");
 
     /**
      * Cap on how much one progressive request may return. Bounded chunks are what make a raw MP4
@@ -84,13 +89,16 @@ public class VideoController {
     private final VideoMediaStore media;
     private final VideoUrlFactory urls;
     private final PlaybackTicketService tickets;
+    private final VideoEngagementService engagement;
 
     public VideoController(VideoLibraryService library, VideoMediaStore media,
-                          VideoUrlFactory urls, PlaybackTicketService tickets) {
+                          VideoUrlFactory urls, PlaybackTicketService tickets,
+                          VideoEngagementService engagement) {
         this.library = library;
         this.media = media;
         this.urls = urls;
         this.tickets = tickets;
+        this.engagement = engagement;
     }
 
     // ---- catalogue -----------------------------------------------------------
@@ -114,13 +122,53 @@ public class VideoController {
     @PostMapping("/list-library")
     public List<VideoCard> listLibrary() {
         String subject = currentSubject();
-        return library.listVisible().stream().map(v -> urls.card(v, subject)).toList();
+        // Counts are resolved in one batch after the cards are built, not per card — see
+        // VideoEngagementService.enrich.
+        return engagement.enrich(
+                library.listVisible().stream().map(v -> urls.card(v, subject)).toList(), subject);
     }
 
     @PostMapping("/video-details")
     public VideoCard videoDetails(@RequestBody VideoRef req) {
-        return urls.card(library.getPlayable(req.id()), currentSubject());
+        String subject = currentSubject();
+        VideoCard card = urls.card(library.getPlayable(req.id()), subject);
+        return card.withEngagement(engagement.engagementOf(req.id(), subject));
     }
+
+    // ---- likes and comments --------------------------------------------------
+
+    public record CommentRequest(UUID id, String body, Double atSeconds) { }
+
+    public record CommentRef(UUID commentId) { }
+
+    /**
+     * Like, or un-like if already liked. Returns the resulting counts so the button can settle on
+     * the server's answer rather than guessing from an optimistic increment.
+     */
+    @PostMapping("/toggle-like")
+    public VideoEngagement toggleLike(@RequestBody VideoRef req) {
+        return engagement.toggleLike(req.id(), currentSubject());
+    }
+
+    @PostMapping("/list-comments")
+    public List<CommentView> listComments(@RequestBody VideoRef req) {
+        return engagement.listComments(req.id(), currentSubject(), viewerModerates());
+    }
+
+    @PostMapping("/add-comment")
+    public CommentView addComment(@RequestBody CommentRequest req) {
+        // getPlayable, so a comment cannot be attached to a video that is still processing or failed.
+        library.getPlayable(req.id());
+        return engagement.addComment(req.id(), currentSubject(), req.body(), req.atSeconds());
+    }
+
+    @PostMapping("/delete-comment")
+    public DeletedComment deleteComment(@RequestBody CommentRef req) {
+        engagement.deleteComment(req.commentId(), currentSubject(), viewerModerates());
+        return new DeletedComment(req.commentId(), true);
+    }
+
+    public record DeletedComment(UUID commentId, boolean deleted) { }
 
     /**
      * The segment index straight from the database — ordinal, duration, start time and size of
@@ -421,6 +469,30 @@ public class VideoController {
         return image(video, video.getPosterRel(), "poster");
     }
 
+    /**
+     * WebVTT captions, for a {@code <track>} element and for the searchable transcript panel.
+     *
+     * <p>GET for the usual reason — {@code <track>} is fetched by the browser — and cached only
+     * briefly: a transcript can be corrected and re-uploaded, and a stale copy would leave the
+     * player showing text the moderator has already fixed.
+     */
+    @GetMapping(value = "/{id}/transcript.vtt", produces = "text/vtt")
+    public ResponseEntity<String> transcript(@PathVariable UUID id,
+                                            @RequestParam(name = "t", required = false) String ticket) {
+        Video video = authorise(id, ticket);
+        String relPath = video.getTranscriptRel();
+        if (relPath == null || !media.exists(video, relPath)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                    "No transcript has been uploaded for this recording.");
+        }
+        String body = media.readText(video, relPath);
+        return ResponseEntity.ok()
+                .contentType(VTT)
+                .cacheControl(CacheControl.maxAge(Duration.ofMinutes(5)).cachePrivate())
+                .contentLength(body.getBytes(StandardCharsets.UTF_8).length)
+                .body(body);
+    }
+
     /** The seek-preview filmstrip — one image the player slices with CSS as the user scrubs. */
     @GetMapping("/{id}/sprite.jpg")
     public ResponseEntity<Resource> sprite(@PathVariable UUID id,
@@ -484,6 +556,20 @@ public class VideoController {
     private String currentSubject() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth == null ? "anonymous" : String.valueOf(auth.getName());
+    }
+
+    /**
+     * Whether the viewer may remove anyone's comment, not just their own.
+     *
+     * <p>Read from the granted authorities rather than trusted from the request: the client decides
+     * what to <em>show</em>, the server decides what is allowed.
+     */
+    private boolean viewerModerates() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        return auth.getAuthorities().stream()
+                .map(a -> a.getAuthority())
+                .anyMatch(role -> "ROLE_MODERATOR".equals(role) || "ROLE_ADMIN".equals(role));
     }
 
     /**

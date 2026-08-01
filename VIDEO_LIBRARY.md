@@ -386,6 +386,10 @@ and playback still work.
 | POST | `/api/videos/list-segments` | the segment index |
 | POST | `/api/videos/find-segment-at` | which slice covers that second, + its position and byte offset |
 | POST | `/api/videos/prepare-download` | resolve what a download will produce |
+| POST | `/api/videos/toggle-like` | like / un-like; returns the resulting counts |
+| POST | `/api/videos/list-comments` · `add-comment` · `delete-comment` | comments, optionally pinned to a timestamp |
+| GET  | `/api/videos/{id}/transcript.vtt?t=` | WebVTT captions |
+| POST | `/api/admin/videos/upload-transcript` · `delete-transcript` | attach / remove captions (moderator) |
 | GET  | `/api/videos/{id}/download?t=` | save the original, or `&rendition=` to join a rung's segments |
 
 ### Media (ticket in the URL; no auth header possible)

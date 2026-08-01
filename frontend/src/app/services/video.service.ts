@@ -84,11 +84,34 @@ export interface VideoView {
   segmentSeconds: number | null;
   totalSegments: number;
   hasPoster: boolean;
+  /** Whether WebVTT captions have been uploaded. */
+  hasTranscript: boolean;
   sprite: SpriteView | null;
   renditions: RenditionView[];
   uploadedBy: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Likes and comments, resolved for the signed-in viewer. */
+export interface VideoEngagement {
+  likes: number;
+  /** Drives whether the like button renders as pressed. */
+  likedByMe: boolean;
+  comments: number;
+}
+
+export interface CommentView {
+  id: string;
+  author: string;
+  body: string;
+  /** Playhead position the comment refers to, or null for the recording as a whole. */
+  atSeconds: number | null;
+  createdAt: string;
+  editedAt: string | null;
+  mine: boolean;
+  /** Own comment, or the viewer moderates. Decided server-side; this only shows the button. */
+  canDelete: boolean;
 }
 
 /**
@@ -104,7 +127,11 @@ export interface VideoCard {
   streamUrl: string | null;
   posterUrl: string | null;
   spriteUrl: string | null;
+  /** WebVTT captions, when a transcript has been uploaded. */
+  transcriptUrl: string | null;
   adaptive: boolean;
+  /** Null on a card for a video that isn't READY yet. */
+  engagement: VideoEngagement | null;
 }
 
 export interface VideoStorageStatus {
@@ -271,6 +298,79 @@ export class VideoService {
     );
   }
 
+  // ---- likes and comments ---------------------------------------------------
+
+  /** Like, or un-like if already liked. Returns the server's resulting counts. */
+  toggleLike(id: string): Observable<VideoEngagement> {
+    return this.http.post<VideoEngagement>(
+      `${this.base}/toggle-like`,
+      { id },
+      { headers: this.headers() },
+    );
+  }
+
+  comments(id: string): Observable<CommentView[]> {
+    return this.http.post<CommentView[]>(
+      `${this.base}/list-comments`,
+      { id },
+      { headers: this.headers() },
+    );
+  }
+
+  /** @param atSeconds playhead position to pin the comment to, or null for the whole recording */
+  addComment(
+    id: string,
+    body: string,
+    atSeconds: number | null,
+  ): Observable<CommentView> {
+    return this.http.post<CommentView>(
+      `${this.base}/add-comment`,
+      { id, body, atSeconds },
+      { headers: this.headers() },
+    );
+  }
+
+  deleteComment(commentId: string): Observable<{ commentId: string; deleted: boolean }> {
+    return this.http.post<{ commentId: string; deleted: boolean }>(
+      `${this.base}/delete-comment`,
+      { commentId },
+      { headers: this.headers() },
+    );
+  }
+
+  // ---- transcript (admin) ---------------------------------------------------
+
+  /**
+   * Attach captions from a `.vtt` or `.srt` file. Multipart, and the server normalises SRT to
+   * WebVTT — `<track>` accepts nothing else.
+   */
+  uploadTranscript(id: string, file: File): Observable<VideoCard> {
+    const form = new FormData();
+    form.append('id', id);
+    form.append('file', file, file.name);
+    return this.http
+      .post<VideoCard>(`${this.admin}/upload-transcript`, form, { headers: this.headers() })
+      .pipe(map((card) => this.normalizeMediaUrls(card)));
+  }
+
+  deleteTranscript(id: string): Observable<VideoCard> {
+    return this.http
+      .post<VideoCard>(`${this.admin}/delete-transcript`, { id }, { headers: this.headers() })
+      .pipe(map((card) => this.normalizeMediaUrls(card)));
+  }
+
+  /**
+   * Fetch and parse the captions for a recording.
+   *
+   * <p>A GET, because the ticket is already in the URL — this is the same media route a `<track>`
+   * would have used, we just read it ourselves. Text rather than JSON, hence `responseType`.
+   */
+  transcript(transcriptUrl: string): Observable<TranscriptCue[]> {
+    return this.http
+      .get(transcriptUrl, { responseType: "text" })
+      .pipe(map((vtt) => parseWebVtt(vtt)));
+  }
+
   /**
    * Resolve a download before starting one. Returns a ticketed GET URL — the transfer itself is a
    * browser navigation, so it can be resumed and never has to live in the tab's memory.
@@ -373,6 +473,7 @@ export class VideoService {
       streamUrl: this.absolute(card.streamUrl),
       posterUrl: this.absolute(card.posterUrl),
       spriteUrl: this.absolute(card.spriteUrl),
+      transcriptUrl: this.absolute(card.transcriptUrl),
     };
   }
 
@@ -407,6 +508,63 @@ export class VideoService {
       percent: 0,
     };
   }
+}
+
+/** One caption line: when it starts, when it ends, and what is said. */
+export interface TranscriptCue {
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+}
+
+/**
+ * Parse WebVTT into cues.
+ *
+ * Done in JavaScript rather than handed to a `<track>` element, deliberately. A `<track>` is fetched
+ * by the browser, which for a cross-origin URL — and the API is a different origin from this SPA —
+ * requires putting `crossorigin="anonymous"` on the `<video>`. That attribute also changes how the
+ * media itself and the poster are fetched, so a secondary feature would be able to break playback.
+ * Parsing here costs one small request we need anyway for the searchable panel, and keeps captions
+ * from being able to affect the video element at all.
+ */
+export function parseWebVtt(vtt: string): TranscriptCue[] {
+  const cues: TranscriptCue[] = [];
+  // Normalise line endings and drop a BOM, either of which stops the split matching.
+  const lines = vtt.replace(/^﻿/, "").replace(/\r\n?/g, "\n").split("\n");
+
+  for (let i = 0; i < lines.length; i++) {
+    const arrow = lines[i].indexOf("-->");
+    if (arrow < 0) continue;
+
+    const start = vttTime(lines[i].slice(0, arrow));
+    // Cue settings (align, position…) can follow the end time on the same line; stop at whitespace.
+    const end = vttTime(lines[i].slice(arrow + 3).trim().split(/\s+/)[0]);
+    if (start === null || end === null) continue;
+
+    // Text runs to the next blank line; a cue may span several.
+    const text: string[] = [];
+    while (++i < lines.length && lines[i].trim() !== "") {
+      text.push(lines[i].trim());
+    }
+    const joined = text
+      .join(" ")
+      // Strip the inline tags VTT allows (<v Speaker>, <i>, <c.classname>) — the panel shows plain text.
+      .replace(/<[^>]*>/g, "")
+      .trim();
+    if (joined) cues.push({ startSeconds: start, endSeconds: end, text: joined });
+  }
+  return cues;
+}
+
+/** `00:01:02.500` or `01:02.500` (the hour is optional in VTT) into seconds. */
+function vttTime(raw: string): number | null {
+  const parts = raw.trim().split(":");
+  if (parts.length < 2 || parts.length > 3) return null;
+  const seconds = parts.map((p) => Number(p.replace(",", ".")));
+  if (seconds.some((n) => !Number.isFinite(n))) return null;
+  return parts.length === 3
+    ? seconds[0] * 3600 + seconds[1] * 60 + seconds[2]
+    : seconds[0] * 60 + seconds[1];
 }
 
 /** "1.4 GB" — used in upload limits, segment sizes and the storage banner. */

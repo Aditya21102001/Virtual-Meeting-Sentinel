@@ -69,6 +69,17 @@ public class Video {
     @Column(name = "sprite_rel")
     private String spriteRel;
 
+    /**
+     * WebVTT captions relative to {@link #storageDir}, or null when none were supplied.
+     *
+     * <p>Uploaded rather than generated. Producing one means speech-to-text, and running that on the
+     * same small host that already struggles to transcode would reintroduce exactly the resource
+     * exhaustion the segmenting pipeline was reworked to avoid. An SRT upload is converted to WebVTT
+     * on the way in, because {@code <track>} accepts only VTT.
+     */
+    @Column(name = "transcript_rel")
+    private String transcriptRel;
+
     @Column(name = "sprite_interval_seconds")
     private Integer spriteIntervalSeconds;
 
@@ -193,6 +204,8 @@ public class Video {
     public void setPosterRel(String posterRel) { this.posterRel = posterRel; }
     public String getSpriteRel() { return spriteRel; }
     public void setSpriteRel(String spriteRel) { this.spriteRel = spriteRel; }
+    public String getTranscriptRel() { return transcriptRel; }
+    public void setTranscriptRel(String transcriptRel) { this.transcriptRel = transcriptRel; }
     public Integer getSpriteIntervalSeconds() { return spriteIntervalSeconds; }
     public void setSpriteIntervalSeconds(Integer v) { this.spriteIntervalSeconds = v; }
     public Integer getSpriteColumns() { return spriteColumns; }
