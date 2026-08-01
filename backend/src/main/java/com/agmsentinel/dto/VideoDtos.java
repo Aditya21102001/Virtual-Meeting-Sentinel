@@ -126,10 +126,7 @@ public final class VideoDtos {
      * <p>{@code likedByMe} is why likes are rows rather than a counter: the button has to render
      * differently for the person who already pressed it, and a total cannot say who is in it.
      */
-    public record VideoEngagement(long likes, boolean likedByMe, long comments) {
-
-        public static final VideoEngagement NONE = new VideoEngagement(0, false, 0);
-    }
+    public record VideoEngagement(long likes, boolean likedByMe, long comments) { }
 
     /** One comment as the browser sees it. {@code mine} drives whether Delete is offered. */
     public record CommentView(
