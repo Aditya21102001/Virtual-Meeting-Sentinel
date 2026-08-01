@@ -52,6 +52,8 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 // Let internal ERROR forwards render (so a thrown 401 stays 401, not 403).
                 .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                // CORS preflight requests do not carry the bearer token used by the actual call.
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 // Enrollment needs a full access token (more specific → declared first).
                 .requestMatchers("/api/auth/enroll/**").hasAnyRole("MODERATOR", "ADMIN")
                 // Public auth endpoints + Google OAuth2 handshake.
@@ -98,11 +100,14 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    /** Allow the Vercel-hosted Angular app (any origin in dev) to call the API. */
+    /** Allow the deployed SPA and local Angular development servers to call the API. */
     @Bean
     public CorsConfigurationSource corsSource() {
         CorsConfiguration cfg = new CorsConfiguration();
-        cfg.setAllowedOriginPatterns(List.of("*"));   // tighten to your Vercel domain in prod
+        cfg.setAllowedOrigins(List.of(
+                "https://virtual-meeting-sentinel.vercel.app",
+                "http://localhost:4200",
+                "http://127.0.0.1:4200"));
         cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         cfg.setAllowedHeaders(List.of("*"));
         cfg.setAllowCredentials(true);
