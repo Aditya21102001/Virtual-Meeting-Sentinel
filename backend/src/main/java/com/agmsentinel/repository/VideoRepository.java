@@ -5,6 +5,7 @@ import com.agmsentinel.model.VideoStatus;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -18,6 +19,13 @@ public interface VideoRepository extends JpaRepository<Video, UUID> {
     /** What viewers may see: only fully processed videos. */
     @EntityGraph(attributePaths = "renditions")
     List<Video> findByStatusOrderByCreatedAtDesc(VideoStatus status);
+
+    /**
+     * Several statuses at once — the member catalogue shows videos that are still segmenting
+     * alongside the playable ones, so an upload doesn't simply vanish until it finishes.
+     */
+    @EntityGraph(attributePaths = "renditions")
+    List<Video> findByStatusInOrderByCreatedAtDesc(Collection<VideoStatus> statuses);
 
     @EntityGraph(attributePaths = "renditions")
     Optional<Video> findWithRenditionsById(UUID id);

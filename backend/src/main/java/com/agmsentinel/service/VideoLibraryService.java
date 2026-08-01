@@ -27,6 +27,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -87,6 +88,53 @@ public class VideoLibraryService {
     @Transactional(readOnly = true)
     public List<Video> listReady() {
         return videos.findByStatusOrderByCreatedAtDesc(VideoStatus.READY);
+    }
+
+    /**
+     * What a member's library shows: playable recordings <em>and</em> ones still being segmented.
+     *
+     * <p>Listing only {@code READY} meant an upload disappeared for the whole length of the
+     * transcode — the catalogue came back empty and looked like the upload had failed. A
+     * {@code PROCESSING} entry carries no ticket or stream URL (see {@link VideoUrlFactory#card}),
+     * so it renders as "still processing" and cannot be played until it really is ready.
+     * {@code FAILED} stays hidden: that is the uploader's problem to fix, not something to show
+     * every viewer.
+     */
+    @Transactional(readOnly = true)
+    public List<Video> listVisible() {
+        return videos.findByStatusInOrderByCreatedAtDesc(
+                List.of(VideoStatus.READY, VideoStatus.PROCESSING));
+    }
+
+    /**
+     * Fail videos left mid-transcode by a server restart.
+     *
+     * <p>Processing runs in-process on an {@code @Async} pool, so a container that is redeployed,
+     * evicted, or OOM-killed takes the ffmpeg run down with it. {@link VideoProcessingWorker} only
+     * reaches {@code markFailed} for exceptions it actually catches — a hard kill never gets there,
+     * which strands the row in {@code PROCESSING} at whatever percentage it had reached. Nothing
+     * ever moves it again: the UI polls forever and the video never appears in the library.
+     *
+     * <p>These are marked {@code FAILED} rather than re-queued on purpose. The most likely reason a
+     * transcode died with the container is that it exhausted the host's memory or CPU, and
+     * automatically restarting it on boot would reproduce the crash in a loop. Re-processing stays
+     * a deliberate action, and {@link #reprocess} is one click away.
+     */
+    @Transactional
+    public int recoverInterrupted() {
+        List<Video> stranded = videos.findByStatusOrderByCreatedAtDesc(VideoStatus.PROCESSING);
+        for (Video video : stranded) {
+            log.warn("Video {} was still PROCESSING at startup — the previous run was interrupted.",
+                     video.getId());
+            video.setStatus(VideoStatus.FAILED);
+            video.setErrorMessage(
+                    "Processing stopped when the server restarted, so this recording was never "
+                    + "segmented. Press Re-process to try again. If it keeps stopping at a low "
+                    + "percentage the host is most likely running out of memory or CPU for the "
+                    + "transcode — a smaller or lower-resolution source will get through.");
+            videos.save(video);
+        }
+        return stranded.size();
     }
 
     @Transactional(readOnly = true)
@@ -372,6 +420,20 @@ public class VideoLibraryService {
         videos.save(video);
     }
 
+    /**
+     * Containers a browser can decode on its own.
+     *
+     * <p>The upload allow-list is deliberately wider than this, because with FFmpeg present
+     * <em>anything</em> it can read becomes an H.264 ladder. Without FFmpeg the original file is
+     * handed to the browser untouched, and only these formats actually play. Matroska, AVI, WMV,
+     * FLV and raw MPEG do not — no browser ships those decoders.
+     *
+     * <p>Container support is necessary but not sufficient: an {@code .mp4} holding HEVC or AC-3
+     * still won't decode. Determining that needs ffprobe, which by definition isn't available on
+     * this path, so the wording below says "may not" rather than claiming certainty.
+     */
+    private static final Set<String> BROWSER_PLAYABLE = Set.of("mp4", "m4v", "webm", "mov");
+
     /** ffmpeg-free path: mark the original playable via HTTP Range instead of HLS. */
     @Transactional
     public void completeProgressive(UUID videoId) {
@@ -379,12 +441,28 @@ public class VideoLibraryService {
             v.setDeliveryMode(Video.DeliveryMode.PROGRESSIVE);
             v.setStatus(VideoStatus.READY);
             v.setProgressPercent(100);
-            v.setErrorMessage("FFmpeg is not installed, so this video was not split into an adaptive "
-                    + "ladder. It streams over HTTP Range requests instead — playback and seeking "
-                    + "work, but there is no quality switching. Install FFmpeg and use Re-process "
-                    + "to segment it.");
+            v.setErrorMessage(progressiveNote(extensionOf(
+                    v.getOriginalFilename() == null ? "" : v.getOriginalFilename())));
             videos.save(v);
         });
+    }
+
+    /**
+     * Say plainly whether this file will actually play. Reporting only "no quality switching" for a
+     * format the browser cannot decode at all sent the viewer to an opaque "could not decode this
+     * file" error with nothing linking it back to the missing FFmpeg.
+     */
+    private String progressiveNote(String extension) {
+        if (BROWSER_PLAYABLE.contains(extension)) {
+            return "FFmpeg is not installed, so this video was not split into an adaptive ladder. "
+                   + "It streams over HTTP Range requests instead — playback and seeking work, but "
+                   + "there is no quality switching. Install FFmpeg and use Re-process to segment it.";
+        }
+        return "FFmpeg is not installed, so this ." + extension + " file is being served exactly as "
+               + "uploaded — and browsers cannot decode ." + extension + " natively, so it will not "
+               + "play. The file is stored safely and nothing has been lost: install FFmpeg and use "
+               + "Re-process to convert it into a playable adaptive ladder. Uploading MP4 (H.264) "
+               + "or WebM would play immediately even without FFmpeg.";
     }
 
     @Transactional

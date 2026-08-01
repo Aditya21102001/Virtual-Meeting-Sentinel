@@ -11,6 +11,8 @@ import com.agmsentinel.service.VideoTranscodeService.SpriteInfo;
 import com.agmsentinel.service.VideoTranscodeService.TranscodeOutput;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -69,6 +71,23 @@ public class VideoProcessingWorker {
     @TransactionalEventListener(fallbackExecution = true)
     public void onVideoQueued(VideoQueuedEvent event) {
         process(event.videoId());
+    }
+
+    /**
+     * Clear out transcodes that died with the previous process.
+     *
+     * <p>Nothing survives a container restart: the {@code @Async} pool and the ffmpeg subprocess go
+     * with it, and a row left in {@code PROCESSING} has no owner any more. Without this it stays
+     * that way permanently — the admin screen polls a percentage that will never move and the
+     * recording never reaches the member library. Running at {@code ApplicationReadyEvent} means it
+     * happens once per boot, before anyone can look at a stale row.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void recoverInterruptedOnStartup() {
+        int recovered = library.recoverInterrupted();
+        if (recovered > 0) {
+            log.warn("Marked {} interrupted video transcode(s) as FAILED at startup.", recovered);
+        }
     }
 
     void process(UUID videoId) {

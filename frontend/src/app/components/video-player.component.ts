@@ -883,8 +883,43 @@ export class VideoPlayerComponent implements OnDestroy {
     element.addEventListener('ratechange', () => this.speed.set(element.playbackRate));
     element.addEventListener('progress', () => this.refreshBuffered(element));
     element.addEventListener('error', () => {
-      if (!this.hls) this.fatalError.set('The browser could not decode this file.');
+      // hls.js reports its own failures through Events.ERROR with far better detail, so only
+      // handle the native element error when it is actually driving playback.
+      if (!this.hls) this.fatalError.set(this.decodeFailureReason());
     });
+  }
+
+  /**
+   * Turn the native `MediaError` into something a viewer can act on.
+   *
+   * <p>"The browser could not decode this file" is true but useless — it gives no hint that the
+   * cause is usually a container the browser has no decoder for, served untouched because the
+   * server has no FFmpeg to convert it. The distinction that matters is SRC_NOT_SUPPORTED (wrong
+   * format — a server-side problem needing a re-process) versus DECODE (a corrupt or truncated
+   * file) versus NETWORK (the stream died mid-flight, usually an expired ticket).
+   */
+  private decodeFailureReason(): string {
+    const error = this.mediaRef().nativeElement.error;
+    const progressive = !this.card().adaptive;
+
+    switch (error?.code) {
+      case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+        return progressive
+          ? 'This browser has no decoder for this file, and the server is serving it exactly as '
+            + 'uploaded because FFmpeg is not installed. Install FFmpeg and re-process the video, '
+            + 'or re-upload it as MP4 (H.264) or WebM.'
+          : 'This browser cannot play the stream format.';
+      case MediaError.MEDIA_ERR_DECODE:
+        return 'The file is readable but its contents could not be decoded — it may be corrupt or '
+             + 'have been truncated during upload.';
+      case MediaError.MEDIA_ERR_NETWORK:
+        return 'The stream stopped mid-download. The playback link may have expired — reload the '
+             + 'page to get a fresh one.';
+      case MediaError.MEDIA_ERR_ABORTED:
+        return 'Playback was cancelled before it could start.';
+      default:
+        return 'This video could not be played.';
+    }
   }
 
   /**

@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, signal, viewChild } from '@angular/core';
+import { Component, OnDestroy, OnInit, computed, signal, viewChild } from '@angular/core';
 import { VideoPlayerComponent } from '../components/video-player.component';
 import {
   SegmentView,
@@ -143,23 +143,40 @@ import {
         <h2 class="section">{{ selected() ? 'More recordings' : 'Library' }}</h2>
         <div class="grid">
           @for (card of others(); track card.video.id) {
-            <button class="tile" type="button" (click)="play(card)">
+            <button
+              class="tile"
+              type="button"
+              [class.pending]="isProcessing(card)"
+              [disabled]="isProcessing(card)"
+              (click)="play(card)"
+            >
               <span class="thumb">
                 @if (card.posterUrl) {
                   <img [src]="card.posterUrl" [alt]="card.video.title" loading="lazy" />
                 } @else {
-                  <span class="thumb-fallback">▶</span>
+                  <span class="thumb-fallback">{{ isProcessing(card) ? '⏳' : '▶' }}</span>
                 }
-                <span class="thumb-time">{{ timecode(card.video.durationSeconds) }}</span>
+                @if (!isProcessing(card)) {
+                  <span class="thumb-time">{{ timecode(card.video.durationSeconds) }}</span>
+                }
               </span>
               <span class="tile-title">{{ card.video.title }}</span>
-              <span class="muted tile-meta">
-                @if (card.adaptive) {
-                  {{ card.video.height }}p · {{ card.video.totalSegments }} segments
-                } @else {
-                  {{ humanBytes(card.video.sizeBytes) }}
-                }
-              </span>
+              @if (isProcessing(card)) {
+                <span class="bar"
+                  ><span class="bar-fill" [style.width.%]="card.video.progressPercent"></span
+                ></span>
+                <span class="muted tile-meta">
+                  Processing — {{ card.video.progressPercent }}%. It appears here when ready.
+                </span>
+              } @else {
+                <span class="muted tile-meta">
+                  @if (card.adaptive) {
+                    {{ card.video.height }}p · {{ card.video.totalSegments }} segments
+                  } @else {
+                    {{ humanBytes(card.video.sizeBytes) }}
+                  }
+                </span>
+              }
             </button>
           }
         </div>
@@ -211,6 +228,27 @@ import {
       }
       .tile:hover {
         border-color: var(--accent);
+      }
+      /* Still segmenting: listed so the upload is visible, but not yet something to click. */
+      .tile.pending {
+        cursor: default;
+        opacity: 0.75;
+      }
+      .tile.pending:hover {
+        border-color: #33415580;
+      }
+      .bar {
+        display: block;
+        height: 4px;
+        background: #0b1220;
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .bar-fill {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+        transition: width 0.25s;
       }
       .thumb {
         position: relative;
@@ -320,7 +358,7 @@ import {
     `,
   ],
 })
-export class VideosComponent implements OnInit {
+export class VideosComponent implements OnInit, OnDestroy {
   readonly humanBytes = humanBytes;
   readonly timecode = timecode;
 
@@ -343,22 +381,53 @@ export class VideosComponent implements OnInit {
     return this.cards().filter((card) => card.video.id !== playing);
   });
 
+  private poller: ReturnType<typeof setInterval> | null = null;
+
   constructor(private videos: VideoService) {}
 
   ngOnInit(): void {
+    this.refresh(true);
+    // The library now includes recordings that are still segmenting, so keep it fresh while any
+    // of them are — otherwise a viewer would sit on a stale "Processing — 40%" until they reloaded
+    // the page. The interval costs nothing once everything is READY: the check short-circuits.
+    this.poller = setInterval(() => {
+      if (this.cards().some((card) => this.isProcessing(card))) this.refresh(false);
+    }, 5000);
+  }
+
+  ngOnDestroy(): void {
+    if (this.poller) clearInterval(this.poller);
+  }
+
+  private refresh(initial: boolean): void {
     this.videos.library().subscribe({
       next: (cards) => {
         this.cards.set(cards);
         this.loading.set(false);
+        // Keep the open player in sync — a video that finished while being watched in the grid
+        // should pick up its stream URL and ticket rather than staying a dead placeholder.
+        const open = this.selected();
+        if (open) {
+          const fresh = cards.find((card) => card.video.id === open.video.id);
+          if (fresh && fresh.streamUrl && !open.streamUrl) this.selected.set(fresh);
+        }
       },
       error: () => {
-        this.error.set('Could not load the recordings library. Is the server running?');
+        if (initial) {
+          this.error.set('Could not load the recordings library. Is the server running?');
+        }
         this.loading.set(false);
       },
     });
   }
 
+  /** Still segmenting: listed so the upload is visible, but there is nothing to play yet. */
+  isProcessing(card: VideoCard): boolean {
+    return card.video.status === 'PROCESSING';
+  }
+
   play(card: VideoCard): void {
+    if (this.isProcessing(card)) return;
     this.selected.set(card);
     this.segmentsOpen.set(false);
     this.segments.set([]);

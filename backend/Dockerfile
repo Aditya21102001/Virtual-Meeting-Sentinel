@@ -33,4 +33,12 @@ COPY --from=build /app/target/*.jar app.jar
 ENV PORT=8080
 EXPOSE 8080
 # Cap the heap to a share of the container so the app doesn't OOM on a 512MB free tier.
-ENTRYPOINT ["sh", "-c", "java -XX:MaxRAMPercentage=75.0 -jar app.jar --server.port=${PORT:-8080}"]
+#
+# 50%, not 75%, because FFmpeg is a SEPARATE PROCESS: its memory comes out of the container's
+# limit but not out of the JVM heap. At 75% of a 512 MB instance the JVM alone reserves ~384 MB,
+# and the first x264 encoder to start pushes the cgroup over its limit — the kernel then kills the
+# whole container, which surfaces as a 502 from the platform's proxy (and, confusingly, as a CORS
+# error in the browser, because an error page from the proxy carries no CORS headers).
+# Override with JAVA_HEAP_PERCENT on an instance with real memory.
+ENV JAVA_HEAP_PERCENT=50.0
+ENTRYPOINT ["sh", "-c", "java -XX:MaxRAMPercentage=${JAVA_HEAP_PERCENT} -XX:+ExitOnOutOfMemoryError -jar app.jar --server.port=${PORT:-8080}"]

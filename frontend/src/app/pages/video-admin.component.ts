@@ -1,6 +1,5 @@
-import { Component, OnDestroy, OnInit, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Subscription } from 'rxjs';
 import {
   VideoCard,
   VideoService,
@@ -138,10 +137,16 @@ import {
               {{ uploadPercent() }}% — {{ humanBytes(sentBytes()) }} of
               {{ humanBytes(totalBytes()) }}
             </span>
+            <button class="ghost" (click)="cancelUpload()">Cancel</button>
           }
         </div>
         @if (busy()) {
           <div class="bar"><div class="bar-fill" [style.width.%]="uploadPercent()"></div></div>
+          <p class="muted" style="margin-top:6px">
+            The upload continues if you go to another page — it is no longer tied to this screen.
+            Segmenting then runs on the server, so you can close the tab entirely once it reaches
+            100%.
+          </p>
         }
         @if (message()) {
           <p class="muted" style="margin-top:8px">{{ message() }}</p>
@@ -430,6 +435,10 @@ import {
   ],
 })
 export class VideoAdminComponent implements OnInit, OnDestroy {
+  // inject() rather than constructor injection: the signal fields below read `videos` in their
+  // initialisers, which run before a constructor parameter property would be assigned.
+  private readonly videos = inject(VideoService);
+
   readonly humanBytes = humanBytes;
   readonly timecode = timecode;
 
@@ -439,12 +448,16 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   readonly file = signal<File | null>(null);
   title = '';
   description = '';
-  readonly busy = signal(false);
-  readonly uploadPercent = signal(0);
-  readonly sentBytes = signal(0);
-  readonly totalBytes = signal(0);
-  readonly message = signal('');
-  readonly uploadError = signal('');
+  /** Client-side objection to the chosen file (too large) — distinct from a server-side failure. */
+  readonly localError = signal('');
+
+  // Upload state lives on the service so it survives navigation; these are just views onto it.
+  readonly busy = this.videos.uploading;
+  readonly uploadPercent = this.videos.uploadPercent;
+  readonly sentBytes = this.videos.uploadSentBytes;
+  readonly totalBytes = this.videos.uploadTotalBytes;
+  readonly message = this.videos.uploadMessage;
+  readonly uploadError = computed(() => this.localError() || this.videos.uploadError());
 
   readonly editing = signal<string | null>(null);
   editTitle = '';
@@ -453,9 +466,16 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   readonly confirming = signal<string | null>(null);
 
   private poller: ReturnType<typeof setInterval> | null = null;
-  private uploadSub: Subscription | null = null;
 
-  constructor(private videos: VideoService) {}
+  constructor() {
+    // An upload that finishes while this page is open should show up without waiting for the
+    // next poll tick. The service bumps libraryChanged on completion; re-read the list then.
+    effect(() => {
+      this.videos.libraryChanged();
+      this.refreshList();
+      this.refreshStatus();
+    });
+  }
 
   ngOnInit(): void {
     this.refreshStatus();
@@ -468,7 +488,9 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     if (this.poller) clearInterval(this.poller);
-    this.uploadSub?.unsubscribe();
+    // Deliberately does NOT cancel an in-flight upload. Unsubscribing an HttpClient request aborts
+    // the XHR, so tearing it down here meant navigating away silently killed a part-done upload.
+    // The service owns that subscription now; only an explicit Cancel stops it.
   }
 
   // ---- data ----------------------------------------------------------------
@@ -503,51 +525,31 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   pick(event: Event): void {
     const chosen = (event.target as HTMLInputElement).files?.[0] ?? null;
     this.file.set(chosen);
-    this.uploadError.set('');
-    this.message.set('');
+    this.localError.set('');
     const limit = this.status()?.maxUploadBytes;
     if (chosen && limit && chosen.size > limit) {
-      this.uploadError.set(
+      this.localError.set(
         `That file is ${humanBytes(chosen.size)} — over the ${humanBytes(limit)} limit.`,
       );
     }
   }
 
+  /**
+   * Hand the upload to the service and return. The service owns the subscription, so navigating
+   * away no longer aborts it — the transfer continues in the background and this page picks the
+   * progress back up from the shared signals when the user returns.
+   */
   upload(): void {
     const chosen = this.file();
-    if (!chosen || this.uploadError()) return;
+    if (!chosen || this.localError()) return;
+    this.videos.startUpload(chosen, this.title, this.description);
+    this.title = '';
+    this.description = '';
+    this.file.set(null);
+  }
 
-    this.busy.set(true);
-    this.uploadPercent.set(0);
-    this.sentBytes.set(0);
-    this.totalBytes.set(chosen.size);
-    this.message.set('');
-
-    this.uploadSub = this.videos.upload(chosen, this.title, this.description).subscribe({
-      next: (event) => {
-        if (event.kind === 'progress') {
-          this.uploadPercent.set(event.percent);
-          this.sentBytes.set(event.sentBytes);
-          this.totalBytes.set(event.totalBytes);
-        } else {
-          this.busy.set(false);
-          this.title = '';
-          this.description = '';
-          this.file.set(null);
-          this.message.set(
-            `✓ "${event.card.video.title}" uploaded. Segmenting now — progress appears below.`,
-          );
-          this.refreshList();
-          this.refreshStatus();
-        }
-      },
-      error: (err) => {
-        this.busy.set(false);
-        this.uploadError.set(
-          '✗ ' + (err?.error?.message ?? err?.error?.error ?? 'Upload failed. Is the server running?'),
-        );
-      },
-    });
+  cancelUpload(): void {
+    this.videos.cancelUpload();
   }
 
   // ---- manage --------------------------------------------------------------

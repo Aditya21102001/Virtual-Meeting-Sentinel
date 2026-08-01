@@ -83,11 +83,15 @@ public class VideoController {
 
     // ---- catalogue -----------------------------------------------------------
 
-    /** Every playable video, each with a fresh ticket so posters and playback work immediately. */
+    /**
+     * The member library: playable videos, each with a fresh ticket so posters and playback work
+     * immediately, plus any recording still being segmented so an upload in progress is visible
+     * rather than absent. A non-{@code READY} card carries no ticket or stream URL.
+     */
     @GetMapping
     public List<VideoCard> list() {
         String subject = currentSubject();
-        return library.listReady().stream().map(v -> urls.card(v, subject)).toList();
+        return library.listVisible().stream().map(v -> urls.card(v, subject)).toList();
     }
 
     @GetMapping("/{id}")

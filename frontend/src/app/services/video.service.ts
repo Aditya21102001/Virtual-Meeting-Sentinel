@@ -1,6 +1,6 @@
 import { HttpClient, HttpEvent, HttpEventType } from '@angular/common/http';
-import { Injectable, inject } from '@angular/core';
-import { Observable, map } from 'rxjs';
+import { Injectable, computed, inject, signal } from '@angular/core';
+import { Observable, Subscription, map } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { AuthService } from './auth.service';
 
@@ -114,7 +114,74 @@ export class VideoService {
   private readonly admin = `${environment.apiBase}/api/admin/videos`;
   private readonly auth = inject(AuthService);
 
+  // ---- in-flight upload, owned by the service rather than by a component --------------------
+  //
+  // An upload has to outlive the page that started it. When this state lived in the component,
+  // its ngOnDestroy unsubscribed on navigation — and unsubscribing an HttpClient request ABORTS
+  // the underlying XHR, so simply clicking another tab silently cancelled a part-finished upload.
+  // This service is `providedIn: 'root'`, so the subscription survives navigation and the user is
+  // free to move around while a large recording finishes uploading.
+
+  /** The upload currently in flight, or null. */
+  readonly uploadingName = signal<string | null>(null);
+  readonly uploadPercent = signal(0);
+  readonly uploadSentBytes = signal(0);
+  readonly uploadTotalBytes = signal(0);
+  /** Set once on completion/failure so a returning page can show the outcome it missed. */
+  readonly uploadMessage = signal('');
+  readonly uploadError = signal('');
+  readonly uploading = computed(() => this.uploadingName() !== null);
+
+  private uploadSub: Subscription | null = null;
+  /** Bumped whenever an upload finishes, so open pages know to refresh their list. */
+  readonly libraryChanged = signal(0);
+
   constructor(private http: HttpClient) {}
+
+  /**
+   * Begin an upload and track it centrally. Returns immediately; watch the signals above.
+   * Refuses to start a second upload while one is running — two concurrent multi-hundred-MB
+   * uploads would compete for the same bandwidth and both crawl.
+   */
+  startUpload(file: File, title: string, description: string): void {
+    if (this.uploading()) return;
+    this.uploadingName.set(file.name);
+    this.uploadPercent.set(0);
+    this.uploadSentBytes.set(0);
+    this.uploadTotalBytes.set(file.size);
+    this.uploadMessage.set('');
+    this.uploadError.set('');
+
+    this.uploadSub = this.upload(file, title, description).subscribe({
+      next: (event) => {
+        if (event.kind === 'progress') {
+          this.uploadPercent.set(event.percent);
+          this.uploadSentBytes.set(event.sentBytes);
+          this.uploadTotalBytes.set(event.totalBytes);
+        } else {
+          this.uploadingName.set(null);
+          this.uploadMessage.set(
+            `✓ "${event.card.video.title}" uploaded. Segmenting now — you can leave this page.`,
+          );
+          this.libraryChanged.update((n) => n + 1);
+        }
+      },
+      error: (err) => {
+        this.uploadingName.set(null);
+        this.uploadError.set(
+          '✗ ' + (err?.error?.message ?? err?.error?.error ?? 'Upload failed. Is the server running?'),
+        );
+      },
+    });
+  }
+
+  /** Explicit user-initiated cancel — the only thing that should abort an upload. */
+  cancelUpload(): void {
+    this.uploadSub?.unsubscribe();
+    this.uploadSub = null;
+    this.uploadingName.set(null);
+    this.uploadError.set('Upload cancelled.');
+  }
 
   /**
    * JSON calls carry the session bearer token, matching ApiService (there is no token-attaching
