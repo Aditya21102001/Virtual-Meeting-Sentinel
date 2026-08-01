@@ -1,5 +1,6 @@
 import { HttpClient } from "@angular/common/http";
-import { Injectable, computed, signal } from "@angular/core";
+import { Injectable, computed, inject, signal } from "@angular/core";
+import { Router } from "@angular/router";
 import { firstValueFrom, Observable } from "rxjs";
 import {
   startRegistration,
@@ -56,16 +57,27 @@ export class AuthService {
     () => this.hasValidToken(this.token()) && this.role() === "SHAREHOLDER",
   );
 
+  private readonly router = inject(Router);
+
+  /** Fires when the current token's `exp` passes. Null when there is no live session. */
+  private expiryTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(
     private http: HttpClient,
     private api: ApiService,
   ) {
     if (this.token()) {
       this.api.setToken(this.token()!);
-      if (!this.hasValidToken(this.token())) {
+      if (this.hasValidToken(this.token())) {
+        // A restored token keeps the expiry it was last renewed with, so what is left of the idle
+        // window may be minutes. The first interaction renews it; until then this holds the line.
+        this.scheduleExpiry(this.token()!);
+      } else {
         this.logout();
       }
     }
+    this.watchOtherTabs();
+    this.watchActivity();
   }
 
   // ---- session -----------------------------------------------------------
@@ -79,9 +91,12 @@ export class AuthService {
     localStorage.setItem("agm_role", role);
     localStorage.setItem("agm_user", user);
     this.api.setToken(token);
+    this.scheduleExpiry(token);
+    this.lastRenewedAt = Date.now();
   }
 
   logout(): void {
+    this.cancelExpiry();
     this.token.set(null);
     this.role.set(null);
     this.username.set(null);
@@ -89,6 +104,159 @@ export class AuthService {
     localStorage.removeItem("agm_role");
     localStorage.removeItem("agm_user");
     this.api.setToken("");
+  }
+
+  // ---- inactivity timeout ------------------------------------------------
+  //
+  // The session ends after `jwt.ttl-seconds` (8 hours) with no activity. The token's own lifetime is
+  // that window: this renews it while the user is doing things, so the clock effectively restarts on
+  // each interaction, and stops being pushed forward the moment they stop.
+  //
+  // The renewal is what makes it an *inactivity* timeout rather than an absolute one, and the server
+  // is what enforces it — a token that has already expired cannot be renewed.
+
+  /** Don't renew more often than this; an interaction every few seconds must not be a request each. */
+  private static readonly RENEW_EVERY_MS = 5 * 60 * 1000;
+
+  /** Renewal in flight, so a burst of activity cannot fire several at once. */
+  private renewing = false;
+  private lastRenewedAt = 0;
+
+  /**
+   * Renew the session if the user is active and the token has aged enough to be worth it.
+   *
+   * <p>The cadence matters for how sharp the timeout is. Renewing at most every 5 minutes means the
+   * token always has at least 7 h 55 m left when someone walks away, so the effective idle window is
+   * 8 hours give or take five minutes. Renewing only when nearly expired would be cheaper but would
+   * make the timeout anywhere between 4 and 8 hours depending on when they happened to stop.
+   */
+  private renewIfActive(): void {
+    const token = this.token();
+    if (!token || this.renewing) return;
+    if (Date.now() - this.lastRenewedAt < AuthService.RENEW_EVERY_MS) return;
+    if (!this.hasValidToken(token)) return;   // already gone; the expiry timer owns this
+
+    this.renewing = true;
+    this.lastRenewedAt = Date.now();
+    this.http
+      .post<{ token: string }>(
+        `${this.base}/api/auth/refresh-session`,
+        {},
+        { headers: this.authHeaders() },
+      )
+      .subscribe({
+        next: (r) => {
+          this.renewing = false;
+          // completeLogin re-arms the expiry timer against the new `exp`.
+          if (r.token) this.completeLogin(r.token);
+        },
+        error: (err) => {
+          this.renewing = false;
+          // A 401 is the server declining to extend this session — past the absolute cap, or the
+          // token lapsed in flight. End it now: the current token may still have hours left, and
+          // waiting for that would make the cap mean "24 hours, plus up to another 8".
+          //
+          // Anything else (offline, instance asleep) is not an answer about the session, so the
+          // existing expiry timer stays in charge and a passing outage signs nobody out early.
+          // The auth interceptor deliberately ignores /api/auth/ paths, so this is the only place
+          // that decision gets made.
+          if (err?.status === 401) this.expireSession();
+        },
+      });
+  }
+
+  /**
+   * Watch for the user doing something.
+   *
+   * <p>Passive listeners on the events that indicate a person is present, not merely that the page
+   * is open — a timer or a background poll must not count as activity, or the session would never
+   * time out for anyone with a tab left open. `visibilitychange` is included because returning to a
+   * backgrounded tab is a real interaction and is often the moment a renewal is most needed.
+   */
+  private watchActivity(): void {
+    const onActivity = () => this.renewIfActive();
+    for (const event of ["pointerdown", "keydown", "wheel", "touchstart"]) {
+      window.addEventListener(event, onActivity, { passive: true });
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) this.renewIfActive();
+    });
+  }
+
+  /**
+   * End the session the moment the token expires, rather than whenever something notices.
+   *
+   * <p>This is not belt-and-braces on top of the interceptor — it closes a real hole.
+   * {@link isAuthenticated} is a computed over the `token` signal, and the expiry check inside it
+   * reads `Date.now()`, which is not reactive. So the value is cached until the token *changes*:
+   * a tab left open past the 8-hour mark keeps rendering as signed in, and the route guards keep
+   * letting the user in, until some request happens to come back 401. A timer that clears the token
+   * is what makes the expiry actually observable — every guard and every computed re-evaluates
+   * because the signal it depends on changed.
+   *
+   * <p>The delay comes from the token's own `exp`, so the frontend never carries its own idea of how
+   * long a session lasts; changing `JWT_TTL_SECONDS` on the server moves this with it.
+   */
+  private scheduleExpiry(token: string): void {
+    this.cancelExpiry();
+    const expiry = this.decodeExpiry(token);
+    if (expiry == null) return;   // no exp claim: nothing to schedule against
+
+    const remaining = expiry * 1000 - Date.now();
+    if (remaining <= 0) {
+      this.expireSession();
+      return;
+    }
+    // setTimeout takes a signed 32-bit delay; anything larger overflows and fires immediately.
+    // 8 hours is nowhere near that, but a misconfigured TTL should degrade to "check later"
+    // rather than "log out now".
+    const MAX_DELAY = 2 ** 31 - 1;
+    this.expiryTimer = setTimeout(
+      () => (remaining > MAX_DELAY ? this.scheduleExpiry(token) : this.expireSession()),
+      Math.min(remaining, MAX_DELAY),
+    );
+  }
+
+  private cancelExpiry(): void {
+    if (this.expiryTimer) clearTimeout(this.expiryTimer);
+    this.expiryTimer = null;
+  }
+
+  /**
+   * Clear the session and send the user to sign in again, keeping where they were.
+   *
+   * <p>Not redirected from public pages: an attendee on `/ask` never signed in, and bouncing them to
+   * a login form they have no account for would be worse than letting the page be.
+   */
+  private expireSession(): void {
+    const wasHere = this.router.url;
+    this.logout();
+
+    const publicPage = wasHere.startsWith("/login") || wasHere.startsWith("/ask");
+    if (publicPage) return;
+    this.router.navigate(["/login"], {
+      queryParams: { expired: "1", returnUrl: wasHere },
+    });
+  }
+
+  /**
+   * Keep tabs in step. `localStorage` is shared, so signing out in one tab must not leave another
+   * showing a session whose token is already gone — the next request from it would fail with no
+   * explanation. The `storage` event fires only in *other* tabs, so this cannot loop.
+   */
+  private watchOtherTabs(): void {
+    window.addEventListener("storage", (event) => {
+      if (event.key !== null && event.key !== "agm_token") return;
+      const stored = localStorage.getItem("agm_token");
+      if (!stored) {
+        if (this.token()) this.expireSession();
+        return;
+      }
+      if (stored !== this.token()) {
+        // Signed in (or re-signed in) elsewhere; adopt it rather than keeping a stale token.
+        this.completeLogin(stored);
+      }
+    });
   }
 
   private authHeaders(): Record<string, string> {

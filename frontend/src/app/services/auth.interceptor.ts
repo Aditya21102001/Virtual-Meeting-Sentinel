@@ -23,8 +23,14 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
       const sessionDead = err.status === 401 && auth.isAuthenticated();
       const isAuthCall = req.url.includes("/api/auth/");
       if (sessionDead && !isAuthCall) {
+        // Captured before logout, which does not navigate but may trigger a guard elsewhere.
+        const wasHere = router.url;
         auth.logout();
-        router.navigate(["/login"], { queryParams: { expired: "1" } });
+        router.navigate(["/login"], {
+          // returnUrl so signing back in resumes the page they lost, rather than dropping them on
+          // the role's home screen with whatever they were doing gone.
+          queryParams: { expired: "1", returnUrl: wasHere },
+        });
       }
       return throwError(() => err);
     }),

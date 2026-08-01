@@ -21,13 +21,22 @@ public class JwtService {
     public static final String PLAYBACK_TYPE = "playback";
 
     private final List<SecretKey> keys = new ArrayList<>();
+
+    /**
+     * How long a token stays valid — and therefore how long a session survives with no activity,
+     * since the client renews the token while the user is active.
+     */
     private final long ttlSeconds;
+
+    /** Ceiling on total session length regardless of activity. 0 disables the cap. */
+    private final long maxSessionSeconds;
 
     public JwtService(
             @Value("${jwt.secret:change-me-to-a-long-random-string-in-prod-please}") String secret,
             @Value("${jwt.legacy-secret:}") String legacySecret,
             @Value("${jwt.legacy-secrets:}") String legacySecrets,
-            @Value("${jwt.ttl-seconds:28800}") long ttlSeconds) {
+            @Value("${jwt.ttl-seconds:28800}") long ttlSeconds,
+            @Value("${jwt.max-session-seconds:86400}") long maxSessionSeconds) {
         registerKey(secret);
         registerKey(legacySecret);
         for (String candidate : splitSecrets(legacySecrets)) {
@@ -37,15 +46,67 @@ public class JwtService {
             throw new IllegalArgumentException("At least one JWT signing secret must be configured.");
         }
         this.ttlSeconds = ttlSeconds;
+        this.maxSessionSeconds = maxSessionSeconds;
     }
+
+    /** The inactivity window in seconds, so the client can size its renewal cadence from it. */
+    public long ttlSeconds() {
+        return ttlSeconds;
+    }
+
+    /** {@code ost} claim: when the session originally began, preserved across refreshes. */
+    public static final String SESSION_START = "ost";
 
     /** Full access token — granted only after password (+ MFA, if enrolled) succeeds. */
     public String issue(String subject, String role) {
         Instant now = Instant.now();
+        return build(subject, role, now, now.getEpochSecond());
+    }
+
+    /**
+     * Re-issue an access token with a fresh expiry — the mechanism behind the inactivity timeout.
+     *
+     * <p>The token's lifetime <em>is</em> the idle window: the client renews it while the user is
+     * doing things, so a session ends when nobody has renewed it for {@code jwt.ttl-seconds}. That
+     * keeps the timeout enforced by the server on a stateless token, with no session table to
+     * maintain and nothing to clean up — an abandoned session simply stops being renewed.
+     *
+     * <p>{@code ost} rides along unchanged so a sliding session cannot renew itself forever. Without
+     * it, a browser left open on a shared machine would stay signed in indefinitely, which is the
+     * standard objection to sliding expiry and the reason for the absolute cap below.
+     *
+     * @throws JwtException if this is not an access token, or the session is older than the cap
+     */
+    public String refresh(Claims claims) {
+        if (!"access".equals(claims.get("typ", String.class))) {
+            throw new JwtException("Only an access token can be refreshed.");
+        }
+        Instant now = Instant.now();
+        long sessionStart = sessionStartOf(claims);
+        if (maxSessionSeconds > 0 && now.getEpochSecond() - sessionStart > maxSessionSeconds) {
+            throw new JwtException("This session has reached its maximum length and must be renewed "
+                                  + "by signing in again.");
+        }
+        return build(claims.getSubject(), claims.get("role", String.class), now, sessionStart);
+    }
+
+    /** When the session began — falling back to this token's own issue time for older tokens. */
+    private long sessionStartOf(Claims claims) {
+        Object raw = claims.get(SESSION_START);
+        if (raw instanceof Number number) return number.longValue();
+        // Tokens issued before `ost` existed: treat this token as the start rather than refusing to
+        // refresh, so a deploy does not sign everybody out mid-session.
+        return claims.getIssuedAt() == null
+                ? Instant.now().getEpochSecond()
+                : claims.getIssuedAt().toInstant().getEpochSecond();
+    }
+
+    private String build(String subject, String role, Instant now, long sessionStart) {
         return Jwts.builder()
                 .subject(subject)
                 .claim("role", role)
                 .claim("typ", "access")
+                .claim(SESSION_START, sessionStart)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(ttlSeconds)))
                 .signWith(currentKey())

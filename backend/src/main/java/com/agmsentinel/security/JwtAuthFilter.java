@@ -40,8 +40,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 boolean playbackTicket = JwtService.PLAYBACK_TYPE.equals(claims.get("typ", String.class));
                 if (!jwt.isMfaChallenge(claims) && !playbackTicket && role != null) {
                     var authority = new SimpleGrantedAuthority("ROLE_" + role);
+                    // The verified claims ride along as credentials. /api/auth/refresh-session needs
+                    // them to carry the original session start (`ost`) into the renewed token — the
+                    // subject and role alone would let a sliding session renew itself forever,
+                    // because nothing would remember when it began.
                     var auth = new UsernamePasswordAuthenticationToken(
-                            claims.getSubject(), null, List.of(authority));
+                            claims.getSubject(), claims, List.of(authority));
                     SecurityContextHolder.getContext().setAuthentication(auth);
                 }
             } catch (Exception ignored) {

@@ -164,7 +164,19 @@ jwt:
   secret: ${JWT_SECRET:change-me-to-a-long-random-string-in-prod-please}
   legacy-secret: ${JWT_LEGACY_SECRET:}
   legacy-secrets: ${JWT_LEGACY_SECRETS:}
-  ttl-seconds: 28800
+  # INACTIVITY timeout: 8 hours (28800s). The token's lifetime IS the idle window — the browser
+  # renews it (POST /api/auth/refresh-session) while the user is doing things and stops when they
+  # are not, so a session ends 8 hours after the last activity rather than 8 hours after sign-in.
+  #
+  # Enforced by the server, because renewal requires a token that has not yet expired. No session
+  # table is involved: an abandoned session needs no cleanup, it simply stops being renewed. The
+  # frontend also schedules its own logout from the token's `exp` (AuthService.scheduleExpiry) so a
+  # lapsed session leaves the UI immediately instead of lingering until some request happens to 401.
+  ttl-seconds: ${JWT_TTL_SECONDS:28800}
+  # Ceiling on total session length regardless of activity: 24 hours. Sliding expiry on its own
+  # means a browser left open never re-authenticates, so the renewed token carries the original
+  # sign-in time (`ost`) and renewal is refused past this. 0 disables the cap.
+  max-session-seconds: ${JWT_MAX_SESSION_SECONDS:86400}
 
 # Where the SPA lives — Google OAuth bounces the browser back here with the token.
 app:

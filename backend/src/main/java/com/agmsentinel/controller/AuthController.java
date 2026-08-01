@@ -3,10 +3,14 @@ package com.agmsentinel.controller;
 import com.agmsentinel.dto.AuthDtos.*;
 import com.agmsentinel.security.JwtService;
 import com.agmsentinel.service.AuthService;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Authentication + MFA.
@@ -68,6 +72,31 @@ public class AuthController {
     @PostMapping("/otp/verify")
     public TokenResponse otpVerify(@Valid @RequestBody OtpVerifyReq req) {
         return auth.otpVerify(req.channel(), req.destination(), req.code());
+    }
+
+    /**
+     * Renew the current session — the mechanism behind the inactivity timeout.
+     *
+     * <p>The token's own lifetime is the idle window, so the browser calls this while the user is
+     * doing things and simply stops when they are not. A session therefore ends after
+     * {@code jwt.ttl-seconds} with no activity, enforced by the server, with no session table to
+     * keep or expire.
+     *
+     * <p>Requires a still-valid token: an expired one cannot be renewed, which is exactly what the
+     * timeout means. {@code SecurityConfig} matches this path ahead of the public {@code /api/auth/**}
+     * rule so an absent or lapsed token is a 401 here rather than reaching the method.
+     */
+    @PostMapping("/refresh-session")
+    public TokenResponse refreshSession(Authentication authn) {
+        if (!(authn.getCredentials() instanceof Claims claims)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sign in again to continue.");
+        }
+        try {
+            return new TokenResponse(jwt.refresh(claims));
+        } catch (JwtException ex) {
+            // Past the absolute cap, or not an access token. Either way the answer is "sign in".
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ex.getMessage());
+        }
     }
 
     // ---- enrollment (requires a full access token) --------------------------

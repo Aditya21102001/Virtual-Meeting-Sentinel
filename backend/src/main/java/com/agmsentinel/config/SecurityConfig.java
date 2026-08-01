@@ -56,6 +56,10 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 // Enrollment needs a full access token (more specific → declared first).
                 .requestMatchers("/api/auth/enroll/**").hasAnyRole("MODERATOR", "ADMIN")
+                // Renewing a session requires a live one. Declared ahead of the public
+                // /api/auth/** rule so a missing or lapsed token is answered with 401 here —
+                // an expired session that could still renew itself would not be a timeout.
+                .requestMatchers("/api/auth/refresh-session").authenticated()
                 // Public auth endpoints + Google OAuth2 handshake.
                 .requestMatchers("/api/auth/**", "/oauth2/**", "/login/**",
                                  "/ws/**", "/actuator/health", "/health").permitAll()
