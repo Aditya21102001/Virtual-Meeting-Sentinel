@@ -546,7 +546,14 @@ public class VideoTranscodeService {
                 "-profile:v", rung.height() >= 720 ? "high" : "main",
                 "-b:v", rung.videoKbps() + "k",
                 "-maxrate", (rung.videoKbps() * 107 / 100) + "k",
-                "-bufsize", (rung.videoKbps() * 3 / 2) + "k"));
+                "-bufsize", (rung.videoKbps() * 3 / 2) + "k",
+                // x264's resident memory is dominated by the frames it holds: the lookahead queue
+                // and the reference list, each a full decoded frame. The defaults are tuned for a
+                // machine with memory to spare; on a container that shares its limit with the JVM
+                // they are the difference between finishing and being killed. Cutting the lookahead
+                // costs a little rate-control accuracy and one reference frame costs a little
+                // compression — both cheap next to not producing the video at all.
+                "-x264-params", "rc-lookahead=10:ref=1:sync-lookahead=0:threads=1"));
 
         if (info.hasAudio()) {
             cmd.addAll(List.of("-map", "a:0", "-c:a", "aac",
