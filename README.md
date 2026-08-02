@@ -137,6 +137,8 @@ UniquePersonalProject/
 ├── LICENSE                 ← MIT
 ├── THIRD_PARTY_LICENSES.md ← every dependency audited; all open source
 ├── VIDEO_LIBRARY.md        ← recordings: storage modes, HLS segmentation, the player
+├── VIDEO_MODULE_SPEC.md    ← portable spec: build this feature in another application
+├── video-module/           ← the same feature extracted, shareable (code + DDL + PUML)
 ├── docker-compose.yml      ← run EVERYTHING locally with one command
 ├── .env.example            ← copy to .env and fill in free API keys
 ├── ai-service/             ← Python + FastAPI + LangChain      (see its README)

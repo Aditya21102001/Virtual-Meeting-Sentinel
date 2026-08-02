@@ -49,9 +49,36 @@ public interface VideoAssetRepository extends JpaRepository<VideoAsset, UUID> {
                                @Param("start") long start,
                                @Param("length") long length);
 
-    @Modifying
-    void deleteByVideoId(UUID videoId);
+    /**
+     * Drop every asset of a video in one statement.
+     *
+     * <p>Spelled out as JPQL rather than left to Spring Data's method-name derivation, and that is
+     * the whole point of it. A derived {@code deleteBy…} is not a {@code delete} statement: Spring
+     * Data selects the matching entities and removes them one at a time, so every {@link
+     * VideoAsset#getData() payload} lands in heap — as the entity, again as Hibernate's
+     * dirty-checking snapshot, and again in the driver's buffered result set. Deleting one
+     * fifty-megabyte recording was therefore enough to exhaust a small container's heap and kill
+     * the process mid-request, which the proxy in front of it reports as a bare 502.
+     *
+     * <p>A bulk delete never materialises a row, so the cost is independent of how much video is
+     * stored. {@code flushAutomatically} so that segments written earlier in the same transaction
+     * are on their way to the database before it runs, rather than being inserted after it.
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("delete from VideoAsset a where a.videoId = :videoId")
+    void deleteByVideoId(@Param("videoId") UUID videoId);
 
-    @Modifying
-    void deleteByVideoIdAndRelPathStartingWith(UUID videoId, String prefix);
+    /**
+     * The same, restricted to one subtree — the transcode output, keeping the original upload.
+     * Bulk for the reason above: this one runs on every re-process, and on the startup sweep that
+     * cleans up after an interrupted transcode, where an OOM would turn one oversized recording
+     * into a boot loop.
+     *
+     * <p>{@code prefix} is matched literally by every caller ({@code hls/}); it is not escaped, so
+     * do not start passing it anything containing {@code %} or {@code _}.
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("delete from VideoAsset a where a.videoId = :videoId and a.relPath like concat(:prefix, '%')")
+    void deleteByVideoIdAndRelPathStartingWith(@Param("videoId") UUID videoId,
+                                               @Param("prefix") String prefix);
 }

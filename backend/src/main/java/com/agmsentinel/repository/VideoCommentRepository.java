@@ -22,6 +22,8 @@ public interface VideoCommentRepository extends JpaRepository<VideoComment, UUID
            """)
     List<Object[]> countsByVideo(@Param("videoIds") Collection<UUID> videoIds);
 
-    @Modifying
-    void deleteByVideoId(UUID videoId);
+    /** Bulk — see VideoAssetRepository.deleteByVideoId for why a derived delete is the wrong tool. */
+    @Modifying(flushAutomatically = true)
+    @Query("delete from VideoComment c where c.videoId = :videoId")
+    void deleteByVideoId(@Param("videoId") UUID videoId);
 }

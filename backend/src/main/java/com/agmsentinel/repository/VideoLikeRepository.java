@@ -39,6 +39,8 @@ public interface VideoLikeRepository extends JpaRepository<VideoLike, UUID> {
     List<UUID> likedByMe(@Param("username") String username,
                          @Param("videoIds") Collection<UUID> videoIds);
 
-    @Modifying
-    void deleteByVideoId(UUID videoId);
+    /** Bulk, so a popular recording's likes are one statement rather than a row-by-row load. */
+    @Modifying(flushAutomatically = true)
+    @Query("delete from VideoLike l where l.videoId = :videoId")
+    void deleteByVideoId(@Param("videoId") UUID videoId);
 }
