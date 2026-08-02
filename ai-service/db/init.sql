@@ -165,9 +165,14 @@ CREATE INDEX IF NOT EXISTS video_assets_video_idx ON video_assets (video_id);
 -- cannot answer "have I liked this", which is the half the button needs, and two simultaneous likes
 -- would race on an increment. The unique constraint makes double-liking impossible at the database
 -- rather than trusting the UI to prevent it.
+-- ON DELETE CASCADE, matching video_assets. The application deletes these explicitly
+-- (VideoEngagementService.deleteAllFor) because the entity holds a plain video_id rather than a
+-- relation — loading a like must not drag a whole Video graph with it. That makes the cascade a
+-- backstop rather than the mechanism: it is what stops a deletion by any other route leaving likes
+-- and comments pointing at a recording that no longer exists.
 CREATE TABLE IF NOT EXISTS video_likes (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    video_id   UUID        NOT NULL,
+    video_id   UUID        NOT NULL REFERENCES videos (id) ON DELETE CASCADE,
     username   TEXT        NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT video_likes_unique_member UNIQUE (video_id, username)
@@ -179,7 +184,7 @@ CREATE INDEX IF NOT EXISTS video_likes_video_idx ON video_likes (video_id);
 -- trees. `at_seconds` lets a comment point at a moment, which the UI turns into a seek.
 CREATE TABLE IF NOT EXISTS video_comments (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    video_id   UUID        NOT NULL,
+    video_id   UUID        NOT NULL REFERENCES videos (id) ON DELETE CASCADE,
     author     TEXT        NOT NULL,   -- taken from the principal, never from the request body
     body       TEXT        NOT NULL,
     at_seconds DOUBLE PRECISION,
