@@ -42,7 +42,23 @@ EXPOSE 8080
 # whole container, which surfaces as a 502 from the platform's proxy (and, confusingly, as a CORS error in the
 # browser, because an error page from the proxy carries no CORS headers).
 # Override with JAVA_HEAP_PERCENT on an instance with real memory.
+#
+# NOTE: this is only the default. A JAVA_HEAP_PERCENT or JAVA_TOOL_OPTIONS set in the hosting
+# platform's dashboard overrides it, and the JVM logs only that it *read* JAVA_TOOL_OPTIONS, never
+# which value won. The application prints its effective ceiling at startup for exactly that reason —
+# see AgmSentinelApplication.MemoryBudgetLogger.
 ENV JAVA_HEAP_PERCENT=35.0
+#
+# The heap is not the whole JVM. Metaspace, the code cache and thread stacks live outside it and are
+# unbounded by default, so "35% heap" can still mean a resident process far larger than 35% — and
+# every megabyte of that is one FFmpeg cannot have. These caps make the JVM's total footprint
+# predictable rather than merely its heap:
+#
+#   MaxMetaspaceSize   Spring Boot with Hibernate settles around 100-120 MB; 160 MB leaves headroom
+#                      while turning unbounded growth into a clear error instead of a container kill.
+#   ReservedCodeCacheSize  Defaults to 240 MB reserved. This app JITs a fraction of that.
+#   MaxDirectMemorySize    WebClient/Netty allocate off-heap buffers outside every other limit.
+ENV JAVA_MEMORY_LIMITS="-XX:MaxMetaspaceSize=160m -XX:ReservedCodeCacheSize=64m -XX:MaxDirectMemorySize=64m"
 #
 # -Djdk.lang.Process.launchMechanism=POSIX_SPAWN is not cosmetic in a small container.
 # Spawning ffmpeg means the JVM creates a child process, and the default mechanism on Linux
@@ -51,4 +67,4 @@ ENV JAVA_HEAP_PERCENT=35.0
 # cgroup limit at the exact moment it tries to start ffmpeg. The symptom is a container that
 # dies at 0% of every transcode no matter how small the video is, because the failure is in
 # launching the process, not in doing the work. posix_spawn does not duplicate the address space.
-ENTRYPOINT ["sh", "-c", "java -XX:MaxRAMPercentage=${JAVA_HEAP_PERCENT} -XX:ActiveProcessorCount=1 -XX:+ExitOnOutOfMemoryError -Djdk.lang.Process.launchMechanism=POSIX_SPAWN -jar app.jar --server.port=${PORT:-8080}"]
+ENTRYPOINT ["sh", "-c", "java -XX:MaxRAMPercentage=${JAVA_HEAP_PERCENT} ${JAVA_MEMORY_LIMITS} -XX:ActiveProcessorCount=1 -XX:+ExitOnOutOfMemoryError -Djdk.lang.Process.launchMechanism=POSIX_SPAWN -jar app.jar --server.port=${PORT:-8080}"]
