@@ -1,7 +1,8 @@
 package com.agmsentinel.controller;
 
 import com.agmsentinel.dto.VideoDtos.CommentView;
-import com.agmsentinel.dto.VideoDtos.DownloadPlan;
+import com.agmsentinel.dto.VideoDtos.DownloadOption;
+import com.agmsentinel.dto.VideoDtos.DownloadOptions;
 import com.agmsentinel.dto.VideoDtos.SegmentLocation;
 import com.agmsentinel.dto.VideoDtos.SegmentView;
 import com.agmsentinel.dto.VideoDtos.VideoCard;
@@ -31,6 +32,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -224,42 +226,63 @@ public class VideoController {
      * out on its own, since whether the original survived depends on the storage mode it was
      * uploaded under.
      */
-    @PostMapping("/prepare-download")
-    public DownloadPlan prepareDownload(@RequestBody VideoRef req) {
+    @PostMapping("/download-options")
+    public DownloadOptions downloadOptions(@RequestBody VideoRef req) {
         Video video = library.getPlayable(req.id());
         String ticket = tickets.issue(currentSubject(), video.getId());
-        String sourceRel = video.getSourceRel();
+        List<DownloadOption> options = new ArrayList<>();
 
+        // The uploaded file, when it is still stored — the only option in its original container and
+        // quality. Database storage drops it by default (video.database.keep-source), so on most
+        // recordings this is simply absent rather than broken.
+        String sourceRel = video.getSourceRel();
         if (sourceRel != null && media.exists(video, sourceRel)) {
-            return new DownloadPlan(
-                    urls.downloadUrl(video.getId(), null, ticket),
-                    downloadName(video, "." + extensionOf(sourceRel)),
-                    guessVideoType(video).toString(),
+            String extension = extensionOf(sourceRel);
+            options.add(new DownloadOption(
+                    "ORIGINAL", null,
+                    "Original" + (video.getHeight() != null ? " · " + video.getHeight() + "p" : ""),
+                    video.getHeight() == null ? 0 : video.getHeight(),
                     media.size(video, sourceRel),
-                    "ORIGINAL",
-                    null);
+                    downloadName(video, "." + extension),
+                    guessVideoType(video).toString(),
+                    urls.downloadUrl(video.getId(), null, ticket)));
         }
 
-        // No original left — database storage drops it once the ladder exists. The segments are
-        // still a complete copy of the recording, so hand those over instead of refusing.
-        VideoRendition chosen = library.pickRendition(video, req.rendition());
-        if (chosen.getSegmentCount() == 0) {
+        // Every rung is a complete copy of the recording at that quality, so each one is its own
+        // download — which is why discarding the original costs formats, not the feature.
+        for (VideoRendition rendition : video.getRenditions()) {
+            if (rendition.getSegmentCount() == 0) continue;
+            options.add(new DownloadOption(
+                    "RENDITION", rendition.getName(),
+                    rendition.getName() + " · " + rendition.getWidth() + "×" + rendition.getHeight(),
+                    rendition.getHeight(),
+                    rendition.getTotalBytes(),
+                    downloadName(video, "-" + rendition.getName() + ".ts"),
+                    MP2T.toString(),
+                    urls.downloadUrl(video.getId(), rendition.getName(), ticket)));
+        }
+
+        if (options.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "There is nothing to download: this recording has neither a stored original "
                     + "nor any segments.");
         }
-        return new DownloadPlan(
-                urls.downloadUrl(video.getId(), chosen.getName(), ticket),
-                downloadName(video, "-" + chosen.getName() + ".ts"),
-                MP2T.toString(),
-                chosen.getTotalBytes(),
-                "SEGMENTS",
-                "The original upload was discarded after segmenting, so this is the "
-                + chosen.getName() + " rendition rebuilt by joining its " + chosen.getSegmentCount()
-                + " segments. That produces a valid MPEG-TS file — VLC, ffmpeg and most desktop "
-                + "players open it directly, though some tools expect .mp4. Set "
-                + "video.database.keep-source=true to keep originals for future uploads.");
+        // Largest frame first, so the best quality leads and "Original" sits with its own size.
+        options.sort(Comparator.comparingInt(DownloadOption::height).reversed());
+
+        boolean anyRendition = options.stream().anyMatch(o -> "RENDITION".equals(o.kind()));
+        return new DownloadOptions(options, anyRendition ? RENDITION_NOTE : null);
     }
+
+    /**
+     * Said once, about the container rather than about a missing file.
+     *
+     * <p>Joining MPEG-TS segments is exactly why no ffmpeg run is needed to produce these, which is
+     * the whole reason a download works at all on a host that cannot spare a subprocess.
+     */
+    private static final String RENDITION_NOTE =
+            "Quality options are rebuilt from the stored segments, so they come as MPEG-TS (.ts). "
+            + "VLC, ffmpeg and most desktop players open them directly; some tools expect .mp4.";
 
     /**
      * Stream the recording to disk.

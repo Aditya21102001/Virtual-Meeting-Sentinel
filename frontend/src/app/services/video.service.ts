@@ -53,15 +53,29 @@ export interface SegmentLocation {
   renditionBytes: number;
 }
 
-/** What downloading a recording will actually produce. */
-export interface DownloadPlan {
-  url: string;
+/**
+ * One way to download a recording.
+ *
+ * Every rung of the ladder is a complete copy at that quality, so discarding the original narrows
+ * the choice of formats rather than removing the ability to download.
+ */
+export interface DownloadOption {
+  /** ORIGINAL = the uploaded file; RENDITION = a rung, rebuilt from its stored segments. */
+  kind: "ORIGINAL" | "RENDITION";
+  /** Rung name for a RENDITION (`480p`); null for the original. */
+  rendition: string | null;
+  label: string;
+  height: number;
+  sizeBytes: number;
   filename: string;
   contentType: string;
-  sizeBytes: number;
-  /** ORIGINAL = the file that was uploaded; SEGMENTS = the ladder joined back together. */
-  kind: "ORIGINAL" | "SEGMENTS";
-  /** Set for SEGMENTS: why this is not the uploaded file. */
+  url: string;
+}
+
+export interface DownloadOptions {
+  /** Highest quality first. */
+  options: DownloadOption[];
+  /** Explains the container when rungs are on offer. */
   note: string | null;
 }
 
@@ -372,17 +386,25 @@ export class VideoService {
   }
 
   /**
-   * Resolve a download before starting one. Returns a ticketed GET URL — the transfer itself is a
-   * browser navigation, so it can be resumed and never has to live in the tab's memory.
+   * Everything this recording can be downloaded as, each with a ticketed GET URL ready to use.
+   *
+   * <p>One call rather than one per option: only the server knows whether the original survived and
+   * how large each rung is. The transfers themselves are browser navigations, so they stream to disk
+   * and can be resumed rather than living in the tab's memory.
    */
-  prepareDownload(id: string, rendition?: string): Observable<DownloadPlan> {
+  downloadOptions(id: string): Observable<DownloadOptions> {
     return this.http
-      .post<DownloadPlan>(
-        `${this.base}/prepare-download`,
-        { id, rendition: rendition ?? null },
+      .post<DownloadOptions>(
+        `${this.base}/download-options`,
+        { id },
         { headers: this.headers() },
       )
-      .pipe(map((plan) => ({ ...plan, url: this.absolute(plan.url) })));
+      .pipe(
+        map((plan) => ({
+          ...plan,
+          options: plan.options.map((o) => ({ ...o, url: this.absolute(o.url) })),
+        })),
+      );
   }
 
   // ---- admin ----------------------------------------------------------------

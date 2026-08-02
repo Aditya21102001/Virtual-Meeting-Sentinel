@@ -12,6 +12,7 @@ import { ActivatedRoute } from '@angular/router';
 import { VideoPlayerComponent } from '../components/video-player.component';
 import {
   CommentView,
+  DownloadOption,
   SegmentView,
   VideoCard,
   VideoService,
@@ -100,12 +101,28 @@ import {
             <button
               class="link"
               type="button"
-              (click)="download(card)"
+              (click)="openDownloads(card)"
               [disabled]="downloading()"
             >
-              {{ downloading() ? 'Preparing…' : '⭳ Download' }}
+              {{ downloading() ? 'Loading…' : '⭳ Download' }}
             </button>
           </div>
+
+          <!--
+            Every rung is a complete copy of the recording, so each is its own download. The
+            original appears only when it is still stored; its absence costs formats, not the feature.
+          -->
+          @if (downloadOptions().length) {
+            <div class="downloads">
+              @for (option of downloadOptions(); track option.url) {
+                <button class="chip" type="button" (click)="startDownload(option)">
+                  {{ option.label }}
+                  <span class="muted-inline">{{ humanBytes(option.sizeBytes) }}</span>
+                </button>
+              }
+              <button class="link" type="button" (click)="closeDownloads()">Cancel</button>
+            </div>
+          }
 
           @if (shareNote()) {
             <p class="muted note">{{ shareNote() }}</p>
@@ -372,6 +389,13 @@ import {
       }
       .liked {
         color: #fb7185;
+      }
+      .downloads {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
       }
       .share-link {
         width: 100%;
@@ -767,6 +791,7 @@ export class VideosComponent implements OnInit, OnDestroy {
     this.activeRendition.set(null);
     this.downloadNote.set('');
     this.downloadError.set('');
+    this.downloadOptions.set([]);
     this.shareNote.set('');
     this.shareLink.set('');
     this.commentsOpen.set(false);
@@ -783,7 +808,9 @@ export class VideosComponent implements OnInit, OnDestroy {
   // ---- download --------------------------------------------------------------
 
   readonly downloading = signal(false);
-  /** Explains a download that isn't the uploaded file — see DownloadPlan.note. */
+  /** The quality choices, once fetched. Empty when the menu is closed. */
+  readonly downloadOptions = signal<DownloadOption[]>([]);
+  /** Explains the container of the rebuilt qualities — see DownloadOptions.note. */
   readonly downloadNote = signal('');
   readonly downloadError = signal('');
 
@@ -796,27 +823,43 @@ export class VideosComponent implements OnInit, OnDestroy {
    * disk, shows the browser's own progress, and survives being resumed. A `fetch` + object URL would
    * have to hold the whole recording in the tab's memory first.
    */
-  download(card: VideoCard): void {
+  openDownloads(card: VideoCard): void {
     if (this.downloading()) return;
+    if (this.downloadOptions().length) {
+      this.closeDownloads();
+      return;
+    }
     this.downloading.set(true);
     this.downloadNote.set('');
     this.downloadError.set('');
 
-    this.videos.prepareDownload(card.video.id).subscribe({
+    this.videos.downloadOptions(card.video.id).subscribe({
       next: (plan) => {
         this.downloading.set(false);
-        if (plan.note) this.downloadNote.set(plan.note);
-        this.startTransfer(plan.url);
+        this.downloadNote.set(plan.note ?? '');
+        this.downloadOptions.set(plan.options);
+        // Exactly one choice is not a choice — start it rather than making them click twice.
+        if (plan.options.length === 1) this.startDownload(plan.options[0]);
       },
       error: (err) => {
         this.downloading.set(false);
         this.downloadError.set(
           err?.error?.message ??
             err?.error?.error ??
-            'Could not prepare a download for this recording.',
+            'Could not work out how to download this recording.',
         );
       },
     });
+  }
+
+  closeDownloads(): void {
+    this.downloadOptions.set([]);
+    this.downloadNote.set('');
+  }
+
+  startDownload(option: DownloadOption): void {
+    this.startTransfer(option.url);
+    this.closeDownloads();
   }
 
   toggleSegments(card: VideoCard): void {

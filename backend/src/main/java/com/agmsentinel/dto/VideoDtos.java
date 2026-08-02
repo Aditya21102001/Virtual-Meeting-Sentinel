@@ -171,21 +171,34 @@ public final class VideoDtos {
             long renditionBytes) { }
 
     /**
-     * What downloading a recording will actually produce, resolved before the transfer starts.
+     * One way to download a recording, with a URL ready to use.
      *
-     * <p>Two things can be downloaded and the client cannot tell which applies: the original upload
-     * when it is still stored, or the ladder rebuilt from its segments when it is not (database
-     * storage discards originals by default). Answering that up front means the UI can name the
-     * file and its size honestly instead of starting a transfer and hoping.
+     * <p>Storing the original is not what makes a download possible — every rung of the ladder is a
+     * complete copy of the recording at that quality, and joining its segments reproduces it. So the
+     * absence of an original narrows the choice of formats, not the ability to download.
      */
-    public record DownloadPlan(
-            String url,
+    public record DownloadOption(
+            /** ORIGINAL (the uploaded file) or RENDITION (a rung, rebuilt from its segments). */
+            String kind,
+            /** Rung name for a RENDITION ({@code 480p}); null for the original. */
+            String rendition,
+            String label,
+            /** Frame height, so a client can order or badge the options. 0 when unknown. */
+            int height,
+            long sizeBytes,
             String filename,
             String contentType,
-            long sizeBytes,
-            /** ORIGINAL or SEGMENTS. */
-            String kind,
-            /** Set for SEGMENTS: why this is not the file that was uploaded. */
+            String url) { }
+
+    /**
+     * Everything this recording can be downloaded as, highest quality first.
+     *
+     * <p>Resolved server-side in one call because the client cannot know any of it: whether the
+     * original survived, how large each rung is, or what each one would be named.
+     */
+    public record DownloadOptions(
+            List<DownloadOption> options,
+            /** Explains the container when rungs are on offer. Null when there is nothing to say. */
             String note) { }
 
     /** Storage + tooling health for the admin screen. */

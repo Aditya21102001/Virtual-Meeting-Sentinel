@@ -425,7 +425,7 @@ playback ticket in the URL, because the browser's media stack cannot send an `Au
 | POST   | `/api/videos/video-details`                          | member    | One catalogue entry                       |
 | POST   | `/api/videos/list-segments`      | member    | The segment index for a rung              |
 | POST   | `/api/videos/find-segment-at`      | member    | Which segment covers that second          |
-| POST   | `/api/videos/prepare-download`     | member    | What a download will produce (original / joined) |
+| POST   | `/api/videos/download-options`     | member    | Qualities available to download (original + each rung) |
 | GET    | `/api/videos/{id}/download?t=`     | ticket    | Save to disk; `&rendition=` joins that rung |
 | GET    | `/api/videos/{id}/transcript.vtt?t=` | ticket  | WebVTT captions (uploaded, not generated) |
 | POST   | `/api/videos/toggle-like`          | member    | Like / un-like a recording                |

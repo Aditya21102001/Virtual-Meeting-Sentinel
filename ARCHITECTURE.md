@@ -421,7 +421,7 @@ and live cluster state. They're linked by `cluster_id`.
 | POST   | `/api/videos/list-library`                          | member    | Catalogue + a playback ticket each   |
 | POST   | `/api/videos/list-segments`            | member    | The segment index                    |
 | POST   | `/api/videos/find-segment-at` | member    | Which slice covers that second       |
-| POST   | `/api/videos/prepare-download` | member   | What a download will produce         |
+| POST   | `/api/videos/download-options` | member   | Qualities available to download      |
 | GET    | `/api/videos/{id}/download?t=` | ticket   | Save the original, or a joined rung  |
 | GET    | `/api/videos/{id}/transcript.vtt?t=` | ticket | WebVTT captions               |
 | POST   | `/api/videos/toggle-like`      | member   | Like / un-like                       |

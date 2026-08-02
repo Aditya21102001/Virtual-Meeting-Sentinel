@@ -487,17 +487,26 @@ with where it landed in the index: *segment 215 of 271 · 480p · 248 MB into 37
 
 ### Downloading a recording
 
-Two steps, because the client cannot know what is available to download:
+Two steps, because the client cannot know what is on offer:
 
-1. `POST /api/videos/prepare-download` → `{url, filename, contentType, sizeBytes, kind, note}`
-2. the browser fetches that ticketed `GET` URL
+1. `POST /api/videos/download-options` → every option, each with a ticketed URL, highest quality first
+2. the browser fetches whichever `GET` URL the viewer picks
 
-`kind` is **`ORIGINAL`** when the uploaded file is still stored, or **`SEGMENTS`** when it is not —
-database mode discards originals by default (`video.database.keep-source=false`), so the ladder is
-joined back together instead. Concatenation is enough: HLS segments here are MPEG-TS, a self-contained
-sequence of 188-byte packets, so writing them back to back yields a valid stream with **no remux and
-no ffmpeg process** — which matters on a host that cannot spare one. `note` explains that the result
-is `.ts` rather than `.mp4`.
+**Storing the original is not what makes a download possible.** Every rung of the ladder is a
+complete copy of the recording at that quality, so each one is its own download — 720p, 480p, 360p.
+Discarding the original (`video.database.keep-source=false`, the default) therefore costs *formats*,
+not the feature: the uploaded file simply stops being one of the choices.
+
+| `kind` | What it is |
+|---|---|
+| `ORIGINAL` | the uploaded file, in its own container — listed only while it is still stored |
+| `RENDITION` | one rung, rebuilt by joining its stored segments |
+
+Rebuilding a rung is plain concatenation: HLS segments here are MPEG-TS, a self-contained sequence of
+188-byte packets, so writing them back to back yields a valid stream with **no remux and no ffmpeg
+process** — which is what makes this affordable on a host that cannot spare a subprocess. The cost is
+the container: the result is `.ts`, which VLC and ffmpeg open directly but some tools will not. That
+is what `note` explains, and it is the one thing keeping an original around would buy you.
 
 Either way the bytes are streamed a chunk at a time via `VideoMediaStore.copyTo`, so serving a
 download costs a megabyte of heap rather than a copy of the recording — the same discipline as
