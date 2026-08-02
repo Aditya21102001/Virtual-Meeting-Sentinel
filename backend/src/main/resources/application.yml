@@ -55,6 +55,17 @@ spring:
         format_sql: false
     open-in-view: false
 
+  task:
+    execution:
+      pool:
+        # Bound the executor that runs StreamingResponseBody — downloads and transcripts. Spring's
+        # default caps it at Integer.MAX_VALUE threads, so a handful of simultaneous downloads could
+        # each take a thread and a 1 MB copy buffer with no ceiling at all. Downloads are rare and
+        # network-bound; four at once is plenty and the rest queue.
+        core-size: 2
+        max-size: ${ASYNC_MAX_THREADS:4}
+        queue-capacity: 32
+
 server:
   port: ${PORT:8080}
   tomcat:
@@ -63,6 +74,14 @@ server:
     max-swallow-size: -1
     # Long video uploads over a slow link can exceed the default 20s connection timeout.
     connection-timeout: 300000
+    threads:
+      # Tomcat defaults to 200 request threads. Each one reserves a stack, and on a 512 MB instance
+      # that is memory taken from the only other thing competing for it — the FFmpeg process a
+      # transcode spawns. This application serves a meeting: a handful of moderators and viewers,
+      # where 20 concurrent requests is already generous. Segment fetches are short and the streaming
+      # responses (download, transcript) run on the task executor below, not on these.
+      max: ${SERVER_MAX_THREADS:20}
+      min-spare: 5
 
 # ---------------------------------------------------------------------------
 # Video library — uploads are segmented into an adaptive HLS ladder and streamed
