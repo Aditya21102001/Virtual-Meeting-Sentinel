@@ -68,6 +68,7 @@ interface QualityOption {
       <video
         #media
         [poster]="card().posterUrl ?? ''"
+        [style.transform]="videoTransform()"
         playsinline
         preload="metadata"
         (click)="togglePlay()"
@@ -265,6 +266,17 @@ interface QualityOption {
               }
             </div>
           }
+
+          <button
+            class="icon"
+            type="button"
+            [class.on]="rotation() !== 0"
+            (click)="rotate()"
+            [attr.aria-label]="'Rotate (currently ' + rotation() + ' degrees)'"
+            title="Rotate — for footage recorded sideways"
+          >
+            ⟳
+          </button>
 
           <!-- Only offered when there is actually a transcript to show. -->
           @if (cues().length) {
@@ -836,6 +848,50 @@ export class VideoPlayerComponent implements OnDestroy {
   /** Where the resume landed in the segment index. Arrives after playback has already begun. */
   readonly resumeLocation = signal<SegmentLocation | null>(null);
 
+  // ---- rotation --------------------------------------------------------------
+  //
+  // Viewer-side only: a CSS transform on the element, costing the server nothing. Footage that
+  // carries rotation metadata is already upright by this point — FFmpeg auto-rotates on decode and
+  // `probe` swaps the dimensions so the ladder is built on the displayed shape. What this fixes is
+  // the case nothing can detect: video shot sideways with no metadata saying so.
+  //
+  // Rotating permanently would mean re-encoding the whole ladder, since MPEG-TS carries no rotation
+  // flag to set — an expensive job on a host that already struggles to transcode once.
+
+  /** Quarter turns clockwise: 0, 90, 180 or 270 degrees. */
+  readonly rotation = signal(0);
+
+  /**
+   * The transform applied to the video element.
+   *
+   * <p>A quarter turn swaps which way the element's width and height run, so a 16:9 element rotated
+   * inside a 16:9 box overflows badly. Scaling by the shorter/longer side ratio brings it back
+   * inside — the same reason a rotated photo has to shrink to fit the page it was upright on.
+   */
+  readonly videoTransform = computed(() => {
+    const degrees = this.rotation();
+    if (degrees === 0) return 'none';
+    if (degrees === 180) return 'rotate(180deg)';
+    return `rotate(${degrees}deg) scale(${this.quarterTurnScale()})`;
+  });
+
+  /** Recomputed on rotate, on resize and on entering fullscreen — the box changes shape each time. */
+  private readonly quarterTurnScale = signal(1);
+
+  private measureRotationFit(): void {
+    const shell = this.shellRef().nativeElement;
+    const width = shell.clientWidth;
+    const height = shell.clientHeight;
+    if (!width || !height) return;
+    this.quarterTurnScale.set(Math.min(width / height, height / width));
+  }
+
+  /** Cycle a quarter turn clockwise. */
+  rotate(): void {
+    this.rotation.update((degrees) => (degrees + 90) % 360);
+    this.measureRotationFit();
+  }
+
   // ---- captions --------------------------------------------------------------
 
   /** Parsed caption cues, empty when the recording has no transcript. */
@@ -873,8 +929,15 @@ export class VideoPlayerComponent implements OnDestroy {
   private rafHandle = 0;
   private scrubbing = false;
   private wasPlayingBeforeScrub = false;
-  private readonly onFullscreenChange = () =>
+  private readonly onFullscreenChange = () => {
     this.isFullscreen.set(document.fullscreenElement === this.shellRef().nativeElement);
+    this.measureRotationFit();
+  };
+
+  /** A rotated video is fitted to the box, so a resize changes how much it must shrink. */
+  private readonly onWindowResize = () => {
+    if (this.rotation() !== 0) this.measureRotationFit();
+  };
 
   private eventsBound = false;
 
@@ -918,6 +981,7 @@ export class VideoPlayerComponent implements OnDestroy {
       onCleanup(() => this.teardown());
     });
     document.addEventListener('fullscreenchange', this.onFullscreenChange);
+    window.addEventListener('resize', this.onWindowResize);
   }
 
   /**
@@ -945,6 +1009,7 @@ export class VideoPlayerComponent implements OnDestroy {
     this.sinceLastSave = 0;
     this.activeVideoId = card.video.id;
     this.cues.set([]);
+    this.rotation.set(0);
     this.loadCaptions(card);
   }
 
@@ -966,6 +1031,7 @@ export class VideoPlayerComponent implements OnDestroy {
   ngOnDestroy(): void {
     this.teardown();
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
+    window.removeEventListener('resize', this.onWindowResize);
     if (this.hideTimer) clearTimeout(this.hideTimer);
   }
 
@@ -1466,6 +1532,10 @@ export class VideoPlayerComponent implements OnDestroy {
       case 'f':
       case 'F':
         void this.toggleFullscreen();
+        break;
+      case 'r':
+      case 'R':
+        this.rotate();
         break;
       case 'p':
       case 'P':

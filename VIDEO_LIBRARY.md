@@ -430,7 +430,8 @@ get `private, max-age=1y, immutable` — re-watching or scrubbing backwards cost
 | Quality | **Auto** (ABR) or pin any rung; switches at a segment boundary, so no re-buffer |
 | Speed | 0.25× – 2× |
 | Seeking | scrubber with buffered ranges, **filmstrip preview** on hover, click-or-drag |
-| Keyboard | space/K play · ←→ 5s · J/L 10s · ↑↓ volume · M mute · F fullscreen · P PiP · 0–9 jump to % · `,`/`.` frame step |
+| Keyboard | space/K play · ←→ 5s · J/L 10s · ↑↓ volume · M mute · F fullscreen · P PiP · **R rotate** · 0–9 jump to % · `,`/`.` frame step |
+| Rotation | quarter turns, viewer-side only — a CSS transform, so it costs the server nothing |
 | Also | fullscreen, picture-in-picture, volume, auto-hiding controls, buffering spinner, error recovery with retry |
 | Stats panel | live rung, requested rung, bandwidth estimate, buffer ahead, **current segment number**, segments loaded, dropped frames |
 
