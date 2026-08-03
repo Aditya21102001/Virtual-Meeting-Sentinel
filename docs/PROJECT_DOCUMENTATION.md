@@ -396,7 +396,7 @@ SELECT * FROM video_segments
 | Generate adaptive video     | `videos`, `video_renditions`, `video_segments`                 | FFmpeg creates quality rungs and approximately six-second segments; the database stores the manifest and segment index.                                          |
 | Play and seek a video       | `videos`, `video_renditions`, `video_segments`                 | The player reads the selected rendition and uses `start_seconds` to fetch only the segment covering the requested position.                                      |
 | Store media in PostgreSQL   | `videos`, `video_assets`                                       | When `storage_mode = DATABASE`, manifests, posters, segments, and optionally the original source are stored as assets instead of relying on a persistent volume. |
-| Delete a recording          | `videos`, `video_renditions`, `video_segments`, `video_assets` | Deleting the video removes dependent rendition, segment, and database-asset rows through cascading foreign keys.                                                 |
+| Delete a recording          | `videos`, `video_renditions`, `video_segments`, `video_assets` | Rendition and segment rows go by cascade. Asset, like, and comment rows are removed explicitly, as bulk statements — the blob table holds a plain `video_id` rather than a relation, so nothing cascades into it from JPA and the FK `ON DELETE CASCADE` is only a backstop. |
 
 ---
 
@@ -591,6 +591,6 @@ Azure OpenAI with only configuration changes.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — how it works, with per-flow sequence diagrams
 - [RUN_LOCAL.md](RUN_LOCAL.md) — run it locally (exact commands)
 - [DEPLOY.md](DEPLOY.md) — free-tier deployment
-- [README.md](README.md) — quick overview
+- [README.md](../README.md) — quick overview
 
 _Document reflects the current codebase, including the Setup uploads and cited-answer features._

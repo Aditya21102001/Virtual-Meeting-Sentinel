@@ -27,7 +27,7 @@ Afterwards, the meeting itself has to be watchable. A **video library** lets mod
 recording and members stream it on demand: the file is stored on a NAS share and cut into ~6-second
 segments at several bitrates, so playback starts immediately, seeking anywhere is instant, and the
 quality adapts to the network instead of stalling — nobody downloads a 2 GB file to watch it. See
-**[VIDEO_LIBRARY.md](VIDEO_LIBRARY.md)**.
+**[VIDEO_LIBRARY.md](docs/VIDEO_LIBRARY.md)**.
 
 ---
 
@@ -112,7 +112,7 @@ _"LLM-agnostic RAG layer (LangChain), tested on Ollama/Gemini/Groq, swappable to
 
 ### Fully open source, fully self-hosted
 
-Every dependency is open source — audited in **[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)**,
+Every dependency is open source — audited in **[THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md)**,
 which also covers the one nuance worth knowing (FFmpeg's GPL vs LGPL builds). To run with **no
 third-party service and no account anywhere**:
 
@@ -135,9 +135,18 @@ supplies that locally.
 UniquePersonalProject/
 ├── README.md               ← you are here (master doc)
 ├── LICENSE                 ← MIT
-├── THIRD_PARTY_LICENSES.md ← every dependency audited; all open source
-├── VIDEO_LIBRARY.md        ← recordings: storage modes, HLS segmentation, the player
-├── VIDEO_MODULE_SPEC.md    ← portable spec: build this feature in another application
+├── docs/                   ← every other document lives here
+│   ├── PROJECT_DOCUMENTATION.md ← the formal project report
+│   ├── ARCHITECTURE.md          ← design, with per-flow sequence diagrams
+│   ├── HOW_IT_WORKS.md          ← complete end-to-end walkthrough
+│   ├── RUN_LOCAL.md             ← run it locally (exact commands)
+│   ├── DEPLOY.md                ← free-tier deployment, no credit card
+│   ├── VIDEO_LIBRARY.md         ← recordings: storage modes, HLS segmentation, the player
+│   ├── VIDEO_MODULE_SPEC.md     ← portable spec: build this feature in another application
+│   ├── KAFKA.md                 ← Kafka ingest + event-sourced cluster rebuild
+│   ├── LOUNGE.md                ← 1-on-1 chat + GenAI assistant + real roles
+│   ├── INTERVIEW_GUIDE.md       ← the decisions, defended
+│   └── THIRD_PARTY_LICENSES.md  ← every dependency audited; all open source
 ├── video-module/           ← the same feature extracted, shareable (code + DDL + PUML)
 ├── docker-compose.yml      ← run EVERYTHING locally with one command
 ├── .env.example            ← copy to .env and fill in free API keys

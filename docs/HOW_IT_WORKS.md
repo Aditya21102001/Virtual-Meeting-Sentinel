@@ -4,7 +4,7 @@ A code-level walkthrough of the whole system in runtime sequence, followed by de
 into the three subsystems that carry the most logic: **online clustering**, **RAG
 drafting**, and **MFA / WebAuthn authentication**.
 
-> Companion docs: [README.md](README.md) (pitch + stack), [ARCHITECTURE.md](ARCHITECTURE.md)
+> Companion docs: [README.md](../README.md) (pitch + stack), [ARCHITECTURE.md](ARCHITECTURE.md)
 > (design), [DEPLOY.md](DEPLOY.md) / [RUN_LOCAL.md](RUN_LOCAL.md) (ops).
 
 ---

@@ -22,7 +22,7 @@ FROM eclipse-temurin:21-jre
 # GPL (it includes libx264): bundling it here means the IMAGE redistributes GPL software, which
 # is fine and normal, but is a different position from merely invoking ffmpeg as a subprocess.
 # The application's own MIT-licensed code is unaffected — separate processes, mere aggregation.
-# See THIRD_PARTY_LICENSES.md. Adds roughly 250 MB to the image; if that breaks a free-tier
+# See docs/THIRD_PARTY_LICENSES.md. Adds roughly 250 MB to the image; if that breaks a free-tier
 # image-size limit, drop this layer and run with VIDEO_STORAGE_MODE/progressive delivery instead.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \

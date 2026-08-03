@@ -6,7 +6,7 @@ append-only log — the **source of truth** for what shareholders asked. The in-
 board is a **materialized view** derived from that log.
 
 Why this matters: the OnlineClusterer keeps its centroids in memory, so a process restart
-would normally wipe every cluster (the gap called out in HOW_IT_WORKS.md). Kafka's retained
+would normally wipe every cluster (the gap called out in docs/HOW_IT_WORKS.md). Kafka's retained
 log closes it. On startup we **replay the whole topic from offset 0**, re-running each question
 through the same clusterer, so the board is reconstructed exactly as it was. Then we keep
 consuming new questions live. This is classic event sourcing: state = fold(events).

@@ -20,7 +20,7 @@ Do it in this order — each step produces a URL/secret the next step needs.
 ## 1. Database — Neon (Postgres + pgvector)
 
 1. Create a project → a database is created for you.
-2. Open the **SQL Editor**, paste the contents of [`ai-service/db/init.sql`](ai-service/db/init.sql), run it.
+2. Open the **SQL Editor**, paste the contents of [`ai-service/db/init.sql`](../ai-service/db/init.sql), run it.
 3. Copy two connection strings from **Connection Details**:
    - **psql/URI** form for Python: `postgresql://user:pass@host/db?sslmode=require`
    - **JDBC** form for Spring: `jdbc:postgresql://host/db?sslmode=require` (+ user/pass separately)
@@ -133,7 +133,7 @@ and Fast2SMS (India, UPI top-up) are the closest.
 
 ## 4. Frontend — Vercel (Angular)
 
-1. Edit [`frontend/src/environments/environment.prod.ts`](frontend/src/environments/environment.prod.ts):
+1. Edit [`frontend/src/environments/environment.prod.ts`](../frontend/src/environments/environment.prod.ts):
    ```ts
    apiBase: 'https://<app>-<you>.koyeb.app',
    wsUrl:   'https://<app>-<you>.koyeb.app/ws',
@@ -163,7 +163,7 @@ Now the services stay awake during demos and interviews.
    whose count climbs — live, over WebSocket.
 3. Submit a genuinely different question → a **new topic** appears.
 4. Hit **Draft answer** on the hot cluster → a grounded, cited answer from the annual report.
-5. Talk through the architecture diagram in the root [README](README.md): three languages,
+5. Talk through the architecture diagram in the root [README](../README.md): three languages,
    async decoupling, RAG, all on free infra.
 
 ---

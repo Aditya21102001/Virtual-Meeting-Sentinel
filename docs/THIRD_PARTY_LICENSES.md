@@ -1,6 +1,6 @@
 # Third-party licences
 
-This project is MIT-licensed (see [LICENSE](LICENSE)). Everything it depends on is
+This project is MIT-licensed (see [LICENSE](../LICENSE)). Everything it depends on is
 open-source software. Nothing here requires a paid licence, a subscription, or a commercial
 agreement to build, run, or self-host.
 

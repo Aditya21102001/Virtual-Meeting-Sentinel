@@ -237,6 +237,24 @@ be referencing it, and leaving it would silently eat the storage budget.
 
 Turn it off with `video.database.drain-segments=false` to get the old one-pass behaviour back.
 
+### The same shape on the way out
+
+Draining bounded what *writing* a ladder costs. Removing one had the identical defect, for the
+identical reason, and it outlived the write-side fix because nothing about a delete suggests a memory
+problem. `VideoMediaStore.deleteAll` called a Spring Data derived `deleteByVideoId`, and a derived
+`deleteBy…` is not a `delete` statement: it selects the matching entities and removes them one at a
+time. Since an asset's payload is a non-lazy `byte[]`, deleting a recording pulled all of it back
+into heap — snapshots and all — and the container died mid-request, which the proxy reported as an
+unexplained 502.
+
+Both asset deletes are bulk statements now, so the cost no longer scales with how much video is
+stored. The regression test asserts on Hibernate's entity-load count rather than on the rows having
+disappeared, because a derived delete satisfies the latter perfectly well.
+
+This also removed a worse latent failure: the prefix delete runs from `recoverInterrupted()` at
+startup, so a large enough interrupted transcode would have OOM'd during boot rather than during a
+request — a restart loop with no failing call to point at.
+
 ### The other half: surviving the encode itself
 
 Draining bounds what *storing* a recording costs. Producing it is a separate budget, and on a
@@ -293,7 +311,7 @@ It answers with the position as well as the slice — `segment 215 of 271`, `248
 using one aggregate over `byte_size` for everything before it. [Resume](#resuming-a-recording) calls
 it, and displays exactly that.
 
-DDL is in [ai-service/db/init.sql](ai-service/db/init.sql). Hibernate's `ddl-auto=update` also
+DDL is in [ai-service/db/init.sql](../ai-service/db/init.sql). Hibernate's `ddl-auto=update` also
 creates these tables; the explicit DDL exists so a fresh Neon/Postgres database matches exactly.
 
 ---
@@ -421,7 +439,7 @@ get `private, max-age=1y, immutable` — re-watching or scrubbing backwards cost
 
 ## 10. The player
 
-[frontend/src/app/components/video-player.component.ts](frontend/src/app/components/video-player.component.ts)
+[frontend/src/app/components/video-player.component.ts](../frontend/src/app/components/video-player.component.ts)
 — hls.js driving a custom control surface.
 
 | | |
@@ -454,7 +472,7 @@ transfer stays at ~112 kB for members who never open a recording.
 ### Resuming a recording
 
 Positions are kept in `localStorage` by
-[PlaybackProgressService](frontend/src/app/services/playback-progress.service.ts) — per browser, not
+[PlaybackProgressService](../frontend/src/app/services/playback-progress.service.ts) — per browser, not
 per account. A resume point is a convenience, not something worth a table, a migration and a write on
 every `timeupdate`; moving it server-side later means swapping two methods and nothing else.
 
