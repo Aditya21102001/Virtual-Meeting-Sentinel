@@ -12,8 +12,15 @@ export interface IngestResult {
 }
 
 export interface Citation {
-  source: string;   // e.g. "nimbus-annual-report-2024.pdf p.3"
+  /** e.g. "nimbus-annual-report-2024.pdf p.3" or "Recording: Q3 AGM @ 12:04" */
+  source: string;
   snippet: string;
+  /**
+   * Set only for a passage from a recording's transcript. Explicit fields rather than parsing them
+   * back out of `source`, since a recording title can contain any punctuation.
+   */
+  video_id?: string | null;
+  at_seconds?: number | null;
 }
 
 /** How the answer on a cluster came to be, and whether anyone still needs to act. */
@@ -57,6 +64,36 @@ export function parseCitation(source: string): { filename: string; page: number 
   const page = match?.[2] ? Number(match[2]) : null;
   const base = `${environment.apiBase}/api/source/${encodeURIComponent(filename)}`;
   return { filename, page, url: page ? `${base}#page=${page}` : base };
+}
+
+/** Where a citation leads, and how the UI should open it. */
+export interface CitationTarget {
+  /** `report` opens a PDF at a page; `recording` opens the player at a second. */
+  kind: 'report' | 'recording';
+  url: string;
+  /** True for a recording — an in-app route, so it must not open in a new tab. */
+  internal: boolean;
+}
+
+/**
+ * Resolve a citation to something clickable.
+ *
+ * <p>Two kinds now reach the UI. A report citation opens the source PDF at its page, as before. A
+ * recording citation opens the recordings page at the exact second the passage was spoken — the
+ * `video_id` and `at_seconds` come from the AI service as explicit fields rather than being parsed
+ * back out of the label, because a recording title can contain anything.
+ */
+export function citationTarget(citation: Citation): CitationTarget {
+  if (citation.video_id) {
+    const at = Math.max(0, Math.floor(citation.at_seconds ?? 0));
+    const query = at > 0 ? `&t=${at}` : '';
+    return {
+      kind: 'recording',
+      url: `/recordings?v=${encodeURIComponent(citation.video_id)}${query}`,
+      internal: true,
+    };
+  }
+  return { kind: 'report', url: parseCitation(citation.source).url, internal: false };
 }
 
 /**

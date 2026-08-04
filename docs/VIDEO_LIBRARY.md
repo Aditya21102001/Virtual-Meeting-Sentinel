@@ -504,6 +504,53 @@ Controlling the requests is what buys the difference, and hls.js is the only pat
 Alongside the resume (never blocking it) the player calls `find-segment-at` and captions the jump
 with where it landed in the index: *segment 215 of 271 · 480p · 248 MB into 371 MB*.
 
+### 10a. Captions and the knowledge base
+
+Captions do two jobs. In the player they are a caption line and a searchable transcript. In the
+**knowledge base** they are a source a drafted answer can cite:
+
+> *"Will the dividend be paid this quarter?"*
+> **Draft:** "The CFO confirmed the payout date on the call…"
+> **Sources:** ▶ Recording: Q3 AGM @ 12:04 · annual-report-2024.pdf p.87
+
+That first citation opens the player **at 12:04**. The report is published once a year; the call
+happened now — so a transcript is often the more current disclosure, and indexing it is what lets the
+AI answer from it at all.
+
+**How a transcript arrives.** Two routes, and the first always works:
+
+1. **Uploaded** — a moderator attaches a `.vtt` or `.srt`. SRT is normalised to WebVTT on the way in.
+2. **Generated** — `VIDEO_TRANSCRIPT_AUTO=true`. After a successful transcode the backend extracts a
+   mono 16 kHz audio track with FFmpeg, posts it to the AI service, which calls hosted Whisper and
+   returns WebVTT.
+
+Generation is **off by default**, for two reasons worth knowing before turning it on. It needs
+`GROQ_API_KEY` on the AI service. And it is one more FFmpeg process — cheap next to a transcode,
+because no video encoder is created, but not free on a host that barely fits one. It runs *after* the
+recording is already READY, so it can never delay playback, and every failure is a logged warning:
+a recording plays perfectly without captions.
+
+Hosted rather than local speech-to-text, deliberately: running Whisper in-process needs model weights
+and real CPU, on the same host that struggles to transcode. A hosted call costs a round trip and no
+memory.
+
+**Passages, not cues.** A single caption cue is one spoken line — too little to embed usefully, and it
+would return a citation pointing at half a sentence. Cues are grouped into ~900-character passages
+(about a PDF chunk) and each is stamped with the start time of its **first** cue, so the citation
+lands where the passage begins.
+
+**Re-indexing replaces.** A corrected transcript is a normal thing to upload, and FAISS
+`add_documents` only appends — so a second pass would leave stale passages competing with the new
+ones. Re-indexing an already-indexed recording rewrites the persisted file and rebuilds the store.
+
+**Indexed transcripts survive a restart.** They are persisted alongside uploaded PDFs (as
+`recording-<id>.vtt`, the title in a `NOTE` block) and reloaded at startup — without that, an indexed
+recording would silently drop out of the knowledge base on the next deploy.
+
+Automatic indexing is attempted whenever captions are saved. When the AI service is asleep or has no
+key, the captions are still saved and the admin screen offers **Index for answers** to retry — which
+is also how you backfill recordings whose captions predate this.
+
 ### Downloading a recording
 
 Two steps, because the client cannot know what is on offer:
@@ -547,6 +594,9 @@ All optional — the defaults run locally with no setup.
 | `VIDEO_DB_KEEP_SOURCE` | `false` | database mode: also store the original (doubles usage) |
 | `VIDEO_HLS_PARALLEL_RUNGS` | `false` | encode the whole ladder in one FFmpeg run — faster, but peak memory is the sum of every rung |
 | `VIDEO_FFMPEG_NICENESS` | `15` | scheduling priority for FFmpeg, 0–19 (Linux only; 0 disables) |
+| `VIDEO_TRANSCRIPT_AUTO` | `false` | generate captions after a transcode via hosted Whisper — see [§10a](#10a-captions-and-the-knowledge-base) |
+| `VIDEO_TRANSCRIPT_AUDIO_KBPS` | `24` | bitrate of the extracted mono 16 kHz audio sent for transcription |
+| `VIDEO_TRANSCRIPT_MAX_AUDIO_BYTES` | `25165824` | refuse to send audio larger than this (24 MiB) |
 | `VIDEO_DB_DRAIN_SEGMENTS` | `true` | database mode: store segments as FFmpeg produces them — see [§4a](#4a-why-the-drain-exists) |
 | `VIDEO_DB_DRAIN_SWEEP_SECONDS` | `5` | database mode: how often the drain sweeps for finished segments |
 | `VIDEO_NAS_PATH` | `./var/nas/videos` | **the NAS share** — also the working directory in database mode |

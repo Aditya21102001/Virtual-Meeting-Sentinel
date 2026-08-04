@@ -144,6 +144,19 @@ video:
     ffprobe: ${FFPROBE_PATH:ffprobe}
     workers: ${VIDEO_WORKERS:1}
     timeout-minutes: ${VIDEO_TIMEOUT_MINUTES:240}
+  transcript:
+    # Generate captions automatically after a successful transcode, when none were uploaded?
+    # OFF by default. It costs one more FFmpeg process (audio extraction — cheap next to a
+    # transcode, since no video encoder is created) plus a hosted speech-to-text call, and it needs
+    # GROQ_API_KEY on the AI service. Uploading a .vtt/.srt stays the path that always works, and
+    # captions are never allowed to fail a recording that has already processed.
+    auto-generate: ${VIDEO_TRANSCRIPT_AUTO:false}
+    # Audio bitrate for the extracted track. Mono 16 kHz speech is intelligible far below 32k, and
+    # this times the recording length is what decides whether a long meeting fits in one request.
+    audio-bitrate-kbps: ${VIDEO_TRANSCRIPT_AUDIO_KBPS:24}
+    # Refuse to send audio larger than this rather than have the provider reject it. Groq's free
+    # tier caps an upload at 25 MB; at 24 kbps that is roughly two and a half hours.
+    max-audio-bytes: ${VIDEO_TRANSCRIPT_MAX_AUDIO_BYTES:25165824}   # 24 MiB
   playback:
     ticket-ttl-seconds: ${VIDEO_TICKET_TTL:21600}   # 6h — long enough for one sitting
   database:

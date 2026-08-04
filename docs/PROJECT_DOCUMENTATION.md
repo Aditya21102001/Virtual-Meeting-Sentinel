@@ -116,7 +116,7 @@ real-time question stream. VIRTUAL MEETING Sentinel solves this specific, high-v
 | Frontend        | **Angular 22** (standalone, **zoneless**, signals), STOMP/SockJS         | Real-time board UI; current best-practice change detection               |
 | Core API        | **Spring Boot 3 / Java 17**                                              | Enterprise auth, WebSocket fan-out, transactional store                  |
 | AI Service      | **Python 3.11 · FastAPI · LangChain**                                    | The entire LLM/embeddings ecosystem lives in Python                      |
-| Embeddings      | **sentence-transformers** `all-MiniLM-L6-v2` (local)                     | Runs in-process; zero API cost                                           |
+| Embeddings      | **ONNX Runtime** running `all-MiniLM-L6-v2` (local)                      | Runs in-process; zero API cost, no PyTorch                               |
 | LLM             | **Groq (Llama 3.3 70B)** / **Google Gemini** — swappable to Azure OpenAI | Free inference; LangChain abstracts the provider                         |
 | Vector search   | **FAISS** (knowledge base) + **pgvector** (persistence)                  | Fast similarity search without a paid vector DB                          |
 | Database        | **PostgreSQL + pgvector** (Neon free tier)                               | Relational + vector in one store                                         |

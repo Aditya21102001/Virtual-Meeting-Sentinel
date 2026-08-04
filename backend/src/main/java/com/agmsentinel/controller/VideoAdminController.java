@@ -1,7 +1,9 @@
 package com.agmsentinel.controller;
 
 import com.agmsentinel.dto.VideoDtos.VideoCard;
+import com.agmsentinel.model.Video;
 import com.agmsentinel.dto.VideoDtos.VideoStorageStatus;
+import com.agmsentinel.service.AiClient;
 import com.agmsentinel.service.SubtitleConverter;
 import com.agmsentinel.service.VideoLibraryService;
 import com.agmsentinel.service.VideoUrlFactory;
@@ -13,7 +15,11 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
+import java.util.Map;
 
 import java.util.List;
 import java.util.UUID;
@@ -43,15 +49,19 @@ import java.util.UUID;
 @RequestMapping("/api/admin/videos")
 public class VideoAdminController {
 
+    private static final Logger log = LoggerFactory.getLogger(VideoAdminController.class);
+
     private final VideoLibraryService library;
     private final VideoUrlFactory urls;
     private final SubtitleConverter subtitles;
+    private final AiClient ai;
 
     public VideoAdminController(VideoLibraryService library, VideoUrlFactory urls,
-                                SubtitleConverter subtitles) {
+                                SubtitleConverter subtitles, AiClient ai) {
         this.library = library;
         this.urls = urls;
         this.subtitles = subtitles;
+        this.ai = ai;
     }
 
     /** Identifies one video. In the body rather than the path, so the URL stays a readable name. */
@@ -124,7 +134,43 @@ public class VideoAdminController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No subtitle file provided.");
         }
         String webVtt = subtitles.toWebVtt(file.getOriginalFilename(), file.getBytes());
-        return urls.card(library.saveTranscript(id, webVtt), currentSubject());
+        Video video = library.saveTranscript(id, webVtt);
+        indexTranscriptQuietly(video, webVtt);
+        return urls.card(video, currentSubject());
+    }
+
+    /**
+     * Add this recording's captions to the RAG knowledge base, so a drafted answer can cite what was
+     * said on the call — with the second, so the citation opens the player at that moment.
+     *
+     * <p>Separate from the upload as well as automatic, because the two fail independently: the AI
+     * service can be asleep or missing an API key while the transcript itself saved perfectly. This
+     * is the retry, and the way to backfill recordings whose captions predate the feature.
+     */
+    @PostMapping("/index-transcript")
+    public Map<String, Object> indexTranscript(@RequestBody VideoRef req) {
+        Video video = library.get(req.id());
+        String webVtt = library.readTranscript(video).orElseThrow(() ->
+                new ResponseStatusException(HttpStatus.CONFLICT,
+                        "This recording has no transcript to index. Upload a .vtt or .srt first."));
+        return ai.indexTranscript(video.getId().toString(), video.getTitle(), webVtt);
+    }
+
+    /**
+     * Index on upload, but never let it fail the upload.
+     *
+     * <p>The captions are already saved by this point and are useful on their own — they drive the
+     * player's transcript panel whether or not the knowledge base ever sees them. A model service
+     * that is down is a reason to press <em>Index transcript</em> later, not a reason to reject a
+     * file that was accepted.
+     */
+    private void indexTranscriptQuietly(Video video, String webVtt) {
+        try {
+            ai.indexTranscript(video.getId().toString(), video.getTitle(), webVtt);
+        } catch (RuntimeException ex) {
+            log.warn("Saved the transcript for video {} but could not index it into the knowledge "
+                     + "base: {}. Use index-transcript to retry.", video.getId(), ex.getMessage());
+        }
     }
 
     @PostMapping("/delete-transcript")

@@ -88,8 +88,10 @@ Direct dependencies:
 | Dependency | Licence |
 |---|---|
 | FastAPI, pydantic, LangChain (all packages), `langchain-ollama`, `ollama`, faiss-cpu, pgvector, redis | MIT |
-| uvicorn, torch, pypdf, numpy | BSD |
-| sentence-transformers, transformers, python-multipart | Apache-2.0 |
+| uvicorn, pypdf, numpy | BSD |
+| fastembed, tokenizers, huggingface-hub, python-multipart | Apache-2.0 |
+| onnxruntime, mmh3, loguru | MIT |
+| pillow | MIT-CMU (HPND) |
 | **psycopg** | **LGPL-3.0** (unmodified import — see [§1](#1-summary)) |
 
 ---
@@ -157,7 +159,8 @@ Postgres, FFmpeg and Ollama are all open source and installable locally. Cluster
 the live board, and the whole video library work with **no API key of any kind**; only the "Draft
 answer" feature needs an LLM, and Ollama provides that locally.
 
-Embeddings were already local (`sentence-transformers`, Apache-2.0) — they never called an API.
+Embeddings were already local (`all-MiniLM-L6-v2` via fastembed/ONNX Runtime, Apache-2.0 and MIT)
+— they never called an API.
 
 ---
 

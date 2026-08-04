@@ -247,6 +247,19 @@ import {
             <div class="row transcript-row">
               @if (card.video.hasTranscript) {
                 <span class="badge">✔ transcript</span>
+                <!--
+                  Adds the captions to the RAG knowledge base, so a drafted answer can cite what was
+                  said on the call. Tried automatically on upload; this is the retry for when the AI
+                  service was asleep, and the way to backfill older recordings.
+                -->
+                <button
+                  class="link"
+                  (click)="indexTranscript(card)"
+                  [disabled]="transcriptBusy() === card.video.id"
+                  title="Index these captions so answers can cite the recording"
+                >
+                  Index for answers
+                </button>
                 <button
                   class="link"
                   (click)="removeTranscript(card)"
@@ -272,6 +285,9 @@ import {
             </div>
             @if (transcriptError()?.id === card.video.id) {
               <p class="error-box">{{ transcriptError()?.message }}</p>
+            }
+            @if (transcriptNote()?.id === card.video.id) {
+              <p class="muted note">{{ transcriptNote()?.message }}</p>
             }
           }
 
@@ -531,6 +547,8 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   /** Video id whose transcript is being uploaded or removed, so only that row shows progress. */
   readonly transcriptBusy = signal<string | null>(null);
   readonly transcriptError = signal<{ id: string; message: string } | null>(null);
+  /** Confirmation after indexing, so the moderator knows it reached the knowledge base. */
+  readonly transcriptNote = signal<{ id: string; message: string } | null>(null);
 
   pickTranscript(card: VideoCard, event: Event): void {
     const input = event.target as HTMLInputElement;
@@ -545,6 +563,26 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
       next: () => {
         this.transcriptBusy.set(null);
         this.refreshList();
+      },
+      error: (err) => {
+        this.transcriptBusy.set(null);
+        this.transcriptError.set({ id: card.video.id, message: this.serverMessage(err) });
+      },
+    });
+  }
+
+  /** Index the captions into the knowledge base — the retry when auto-indexing failed. */
+  indexTranscript(card: VideoCard): void {
+    this.transcriptBusy.set(card.video.id);
+    this.transcriptError.set(null);
+    this.videos.indexTranscript(card.video.id).subscribe({
+      next: (result) => {
+        this.transcriptBusy.set(null);
+        this.transcriptNote.set({
+          id: card.video.id,
+          message: `Indexed ${result.passages_indexed} passage(s). Drafted answers can now cite `
+                   + `this recording, and the citation opens the player at that moment.`,
+        });
       },
       error: (err) => {
         this.transcriptBusy.set(null);

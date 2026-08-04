@@ -57,6 +57,7 @@ public class VideoProcessingWorker {
     private final VideoTranscodeService transcoder;
     private final VideoSegmentDrainer drainer;
     private final VideoProperties props;
+    private final AiClient ai;
 
     public VideoProcessingWorker(VideoRepository videos,
                                  VideoLibraryService library,
@@ -64,7 +65,8 @@ public class VideoProcessingWorker {
                                  VideoMediaStore media,
                                  VideoTranscodeService transcoder,
                                  VideoSegmentDrainer drainer,
-                                 VideoProperties props) {
+                                 VideoProperties props,
+                                 AiClient ai) {
         this.videos = videos;
         this.library = library;
         this.storage = storage;
@@ -72,6 +74,7 @@ public class VideoProcessingWorker {
         this.transcoder = transcoder;
         this.drainer = drainer;
         this.props = props;
+        this.ai = ai;
     }
 
     /** fallbackExecution: also process when queued outside a transaction (e.g. from a test). */
@@ -167,6 +170,12 @@ public class VideoProcessingWorker {
                 media.ingest(video, videoDir, skipList(video));
                 library.storeResult(videoId, output, poster, sprite);
             }
+
+            // After READY, and before the working directory goes: captions need the source audio,
+            // and in database mode this directory is about to be deleted. Doing it here rather than
+            // earlier means the recording is already playable while this runs.
+            maybeGenerateTranscript(video, videoDir, source, info);
+
             discardWorkingDir(video, videoDir);
 
             log.info("Video {} ready — {} rendition(s), {} segment(s) indexed", videoId,
@@ -244,6 +253,79 @@ public class VideoProcessingWorker {
      * remove it. In filesystem mode that same directory <em>is</em> the storage — deleting it would
      * destroy the recording, which is why this checks the mode rather than always cleaning up.
      */
+    /**
+     * Generate captions for a recording that has none, if automatic transcription is turned on.
+     *
+     * <p>Runs after the video is already {@code READY}, so nothing here can delay playback — and
+     * nothing here is allowed to fail the recording either. Every outcome short of success is a
+     * logged warning: the video plays perfectly without captions, and a moderator can always upload
+     * a {@code .vtt} or press <em>Index for answers</em> later.
+     *
+     * <p>Off by default. Extraction is cheap next to a transcode (no video encoder is created) but it
+     * is still another FFmpeg process, and on a host that barely fits one that is not free.
+     */
+    private void maybeGenerateTranscript(Video video, Path videoDir, Path source,
+                                         MediaInfo info) {
+        VideoProperties.Transcript config = props.getTranscript();
+        if (!config.isAutoGenerate()) return;
+        if (video.getTranscriptRel() != null) {
+            log.debug("Video {} already has a transcript — not generating one.", video.getId());
+            return;
+        }
+        // From the probe, not from the entity: this instance was loaded before storeProbe ran, so
+        // its hasAudio still holds the column default (true) rather than what the file contains.
+        if (!info.hasAudio()) {
+            log.info("Video {} has no audio track, so there is nothing to transcribe.", video.getId());
+            return;
+        }
+
+        Path audio = null;
+        try {
+            audio = transcoder.extractAudio(videoDir, source, config.getAudioBitrateKbps());
+            if (audio == null) return;   // already logged by extractAudio
+
+            long bytes = Files.size(audio);
+            if (bytes > config.getMaxAudioBytes()) {
+                // Refused here rather than by the provider, so the reason is actionable.
+                log.warn("Skipping automatic captions for video {}: the extracted audio is {} bytes, "
+                         + "over the {} byte limit. Lower video.transcript.audio-bitrate-kbps, or "
+                         + "upload a transcript for this recording.",
+                         video.getId(), bytes, config.getMaxAudioBytes());
+                return;
+            }
+
+            String webVtt = ai.transcribeAudio(audio.getFileName().toString(), Files.readAllBytes(audio));
+            if (webVtt == null || webVtt.isBlank()) {
+                log.warn("Transcription returned nothing for video {}.", video.getId());
+                return;
+            }
+            library.saveTranscript(video.getId(), webVtt);
+            log.info("Generated captions for video {} ({} characters).", video.getId(), webVtt.length());
+
+            // Index straight away: the point of having a transcript here is that an answer can cite
+            // what was said. Separately guarded — a knowledge-base failure must not discard captions
+            // that were successfully produced and saved.
+            try {
+                ai.indexTranscript(video.getId().toString(), video.getTitle(), webVtt);
+            } catch (RuntimeException ex) {
+                log.warn("Saved generated captions for video {} but could not index them: {}. "
+                         + "Use Index for answers to retry.", video.getId(), ex.getMessage());
+            }
+        } catch (Exception ex) {
+            log.warn("Automatic captions failed for video {}: {}", video.getId(), ex.getMessage());
+        } finally {
+            // The extracted audio is scratch. In filesystem mode the directory persists, so leaving
+            // it would quietly grow the share by a copy of every recording's soundtrack.
+            if (audio != null) {
+                try {
+                    Files.deleteIfExists(audio);
+                } catch (IOException ignored) {
+                    // Removed with the working directory in database mode; harmless in filesystem mode.
+                }
+            }
+        }
+    }
+
     private void discardWorkingDir(Video video, Path videoDir) {
         if (video.getStorageMode() != VideoStorageMode.DATABASE) return;
         storage.deleteVideoDir(video);

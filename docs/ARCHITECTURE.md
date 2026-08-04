@@ -74,7 +74,7 @@ The ai-service owns all the "AI math" (vectors, clustering, LLM calls).
         • /clusters  ranked board           • proxies source PDFs
         • /knowledge upload + serve PDF
         │
-        ├── sentence-transformers  (local embeddings, no API)
+        ├── fastembed / ONNX Runtime  (local embeddings, no API)
         ├── FAISS index            (annual-report chunks)
         └── Groq / Gemini LLM       (draft generation)
 ```
@@ -90,7 +90,7 @@ Data stores:
 
 - **Java (backend)** is where enterprises put transactional business logic, auth, and real-time
   fan-out. It's the secure front door.
-- **Python (ai-service)** is where the ML/LLM ecosystem lives (sentence-transformers, FAISS,
+- **Python (ai-service)** is where the ML/LLM ecosystem lives (ONNX Runtime, FAISS,
   LangChain). Keeping it separate lets the AI scale and deploy independently.
 - **Angular (frontend)** renders the live board and the forms.
 

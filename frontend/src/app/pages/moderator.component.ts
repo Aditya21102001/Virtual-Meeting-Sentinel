@@ -1,13 +1,18 @@
 import { Component, OnDestroy, OnInit, signal } from "@angular/core";
+import { RouterLink } from "@angular/router";
 import {
   ApiService,
+  Citation,
+  CitationTarget,
   ClusterView,
+  citationTarget,
   parseCitation,
 } from "../services/api.service";
 import { BoardService } from "../services/board.service";
 
 @Component({
   selector: "app-moderator",
+  imports: [RouterLink],
   standalone: true,
   template: `
     <div class="container">
@@ -111,19 +116,23 @@ import { BoardService } from "../services/board.service";
             <div class="draft">{{ c.draft }}</div>
             @if (c.citations.length) {
               <div class="cite">
-                <strong>Sources</strong> (from the annual report — click to open
-                at the page):
+                <strong>Sources</strong> — a report page, or the moment it was
+                said on the call:
                 <ul style="margin:6px 0 0; padding-left:18px">
                   @for (cit of c.citations; track cit.source) {
                     <li>
-                      <a
-                        [href]="link(cit.source).url"
-                        target="_blank"
-                        rel="noopener"
-                        [title]="cit.snippet"
-                      >
-                        {{ cit.source }}
-                      </a>
+                      @if (target(cit); as t) {
+                        @if (t.internal) {
+                          <!-- In-app route: routerLink, so it does not reload the SPA. -->
+                          <a [routerLink]="['/recordings']" [queryParams]="recordingParams(cit)" [title]="cit.snippet">
+                            ▶ {{ cit.source }}
+                          </a>
+                        } @else {
+                          <a [href]="t.url" target="_blank" rel="noopener" [title]="cit.snippet">
+                            {{ cit.source }}
+                          </a>
+                        }
+                      }
                     </li>
                   }
                 </ul>
@@ -243,6 +252,19 @@ export class ModeratorComponent implements OnInit, OnDestroy {
   /** Build the page-anchored PDF link for a citation source string. */
   link(source: string) {
     return parseCitation(source);
+  }
+
+  /** Where this citation leads — a report page, or a moment in a recording. */
+  target(citation: Citation): CitationTarget {
+    return citationTarget(citation);
+  }
+
+  /** Query params for a recording citation, so routerLink can deep-link into the player. */
+  recordingParams(citation: Citation): Record<string, string> {
+    const at = Math.max(0, Math.floor(citation.at_seconds ?? 0));
+    return at > 0
+      ? { v: citation.video_id!, t: String(at) }
+      : { v: citation.video_id! };
   }
 
   draft(c: ClusterView): void {

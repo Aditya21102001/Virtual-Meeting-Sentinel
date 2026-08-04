@@ -60,6 +60,43 @@ public class VideoProperties {
     private final Tools tools = new Tools();
     private final Playback playback = new Playback();
     private final Database database = new Database();
+    private final Transcript transcript = new Transcript();
+
+    /**
+     * Automatic captions for uploaded recordings.
+     *
+     * <p>Off by default, and deliberately so. Generating a transcript means extracting audio with
+     * FFmpeg and calling a hosted speech-to-text service: the extraction is cheap next to a
+     * transcode (no video encoder is created) but it is still another subprocess on a host that may
+     * barely fit one, and the API call needs a key. Uploading a {@code .vtt}/{@code .srt} stays the
+     * path that always works.
+     */
+    public static class Transcript {
+
+        /** Generate captions after a successful transcode, when none were uploaded. */
+        private boolean autoGenerate = false;
+
+        /**
+         * Audio bitrate for the extracted track, in kbps. Mono 16 kHz speech is intelligible well
+         * below 32k, and hosted transcription APIs cap upload size — so this, times the length of
+         * the recording, is what decides whether a long meeting fits in one request.
+         */
+        private int audioBitrateKbps = 24;
+
+        /**
+         * Refuse to send audio larger than this. Groq's free tier caps an upload at 25 MB; at 24
+         * kbps that is roughly two and a half hours. Beyond it the answer is to upload a transcript
+         * rather than to have the request rejected by the provider.
+         */
+        private long maxAudioBytes = 24L * 1024 * 1024;
+
+        public boolean isAutoGenerate() { return autoGenerate; }
+        public void setAutoGenerate(boolean autoGenerate) { this.autoGenerate = autoGenerate; }
+        public int getAudioBitrateKbps() { return audioBitrateKbps; }
+        public void setAudioBitrateKbps(int audioBitrateKbps) { this.audioBitrateKbps = audioBitrateKbps; }
+        public long getMaxAudioBytes() { return maxAudioBytes; }
+        public void setMaxAudioBytes(long maxAudioBytes) { this.maxAudioBytes = maxAudioBytes; }
+    }
 
     /** Settings that only apply to {@link VideoStorageMode#DATABASE}. */
     public static class Database {
@@ -290,4 +327,5 @@ public class VideoProperties {
     public Tools getTools() { return tools; }
     public Playback getPlayback() { return playback; }
     public Database getDatabase() { return database; }
+    public Transcript getTranscript() { return transcript; }
 }

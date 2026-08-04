@@ -1,8 +1,9 @@
 import { Component, OnDestroy, OnInit, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import { AuthService } from '../services/auth.service';
 import { ChatService, AI_PEER, Contact } from '../services/chat.service';
-import { parseCitation } from '../services/api.service';
+import { Citation, parseCitation } from '../services/api.service';
 
 /**
  * Shareholder Lounge — WhatsApp-style 1-on-1 chat plus a pinned GenAI assistant.
@@ -12,7 +13,7 @@ import { parseCitation } from '../services/api.service';
 @Component({
   selector: 'app-chat',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, RouterLink],
   template: `
     <div class="lounge" [class.has-active]="chat.activePeer()">
       <!-- conversation list -->
@@ -87,7 +88,20 @@ import { parseCitation } from '../services/api.service';
             <div class="cites">
               <span class="muted">Sources:</span>
               @for (c of chat.lastCitations(); track c.source) {
-                <a class="cite-link" [href]="link(c.source)" target="_blank" rel="noopener">{{ c.source }}</a>
+                @if (c.video_id) {
+                  <!-- Said on the call: an in-app link that opens the player at that second. -->
+                  <a
+                    class="cite-link"
+                    [routerLink]="['/recordings']"
+                    [queryParams]="recordingParams(c)"
+                    [title]="c.snippet"
+                    >▶ {{ c.source }}</a
+                  >
+                } @else {
+                  <a class="cite-link" [href]="link(c.source)" target="_blank" rel="noopener"
+                    >{{ c.source }}</a
+                  >
+                }
               }
             </div>
           }
@@ -220,6 +234,12 @@ export class ChatComponent implements OnInit, OnDestroy {
   isMine(sender: string): boolean { return sender === this.auth.username(); }
   initials(name: string): string { return name.slice(0, 2).toUpperCase(); }
   link(source: string): string { return parseCitation(source).url; }
+
+  /** Deep-link params for a citation that came from a recording's transcript. */
+  recordingParams(citation: Citation): Record<string, string> {
+    const at = Math.max(0, Math.floor(citation.at_seconds ?? 0));
+    return at > 0 ? { v: citation.video_id!, t: String(at) } : { v: citation.video_id! };
+  }
   time(iso: string): string {
     const d = new Date(iso);
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

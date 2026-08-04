@@ -367,6 +367,19 @@ export class VideoService {
       .pipe(map((card) => this.normalizeMediaUrls(card)));
   }
 
+  /**
+   * Add this recording's captions to the RAG knowledge base, so a drafted answer can cite what was
+   * said on the call. Attempted automatically on upload; this is the retry, and the way to backfill
+   * recordings whose captions predate the feature.
+   */
+  indexTranscript(id: string): Observable<{ passages_indexed: number }> {
+    return this.http.post<{ passages_indexed: number }>(
+      `${this.admin}/index-transcript`,
+      { id },
+      { headers: this.headers() },
+    );
+  }
+
   deleteTranscript(id: string): Observable<VideoCard> {
     return this.http
       .post<VideoCard>(`${this.admin}/delete-transcript`, { id }, { headers: this.headers() })

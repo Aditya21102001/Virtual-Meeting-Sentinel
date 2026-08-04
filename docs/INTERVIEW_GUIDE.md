@@ -69,7 +69,7 @@ Java 17, TypeScript, Python 3.11, SQL, HTML/CSS
 
 - **FastAPI + Uvicorn**, **Pydantic**
 - **LangChain** (langchain-core/community, text-splitters) — provider-agnostic LLM layer
-- **sentence-transformers** (`all-MiniLM-L6-v2`, local embeddings), **FAISS** (vector index)
+- **ONNX Runtime** (`all-MiniLM-L6-v2`, local embeddings), **FAISS** (vector index)
 - **langchain-groq / langchain-google-genai** (free LLMs), **pypdf** (PDF ingest), **NumPy**
 
 ### Data & infra

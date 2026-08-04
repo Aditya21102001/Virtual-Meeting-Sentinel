@@ -438,6 +438,14 @@ public class VideoLibraryService {
         return videos.save(video);
     }
 
+    /** The stored WebVTT for a recording, or empty when none was uploaded. */
+    @Transactional(readOnly = true)
+    public Optional<String> readTranscript(Video video) {
+        String relPath = video.getTranscriptRel();
+        if (relPath == null || !media.exists(video, relPath)) return Optional.empty();
+        return Optional.of(media.readText(video, relPath));
+    }
+
     @Transactional
     public Video deleteTranscript(UUID videoId) {
         Video video = get(videoId);

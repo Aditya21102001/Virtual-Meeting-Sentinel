@@ -25,7 +25,16 @@ public final class Dtos {
     ) { }
 
     // ---- AI service /draft response ------------------------------------------
-    public record Citation(String source, String snippet) { }
+    /**
+     * Where a retrieved passage came from, and how to take the reader there.
+     *
+     * <p>The last two are set only for a passage from a meeting recording's transcript: they let the
+     * UI turn the citation into a link that opens the player at the exact second, the way a report
+     * citation opens a PDF at a page. Explicit fields rather than a parseable {@code source} string —
+     * a recording title can contain any punctuation a naming convention might have relied on.
+     * snake_case because these come straight off the Python service; null for report citations.
+     */
+    public record Citation(String source, String snippet, String video_id, Double at_seconds) { }
     public record DraftResult(String cluster_id, String answer, List<Citation> citations) { }
 
     // ---- AI service /clusters item (board) -----------------------------------

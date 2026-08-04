@@ -99,6 +99,54 @@ public class AiClient {
                 .block();
     }
 
+    /**
+     * Index a recording's captions into the RAG knowledge base.
+     *
+     * <p>The VTT text is sent rather than a path: the AI service has no access to the media, which
+     * may be on a NAS share or in the database. Small enough to post as JSON — even a three-hour
+     * transcript is a couple of hundred kilobytes.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> indexTranscript(String videoId, String title, String webVtt) {
+        return web.post().uri("/knowledge/transcript")
+                .bodyValue(Map.of("video_id", videoId, "title", title, "vtt", webVtt))
+                .retrieve()
+                .bodyToMono(Map.class)
+                .timeout(Duration.ofSeconds(120))   // embedding a long transcript takes a moment
+                .block();
+    }
+
+    /**
+     * Transcribe an extracted audio track, returning WebVTT.
+     *
+     * <p>Multipart because the audio is binary and would inflate by a third as base64. The timeout is
+     * generous: a hosted speech model working through an hour of audio takes longer than any other
+     * call this client makes, and a premature abort would waste the upload.
+     *
+     * @return the WebVTT document, or null when the service has no transcription configured
+     */
+    @SuppressWarnings("unchecked")
+    public String transcribeAudio(String filename, byte[] audio) {
+        MultipartBodyBuilder builder = new MultipartBodyBuilder();
+        builder.part("file", new ByteArrayResource(audio) {
+            @Override
+            public String getFilename() {
+                return filename;   // the provider infers the container from the extension
+            }
+        });
+
+        Map<String, Object> body = web.post().uri("/transcribe")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(BodyInserters.fromMultipartData(builder.build()))
+                .retrieve()
+                .bodyToMono(Map.class)
+                .timeout(Duration.ofMinutes(10))
+                .block();
+
+        Object vtt = body == null ? null : body.get("vtt");
+        return vtt instanceof String text && !text.isBlank() ? text : null;
+    }
+
     public Map<String, Object> knowledgeStatus() {
         return web.get().uri("/knowledge/status")
                 .retrieve()

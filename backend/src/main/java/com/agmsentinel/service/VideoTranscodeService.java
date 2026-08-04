@@ -61,6 +61,46 @@ public class VideoTranscodeService {
     private final VideoProperties props;
     private final ObjectMapper json = new ObjectMapper();
 
+    /**
+     * Extract a speech-oriented audio track, for sending to a transcription service.
+     *
+     * <p>Far cheaper than anything else here: no video is decoded to an output, no x264 encoder is
+     * created. It is a demux plus an audio re-encode, so it costs a fraction of one ladder rung.
+     *
+     * <p>Mono at 16 kHz because that is what speech models consume — sending stereo at 44.1 kHz
+     * would triple the upload for no gain in recognition. The bitrate is configurable because
+     * hosted transcription APIs cap the file size, and length × bitrate is the only lever on that.
+     *
+     * @return the extracted file, or null if extraction failed (never throws — a transcript is
+     *         an enhancement and must not be able to fail a recording that already processed)
+     */
+    public Path extractAudio(Path videoDir, Path source, int bitrateKbps) {
+        Path target = videoDir.resolve("audio.mp3");
+        try {
+            List<String> command = ffmpegCommand(List.of(
+                    "-hide_banner", "-nostdin", "-y",
+                    "-i", source.toString(),
+                    "-vn",                                  // drop video entirely
+                    "-ac", "1",                             // mono
+                    "-ar", "16000",                         // what speech models expect
+                    "-c:a", "libmp3lame",
+                    "-b:a", Math.max(8, bitrateKbps) + "k",
+                    target.toString()));
+            log.debug("audio extraction: {}", String.join(" ", command));
+
+            ProcessResult result = run(command, props.getTools().getTimeoutMinutes() * 60L);
+            if (result.exitCode() != 0 || !Files.isRegularFile(target)) {
+                log.warn("Could not extract audio from {} (exit {}): {}",
+                         source.getFileName(), result.exitCode(), result.tail());
+                return null;
+            }
+            return target;
+        } catch (Exception ex) {
+            log.warn("Could not extract audio from {}: {}", source.getFileName(), ex.getMessage());
+            return null;
+        }
+    }
+
     /** Tri-state cache of the ffmpeg probe: null = not checked yet. */
     private volatile Boolean toolsPresent;
     private volatile String toolsVersion;

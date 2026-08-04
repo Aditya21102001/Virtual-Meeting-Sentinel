@@ -319,7 +319,7 @@ $env:GROQ_API_KEY = "gsk_your_key_here"
 _(Git Bash: `LLM_PROVIDER=groq GROQ_API_KEY=gsk_... ./.venv/Scripts/python.exe -m uvicorn app.main:app --port 8000`)_
 
 Either way, **Draft answer** on the moderator board now returns a grounded, cited answer from the
-PDF. Embeddings were always local (`sentence-transformers`) and never called an API.
+PDF. Embeddings were always local (`all-MiniLM-L6-v2` on ONNX Runtime) and never called an API.
 
 ---
 
