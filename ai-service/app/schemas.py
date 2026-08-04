@@ -29,9 +29,30 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class TranscriptIndexRequest(BaseModel):
+    """Ask for a recording's captions to be indexed into the knowledge base.
+
+    The VTT text is sent rather than a file path: the backend owns the media (it may be on a NAS
+    share or in a database) and this service has no access to either.
+    """
+    video_id: str
+    title: str
+    vtt: str
+
+
 class Citation(BaseModel):
+    """Where a retrieved passage came from, and how to take the reader there.
+
+    `source` is the human-readable label. The two optional fields are set only for passages that
+    came from a meeting recording's transcript: they let the UI turn the citation into a link that
+    opens the player at the exact second, the same way a report citation opens a PDF at a page.
+    Explicit fields rather than a parseable `source` string — a recording title can contain any
+    punctuation a naming convention might have relied on.
+    """
     source: str
     snippet: str
+    video_id: str | None = None
+    at_seconds: float | None = None
 
 
 class ChatResponse(BaseModel):

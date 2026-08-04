@@ -21,9 +21,10 @@ from .clustering import get_clusterer
 from .config import get_settings
 from .embeddings import get_embeddings
 from .rag import get_kb, knowledge_file_path
+from .transcribe import TranscriptionUnavailable, transcribe_to_vtt
 from .schemas import (
     ChatRequest, ChatResponse, ClusterView, DraftRequest, DraftResponse,
-    IngestRequest, IngestResponse,
+    IngestRequest, IngestResponse, TranscriptIndexRequest,
 )
 
 
@@ -127,6 +128,48 @@ async def knowledge_upload(file: UploadFile = File(...)) -> dict:
     if chunks == 0:
         raise HTTPException(status_code=422, detail="No extractable text found in the PDF.")
     return {"filename": file.filename, "chunks_indexed": chunks, **get_kb().status()}
+
+
+@app.post("/knowledge/transcript")
+def knowledge_transcript(req: TranscriptIndexRequest) -> dict:
+    """Index a meeting recording's WebVTT captions into the knowledge base.
+
+    A recording's transcript is company disclosure too, and more current than the annual report —
+    published once a year against a call that happened now. Indexing it means an answer can cite
+    what was actually said, and the citation carries the second so the UI can open the player there.
+
+    Re-indexing the same video replaces its passages rather than adding a second copy.
+    """
+    kb = get_kb()
+    passages = kb.add_transcript(req.video_id, req.title, req.vtt)
+    if passages == 0:
+        raise HTTPException(
+            status_code=422,
+            detail="No caption cues were found. A transcript needs timestamp lines like "
+                   "\"00:01:02.500 --> 00:01:05.000\".",
+        )
+    return {"video_id": req.video_id, "passages_indexed": passages, **kb.status()}
+
+
+@app.post("/transcribe")
+async def transcribe(file: UploadFile = File(...)) -> dict:
+    """Turn an uploaded audio track into WebVTT captions.
+
+    Called by the backend, which extracts the audio with FFmpeg — this service has no access to the
+    media, and no FFmpeg. Returns the transcript rather than storing it: the backend owns where a
+    recording's files live, and it also wants to index the result into the knowledge base.
+    """
+    audio = await file.read()
+    if not audio:
+        raise HTTPException(status_code=400, detail="No audio was uploaded.")
+    try:
+        vtt = transcribe_to_vtt(file.filename or "audio.mp3", audio)
+    except TranscriptionUnavailable as ex:
+        # 503, not 500: nothing is broken, the capability simply is not configured here.
+        raise HTTPException(status_code=503, detail=str(ex)) from ex
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"Transcription failed: {ex}") from ex
+    return {"vtt": vtt, "characters": len(vtt)}
 
 
 @app.get("/clusters", response_model=list[ClusterView])

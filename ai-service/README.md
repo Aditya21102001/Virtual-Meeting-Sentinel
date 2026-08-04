@@ -6,7 +6,7 @@ The intelligence layer: embeds questions, clusters them live, and drafts grounde
 | File | Role |
 |---|---|
 | `app/main.py` | FastAPI endpoints (`/ingest`, `/draft`, `/clusters`, `/health`) |
-| `app/embeddings.py` | Local `sentence-transformers` embeddings (no API cost) |
+| `app/embeddings.py` | Local `all-MiniLM-L6-v2` embeddings on ONNX Runtime (no API cost) |
 | `app/clustering.py` | **Online nearest-centroid clustering** — the core algorithm |
 | `app/rag.py` | LangChain RAG chain over the annual report (FAISS) |
 | `app/llm.py` | Provider factory — Groq / Gemini / (later) Azure, one-line swap |

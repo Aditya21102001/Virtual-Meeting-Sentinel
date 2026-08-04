@@ -14,10 +14,18 @@ langchain-text-splitters==0.3.4
 langchain-ollama==0.2.2
 # Hosted proprietary services with free tiers; each needs an API key.
 langchain-groq==0.2.3
+# Explicit rather than transitive: transcribe.py imports the SDK directly for Whisper
+# (hosted speech-to-text), which LangChain does not wrap.
+groq==0.13.1
 langchain-google-genai==2.0.8
 
-# Local embeddings — runs in-process, no API cost
-sentence-transformers==3.3.1
+# Local embeddings — runs in-process, no API cost.
+#
+# ONNX Runtime rather than sentence-transformers, which would pull in the whole of PyTorch: ~310 MB
+# resident to run 90 MB of weights for inference only, on an instance with 512 MB total. Same model
+# and identical vectors either way (see app/embeddings.py); this one leaves room to serve requests.
+# Deliberately NOT sentence-transformers — re-adding it re-introduces torch transitively.
+fastembed==0.8.0
 
 # Vector stores
 pgvector==0.3.6

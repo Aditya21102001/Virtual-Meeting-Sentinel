@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
+    # Speech-to-text for meeting recordings (see transcribe.py). Groq hosts Whisper on the same
+    # key as the chat model. Configurable because provider model ids are renamed and retired
+    # far more often than the code around them changes.
+    whisper_model: str = "whisper-large-v3-turbo"
     google_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
 

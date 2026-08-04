@@ -1,10 +1,20 @@
 # Hugging Face Spaces (Docker SDK) and local docker-compose both build this.
 FROM python:3.11-slim
 
+# OMP_NUM_THREADS: ONNX Runtime and OpenMP otherwise start one worker thread per HOST core, which
+# inside a container with a fractional CPU share means many threads competing for a fraction of one,
+# each carrying its own allocation arena. Embedding a handful of sentences needs no parallelism.
+#
+# FASTEMBED_CACHE_PATH matters more than it looks: fastembed caches downloaded models under a
+# temporary directory by default, which would put the model outside the image layers — so the
+# build-time download below would be discarded and every cold start would re-fetch it from the
+# network, or fail outright on a host without egress.
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     HF_HOME=/app/hf_cache \
-    SENTENCE_TRANSFORMERS_HOME=/app/hf_cache
+    FASTEMBED_CACHE_PATH=/app/hf_cache \
+    OMP_NUM_THREADS=1 \
+    TOKENIZERS_PARALLELISM=false
 
 WORKDIR /app
 
@@ -14,11 +24,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+
+# No Torch here, deliberately. Embeddings run on ONNX Runtime (see app/embeddings.py), so nothing
+# in this image pulls the PyTorch wheel — which on Linux is the CUDA build, over a gigabyte of
+# nvidia-* libraries for a host with no GPU, and ~310 MB resident once imported.
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download the embedding model at build time so cold starts are fast and offline-safe.
-RUN python -c "from sentence_transformers import SentenceTransformer; \
-    SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+RUN python -c "from fastembed import TextEmbedding; \
+    TextEmbedding('sentence-transformers/all-MiniLM-L6-v2')"
 
 COPY . .
 

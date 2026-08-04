@@ -55,7 +55,7 @@ quality adapts to the network instead of stalling — nobody downloads a 2 GB fi
                         consume │         └──────────────┘
                   ┌─────────────▼─────────────────┐
                   │  Python AI Service (HF Spaces) │
-                  │  • sentence-transformers embed │
+                  │  • ONNX MiniLM embed           │
                   │  • online clustering           │
                   │  • LangChain RAG draft chain    │
                   │  • Groq / Gemini (free LLM)     │
@@ -99,7 +99,7 @@ enterprises run in production. That rationale is the point of the design.
 | Spring Boot API     | **Koyeb** (or Render)                  | No    | Sleeps when idle → ~30s cold start       |
 | Python AI service   | **Hugging Face Spaces** (Docker)       | No    | 2 vCPU/16GB, sleeps when idle            |
 | LLM inference       | **Ollama** (local) / Groq / Gemini     | No    | Ollama needs no key at all               |
-| Embeddings          | `sentence-transformers` **in-process** | No    | Runs inside the container, $0            |
+| Embeddings          | `all-MiniLM-L6-v2` on ONNX **in-process** | No | Runs inside the container, $0         |
 | Postgres + pgvector | **Neon** (or Supabase)                 | No    | 0.5GB — plenty                           |
 | Video storage       | NAS share, or **in Postgres**          | No    | Needs a volume, or use `database` mode   |
 | Redis Streams       | **Upstash**                            | No    | 10k cmd/day free                         |
