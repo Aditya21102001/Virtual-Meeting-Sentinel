@@ -45,6 +45,25 @@ export interface KnowledgeStatus {
   sources: string[];
   chunks_indexed: number;
   ready: boolean;
+  /** The most recent indexing or removal run, so the UI can show what the pipeline actually did. */
+  last_index_run?: IndexRun | null;
+}
+
+/** One stage of an indexing run, as reported by the AI service. */
+export interface IndexStep {
+  name: string;
+  tool: string;
+  detail: string;
+  status: 'running' | 'done' | 'failed';
+  ms: number | null;
+}
+
+export interface IndexRun {
+  label: string;
+  running: boolean;
+  note: string | null;
+  total_ms: number;
+  steps: IndexStep[];
 }
 
 export interface Member {
@@ -180,6 +199,20 @@ export class ApiService {
     return this.http.post<{ filename: string; chunks_indexed: number } & KnowledgeStatus>(
       `${environment.apiBase}/api/admin/upload-annual-report`,
       form,
+      { headers: this.authHeaders() },
+    );
+  }
+
+  /**
+   * Delete one indexed document — its file, its chunks and its embeddings.
+   *
+   * Returns the knowledge-base status as it stands *after* the rebuild, so the caller sets its panel
+   * from this response rather than firing a second request that could race the rebuild it follows.
+   */
+  removeKnowledgeSource(filename: string): Observable<KnowledgeStatus> {
+    return this.http.post<KnowledgeStatus>(
+      `${environment.apiBase}/api/admin/remove-knowledge-source`,
+      { filename },
       { headers: this.authHeaders() },
     );
   }

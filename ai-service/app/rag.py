@@ -7,9 +7,13 @@ We keep it simple and free: FAISS in-memory index (no external vector DB needed 
 Retrieval feeds a LangChain prompt -> free LLM (Groq/Gemini) -> answer + citations.
 """
 from __future__ import annotations
+import io
 import logging
 import os
 import re
+import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from langchain_community.vectorstores import FAISS
@@ -60,6 +64,60 @@ _CHAT_PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 
+class IndexTrace:
+    """An ordered record of what an indexing run actually did, for the UI to show.
+
+    Retrieval-augmented generation is the part of this system users are most likely to assume is
+    magic, so the pipeline states its work: which library read the PDF, how the text was split, how
+    many vectors were produced and by which model. Every step names a real tool and carries its own
+    duration, because a step list with no timings cannot distinguish "working" from "hung" — and on
+    a free-tier host that has just woken up, the first embed genuinely does take seconds.
+
+    Held on the KnowledgeBase rather than returned from one call, so a run in progress can be polled
+    while it happens and the finished trace stays readable afterwards as an explanation of the
+    pipeline. Deliberately plain dicts: this crosses two service boundaries to reach the browser.
+    """
+
+    def __init__(self, label: str):
+        self.label = label
+        self.steps: list[dict] = []
+        self.note: str | None = None
+        self._started = time.perf_counter()
+        self._finished: float | None = None
+
+    @contextmanager
+    def step(self, name: str, tool: str, detail: str = ""):
+        """Time one stage. The yielded dict is mutable so the body can report what it found."""
+        entry = {"name": name, "tool": tool, "detail": detail, "status": "running", "ms": None}
+        self.steps.append(entry)
+        started = time.perf_counter()
+        try:
+            yield entry
+        except Exception as exc:
+            entry["status"] = "failed"
+            entry["detail"] = str(exc)[:200]
+            entry["ms"] = round((time.perf_counter() - started) * 1000)
+            self.note = f"Failed during “{name}”."
+            self._finished = time.perf_counter()
+            raise
+        entry["status"] = "done"
+        entry["ms"] = round((time.perf_counter() - started) * 1000)
+
+    def finish(self, note: str | None = None) -> None:
+        self.note = note
+        self._finished = time.perf_counter()
+
+    def snapshot(self) -> dict:
+        end = self._finished if self._finished is not None else time.perf_counter()
+        return {
+            "label": self.label,
+            "running": self._finished is None,
+            "note": self.note,
+            "total_ms": round((end - self._started) * 1000),
+            "steps": [dict(s) for s in self.steps],
+        }
+
+
 class KnowledgeBase:
     """FAISS index over the annual report. Rebuilt on startup from PDFs in ai-service/knowledge/."""
 
@@ -70,6 +128,18 @@ class KnowledgeBase:
         self._sources: set[str] = set()   # filenames currently indexed
         self._chunk_count = 0
         self._placeholder_only = False     # True when only the "no report" fallback is loaded
+        self._last_trace: IndexTrace | None = None
+        # Serialises the three operations that mutate the index. Every one of them is a
+        # read-modify-write over _store/_sources/_chunk_count, and a rebuild re-embeds the whole
+        # knowledge base — seconds of work on a one-core container, not microseconds. Two writers
+        # overlapping in that window can interleave a `_sources.clear()` with the other's
+        # `_load_documents()` and leave the source list describing neither state.
+        #
+        # This needs no second human to happen: a moderator uploading a report and the backend
+        # indexing a recording's transcript are different callers reaching the same singleton.
+        # Reentrant because remove_source → _reload_from_disk → load, and add_pdf's replacing
+        # branch, all re-enter while already holding it.
+        self._lock = threading.RLock()
 
     def load(self) -> None:
         docs = self._load_documents()
@@ -158,6 +228,10 @@ class KnowledgeBase:
         rewritten and the whole store is rebuilt from disk instead. That costs re-embedding
         everything, which is why it is not the path taken for a first-time index.
         """
+        with self._lock:
+            return self._add_transcript_locked(video_id, title, vtt, persist)
+
+    def _add_transcript_locked(self, video_id: str, title: str, vtt: str, persist: bool) -> int:
         docs = self._docs_from_vtt(video_id, title, vtt)
         if not docs:
             return 0
@@ -249,27 +323,145 @@ class KnowledgeBase:
     def add_pdf(self, filename: str, data: bytes, persist: bool = True) -> int:
         """Ingest an uploaded annual-report PDF into the live FAISS index at runtime.
 
-        Returns the number of chunks indexed. If the KB currently holds only the empty
-        placeholder, we rebuild fresh so the placeholder can't pollute retrieval.
+        Returns the number of chunks indexed. Several PDFs may be indexed side by side — each is
+        stored under its own name and tagged with it, so citations always say which document they
+        came from.
+
+        <b>Re-uploading the same filename replaces it.</b> Correcting a report by uploading it again
+        is a normal thing to do, and {@code FAISS.add_documents} only ever appends — so without this
+        the old version's chunks would stay in the index competing with the new ones, while
+        {@code _sources} (a set) went on showing a single entry. The only visible symptom would be a
+        chunk count that had quietly doubled, which is not a symptom anyone looks for. The same
+        reasoning already governs {@code add_transcript}.
         """
-        import io
-        reader = PdfReader(io.BytesIO(data))
-        docs = self._docs_from_reader(reader, filename)
+        with self._lock:
+            return self._add_pdf_locked(filename, data, persist)
+
+    def _add_pdf_locked(self, filename: str, data: bytes, persist: bool) -> int:
+        name = self._safe_kb_name(filename)
+        trace = IndexTrace(f"Indexing {name}")
+        self._last_trace = trace
+
+        with trace.step("Read the document", "pypdf") as s:
+            reader = PdfReader(io.BytesIO(data))
+            s["detail"] = f"{len(reader.pages)} page(s), {len(data) / 1024:.0f} kB"
+
+        with trace.step("Split text into chunks",
+                        "RecursiveCharacterTextSplitter (1000 chars, 150 overlap)") as s:
+            docs = self._docs_from_reader(reader, name)
+            s["detail"] = f"{len(docs)} chunk(s)"
+
         if not docs:
+            trace.finish("No extractable text — a scanned PDF needs OCR before it can be indexed.")
             return 0
 
-        self._index(docs)
-        self._sources.add(filename)
+        replacing = persist and (_KB_DIR / name).exists()
+
         if persist:
-            _KB_DIR.mkdir(parents=True, exist_ok=True)
-            (_KB_DIR / filename).write_bytes(data)
+            with trace.step("Store the document", "filesystem") as s:
+                _KB_DIR.mkdir(parents=True, exist_ok=True)
+                (_KB_DIR / name).write_bytes(data)
+                s["detail"] = f"saved as {name}" + (" (replacing the previous version)" if replacing else "")
+
+        if replacing:
+            # Rebuild so the superseded version's vectors go away instead of competing.
+            with trace.step("Re-embed the knowledge base",
+                            "all-MiniLM-L6-v2 on ONNX Runtime → FAISS") as s:
+                self._reload_from_disk()
+                s["detail"] = f"{self._chunk_count} chunk(s) from {len(self._sources)} source(s)"
+        else:
+            with trace.step("Embed and index the chunks",
+                            "all-MiniLM-L6-v2 on ONNX Runtime → FAISS") as s:
+                self._index(docs)
+                self._sources.add(name)
+                s["detail"] = f"{len(docs)} vector(s), 384 dimensions each"
+
+        trace.finish()
         return len(docs)
+
+    def remove_source(self, filename: str) -> dict:
+        """Delete one document and everything derived from it. Returns the resulting status.
+
+        Removal has to reach the vectors, not just the file. Deleting the PDF alone would leave its
+        chunks embedded in a live index that no longer has anything to justify them: retrieval would
+        keep returning passages from a document the operator believes they deleted, and cite it by
+        name. That is the failure worth designing against — a deletion that appears to work.
+        """
+        with self._lock:
+            return self._remove_source_locked(filename)
+
+    def _remove_source_locked(self, filename: str) -> dict:
+        name = self._safe_kb_name(filename)
+        target = _KB_DIR / name
+        trace = IndexTrace(f"Removing {name}")
+        self._last_trace = trace
+
+        with trace.step("Delete the stored document", "filesystem") as s:
+            if not target.exists():
+                raise FileNotFoundError(f"“{name}” is not in the knowledge base.")
+            target.unlink()
+            s["detail"] = f"{name} deleted"
+
+        with trace.step("Rebuild the index from the remaining documents",
+                        "all-MiniLM-L6-v2 on ONNX Runtime → FAISS") as s:
+            self._reload_from_disk()
+            s["detail"] = (
+                f"{self._chunk_count} chunk(s) from {len(self._sources)} source(s) re-embedded"
+                if self._sources else "the knowledge base is now empty"
+            )
+
+        trace.finish()
+        return self.status()
+
+    def _reload_from_disk(self) -> None:
+        """Discard the whole index and rebuild it from the files that remain.
+
+        This is what makes a removal complete rather than cosmetic. {@code FAISS.add_documents} only
+        appends, and this code never keeps the per-document ids that would let one document's vectors
+        be subtracted from the existing store — so there is no partial deletion available. Building a
+        new store from the surviving files leaves every vector of the removed document unreferenced
+        and collected: its chunks, its index entries and its embeddings all go together, which is the
+        only version of "deleted" worth telling an operator about.
+
+        The cost is re-embedding everything that is left, which is why the first-time index path does
+        not come through here.
+
+        {@code _store} is deliberately NOT cleared first. {@code draft} and {@code chat} assert it is
+        not None and then search it, and FastAPI runs those synchronous handlers on a threadpool — so
+        a draft arriving mid-rebuild would trip the assertion and return a 500 for a reason nobody
+        would connect to an unrelated deletion. {@code load} rebinds the store in a single statement,
+        which the GIL makes atomic: a concurrent reader sees the old index or the new one, never
+        neither. Only {@code _sources} needs clearing, because {@code _load_documents} appends to it.
+        """
+        self._sources.clear()
+        self.load()
+
+    @staticmethod
+    def _safe_kb_name(filename: str) -> str:
+        """Reduce a caller-supplied name to a bare filename inside the knowledge folder.
+
+        The name arrives from a browser and crosses two services before it reaches this line, so it
+        is treated as hostile. Anything with a path in it is rejected outright rather than quietly
+        normalised: {@code ../../app/main.py} is not a document name with a mistake in it, it is an
+        attempt to delete something else, and silently trimming it to {@code main.py} would still
+        delete the wrong file.
+        """
+        name = (filename or "").strip()
+        if (not name or name in {".", ".."}
+                or "/" in name or "\\" in name
+                or name != os.path.basename(name)
+                or name.startswith(".")):
+            raise ValueError("Invalid document name.")
+        return name
 
     def status(self) -> dict:
         return {
             "sources": sorted(self._sources),
             "chunks_indexed": self._chunk_count,
             "ready": bool(self._sources),
+            # The most recent indexing or removal run, so the UI can show what the pipeline did.
+            # Additive: existing callers that only read the three fields above are unaffected.
+            "last_index_run": self._last_trace.snapshot() if self._last_trace else None,
         }
 
     def draft(self, cluster_id: str, question: str, k: int = 4) -> DraftResponse:

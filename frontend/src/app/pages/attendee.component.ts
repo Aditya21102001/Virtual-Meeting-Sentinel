@@ -1,6 +1,7 @@
 import { Component, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService, IngestResult } from '../services/api.service';
+import { AuthService } from '../services/auth.service';
 
 @Component({
   selector: 'app-attendee',
@@ -55,9 +56,24 @@ export class AttendeeComponent implements OnInit {
   readonly last = signal<IngestResult | null>(null);
   private attendeeId = 'attendee-' + Math.floor(Math.random() * 1e6);
 
-  constructor(private api: ApiService) {}
+  constructor(
+    private api: ApiService,
+    private auth: AuthService,
+  ) {}
 
   ngOnInit(): void {
+    // Only borrow an anonymous ATTENDEE token when nobody is signed in.
+    //
+    // ApiService holds ONE token for the whole application, so fetching an attendee token
+    // unconditionally used to overwrite a signed-in member's session the moment they opened this
+    // page. The stored role in localStorage was untouched, so the UI still believed it was a
+    // moderator and the route guards kept admitting it, while every request went out carrying an
+    // ATTENDEE bearer — a valid token with the wrong role, which the server answered with 403 on
+    // every role-gated endpoint. It reads as "the whole API broke" and it is really this page.
+    //
+    // A signed-in member needs no attendee token anyway: /api/questions/** already accepts
+    // SHAREHOLDER, MODERATOR and ADMIN, so their own session can submit questions.
+    if (this.auth.isAuthenticated()) return;
     this.api.attendeeLogin(this.attendeeId).subscribe((r) => this.api.setToken(r.token));
   }
 

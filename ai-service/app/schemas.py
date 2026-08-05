@@ -40,6 +40,20 @@ class TranscriptIndexRequest(BaseModel):
     vtt: str
 
 
+class KnowledgeRemoveRequest(BaseModel):
+    """Ask for one indexed document to be deleted, named by its file in ai-service/knowledge/.
+
+    Addressed by filename rather than by the label /knowledge/status displays, because a recording's
+    label ("Recording: <title>") carries a human title that cannot be reversed into a filename — the
+    title lives inside the file's NOTE block, and two recordings may share one. A PDF's label IS its
+    filename, so the sources list is directly usable for the documents this exists to remove.
+
+    Validation deliberately lives in the filesystem layer (KnowledgeBase._safe_kb_name) rather than
+    here: one implementation, at the boundary that actually opens the path.
+    """
+    filename: str
+
+
 class Citation(BaseModel):
     """Where a retrieved passage came from, and how to take the reader there.
 

@@ -82,13 +82,21 @@ export class AuthService {
 
   // ---- session -----------------------------------------------------------
   completeLogin(token: string): void {
-    const role = this.decodeRole(token) ?? "MODERATOR";
+    // An unreadable role is NO role, deliberately. This used to fall back to "MODERATOR", which
+    // fails open in the worst direction: when the claim could not be decoded the client awarded
+    // itself the highest privilege, the route guards then admitted the user to /board, and every
+    // call from that page came back 403 from a server that had read the same token and disagreed.
+    // The result is a session that looks privileged, is not, and offers no clue why — the server
+    // is the only authority on the role, so guessing it here can only ever guess wrong.
+    const role = this.decodeRole(token);
     const user = this.decodeSubject(token) ?? "";
     this.token.set(token);
     this.role.set(role);
     this.username.set(user);
     localStorage.setItem("agm_token", token);
-    localStorage.setItem("agm_role", role);
+    // Remove rather than store "null": a literal would read back as a truthy role on next load.
+    if (role) localStorage.setItem("agm_role", role);
+    else localStorage.removeItem("agm_role");
     localStorage.setItem("agm_user", user);
     this.api.setToken(token);
     this.scheduleExpiry(token);

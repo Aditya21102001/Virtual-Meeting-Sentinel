@@ -24,7 +24,7 @@ from .rag import get_kb, knowledge_file_path
 from .transcribe import TranscriptionUnavailable, transcribe_to_vtt
 from .schemas import (
     ChatRequest, ChatResponse, ClusterView, DraftRequest, DraftResponse,
-    IngestRequest, IngestResponse, TranscriptIndexRequest,
+    IngestRequest, IngestResponse, KnowledgeRemoveRequest, TranscriptIndexRequest,
 )
 
 
@@ -54,6 +54,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/")
+def root() -> dict:
+    """Say what this service is, instead of answering the base URL with a bare 404.
+
+    FastAPI registers no root route, so opening the deployment's own URL returned
+    {"detail": "Not Found"} — which is correct, and indistinguishable to anyone checking whether the
+    deploy worked from the service being down. Every real endpoint is a named path; this one exists
+    only to identify the service and point at the two places worth opening in a browser.
+    """
+    return {
+        "service": app.title,
+        "version": app.version,
+        "status": "ok",
+        "docs": "/docs",
+        "health": "/health",
+    }
 
 
 @app.get("/health")
@@ -120,11 +138,16 @@ def knowledge_file(filename: str) -> FileResponse:
 
 @app.post("/knowledge/upload")
 async def knowledge_upload(file: UploadFile = File(...)) -> dict:
-    """Ingest an uploaded annual-report PDF into the RAG knowledge base at runtime."""
+    """Ingest a source PDF (annual report or similar) — several may be indexed side by side."""
     if not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
     data = await file.read()
-    chunks = get_kb().add_pdf(file.filename, data)
+    try:
+        chunks = get_kb().add_pdf(file.filename, data)
+    except ValueError as ex:
+        # A name like "../x.pdf" satisfies the extension check above and is then refused at the
+        # filesystem boundary. Without this it would surface as a 500 for what is a bad request.
+        raise HTTPException(status_code=400, detail=str(ex)) from ex
     if chunks == 0:
         raise HTTPException(status_code=422, detail="No extractable text found in the PDF.")
     return {"filename": file.filename, "chunks_indexed": chunks, **get_kb().status()}
@@ -149,6 +172,30 @@ def knowledge_transcript(req: TranscriptIndexRequest) -> dict:
                    "\"00:01:02.500 --> 00:01:05.000\".",
         )
     return {"video_id": req.video_id, "passages_indexed": passages, **kb.status()}
+
+
+@app.post("/knowledge/remove")
+def knowledge_remove(req: KnowledgeRemoveRequest) -> dict:
+    """Delete one indexed document and everything derived from it.
+
+    Removal deletes the stored file in ai-service/knowledge/ **and rebuilds the FAISS index from the
+    documents that remain**. Both halves are necessary: the index has no per-document delete, so
+    without the rebuild the removed document's chunks stay retrievable and citable for the life of
+    the process; and without deleting the file the next restart re-indexes it straight back.
+
+    Removing the last document leaves the empty-knowledge-base placeholder in place, so `ready`
+    becomes false and /draft reports that it cannot find an answer in the available sources.
+    """
+    kb = get_kb()
+    try:
+        status = kb.remove_source(req.filename)
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex)) from ex
+    except FileNotFoundError as ex:
+        raise HTTPException(status_code=404, detail=str(ex)) from ex
+    # remove_source already returned the post-rebuild status; re-reading it would open a window in
+    # which another request had mutated the index between the two reads.
+    return {"filename": req.filename, "removed": True, **status}
 
 
 @app.post("/transcribe")

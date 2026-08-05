@@ -155,6 +155,25 @@ public class AiClient {
                 .block();
     }
 
+    /**
+     * Drop one indexed document from the RAG knowledge base — its file, its chunks and its vectors.
+     *
+     * <p>The AI service deletes the stored file and then rebuilds the index from the documents that
+     * remain, because a FAISS index has no per-document delete. That makes removal cost the same as
+     * an upload rather than the same as a status read, which is why the timeout matches
+     * {@link #indexTranscript} at two minutes instead of the fifteen seconds
+     * {@link #knowledgeStatus} allows.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> removeKnowledgeSource(String filename) {
+        return web.post().uri("/knowledge/remove")
+                .bodyValue(Map.of("filename", filename))
+                .retrieve()
+                .bodyToMono(Map.class)
+                .timeout(Duration.ofSeconds(120))   // the whole index is re-embedded from disk
+                .block();
+    }
+
     public List<ClusterView> clusters(int limit) {
         return web.get().uri(uri -> uri.path("/clusters").queryParam("limit", limit).build())
                 .retrieve()

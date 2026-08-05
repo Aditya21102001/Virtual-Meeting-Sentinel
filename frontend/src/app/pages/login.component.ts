@@ -142,7 +142,11 @@ export class LoginComponent implements OnInit {
     // The auth interceptor redirects here with ?expired=1 when a stale/expired session is
     // rejected by the server — tell the user why they're back at the sign-in screen.
     if (this.route.snapshot.queryParamMap.get('expired')) {
-      this.error.set('Your session expired. Please sign in again.');
+      this.error.set(
+        this.route.snapshot.queryParamMap.get('reason') === 'role'
+          ? 'Your account no longer has moderator access. Sign in again to refresh your permissions.'
+          : 'Your session expired. Please sign in again.',
+      );
     }
     this.auth.config().subscribe({ next: (c) => this.googleEnabled.set(c.googleEnabled) });
   }
@@ -237,7 +241,12 @@ export class LoginComponent implements OnInit {
     if (requested && requested.startsWith('/') && !requested.startsWith('//')) {
       return requested;
     }
-    return this.auth.isShareholder() ? '/chat' : '/board';
+    // Land on a page this role can actually open. `/board` used to be the catch-all, so a session
+    // that was neither moderator nor shareholder was sent straight into a guard and bounced back
+    // here — a sign-in that visibly succeeds and then returns you to the login form.
+    if (this.auth.isModerator()) return '/board';
+    if (this.auth.isShareholder()) return '/chat';
+    return '/ask';
   }
 
   private msg(e: any): string {

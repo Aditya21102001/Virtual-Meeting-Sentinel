@@ -240,9 +240,12 @@ export class ModeratorComponent implements OnInit, OnDestroy {
         this.error.set(null);
       },
       error: (err) => {
+        // A 403 is a permissions answer, not a transient one. Calling it "temporarily unavailable"
+        // invites the user to retry something that will fail identically every time, and hides the
+        // one fact that would help them: this account cannot load the board.
         const message =
           err?.status === 403
-            ? "The board is temporarily unavailable. Please try again in a moment."
+            ? "Your account does not have moderator access to the board. Sign in again, or ask an administrator to restore the role."
             : "We could not load the board right now.";
         this.error.set(message);
       },

@@ -38,3 +38,7 @@ hf_cache/
 
 # local deployment staging (not part of the app)
 .deploy/
+
+# Local video storage (the real store is the NAS share at VIDEO_NAS_PATH)
+var/
+backend/var/
