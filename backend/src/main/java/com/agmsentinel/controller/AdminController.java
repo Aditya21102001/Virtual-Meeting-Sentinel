@@ -33,10 +33,28 @@ public class AdminController {
         this.questions = questions;
     }
 
-    /** Current knowledge-base status (which reports are indexed, chunk count). */
+    /**
+     * Current knowledge-base status (which documents are indexed, chunk count).
+     *
+     * <p>Failure is translated rather than propagated. A free-tier AI service that has been idle
+     * takes tens of seconds to wake, and any failure to reach it arrives here as an unhandled
+     * {@code WebClient} runtime exception — which {@code GlobalExceptionHandler} does not cover, so
+     * it would reach the browser as a bare 500 carrying no message the Setup page could display.
+     * A 503 with a sentence is the difference between "something broke" and "wait and retry".
+     *
+     * <p>The catch is deliberately broad: every way this call can fail means the same thing to the
+     * operator — the knowledge base could not be read right now — and none of them is worth a
+     * different screen.
+     */
     @PostMapping("/knowledge-status")
-    public Map<String, Object> knowledgeStatus() {
-        return ai.knowledgeStatus();
+    public ResponseEntity<?> knowledgeStatus() {
+        try {
+            return ResponseEntity.ok(ai.knowledgeStatus());
+        } catch (RuntimeException ex) {
+            return ResponseEntity.status(503).body(Map.of("error",
+                    "The AI service is not responding yet. It sleeps when idle and takes "
+                    + "up to a minute to wake — try again shortly."));
+        }
     }
 
     /** Names one indexed document. In the body rather than the path, so the URL stays readable. */

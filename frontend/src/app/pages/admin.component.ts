@@ -28,7 +28,20 @@ import { ApiService, KnowledgeStatus } from '../services/api.service';
           </button>
         </div>
         @if (reportMsg()) { <p class="muted" style="margin-top:8px">{{ reportMsg() }}</p> }
-        @if (statusErr()) { <p class="error-box" style="margin-top:8px">{{ statusErr() }}</p> }
+        @if (statusLoading()) {
+          <p class="muted" style="margin-top:8px">
+            Reading the knowledge base… the AI service sleeps when idle, so the first read after a
+            quiet spell can take up to a minute.
+          </p>
+        }
+        @if (statusErr()) {
+          <p class="error-box" style="margin-top:8px">
+            {{ statusErr() }}
+            <button (click)="retryStatus()" [disabled]="statusLoading()" style="margin-left:8px">
+              Retry
+            </button>
+          </p>
+        }
 
         @if (status(); as s) {
           <div class="draft" style="margin-top:10px">
@@ -137,6 +150,7 @@ export class AdminComponent implements OnInit {
   readonly bankMsg = signal('');
   readonly status = signal<KnowledgeStatus | null>(null);
   readonly statusErr = signal('');
+  readonly statusLoading = signal(false);
   readonly removing = signal<string | null>(null);
   readonly confirmingRemove = signal<string | null>(null);
 
@@ -147,16 +161,31 @@ export class AdminComponent implements OnInit {
     this.refreshStatus();
   }
 
+  /** Manual re-read, offered next to the error so a sleeping AI service is one click from fixed. */
+  retryStatus(): void {
+    this.refreshStatus();
+  }
+
   private refreshStatus(): void {
+    this.statusLoading.set(true);
+    this.statusErr.set('');
     this.api.knowledgeStatus().subscribe({
       next: (s) => {
         this.status.set(s);
         this.statusErr.set('');
+        this.statusLoading.set(false);
       },
       // Reported rather than swallowed. Without this an unreachable AI service leaves the panel
       // blank, which reads as "nothing is indexed" at the very moment the Remove controls vanish.
-      error: () =>
-        this.statusErr.set('Could not read the knowledge base. Is the AI service awake?'),
+      //
+      // The server's own sentence wins when it sent one: it knows whether the AI service is merely
+      // waking or genuinely unreachable, and this page cannot tell the difference.
+      error: (err) => {
+        this.statusErr.set(
+          err?.error?.error ?? 'Could not read the knowledge base. Is the AI service awake?',
+        );
+        this.statusLoading.set(false);
+      },
     });
   }
 

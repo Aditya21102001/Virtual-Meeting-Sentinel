@@ -147,11 +147,21 @@ public class AiClient {
         return vtt instanceof String text && !text.isBlank() ? text : null;
     }
 
+    /**
+     * Read the knowledge-base status.
+     *
+     * <p>The timeout is sized for a <em>sleeping</em> AI service, not a warm one. Warm, this call
+     * answers in about half a second; cold on a free-tier host it takes roughly forty, because the
+     * container has to start and the service then loads the embedding model and rebuilds the FAISS
+     * index before it serves anything. The previous fifteen seconds was therefore guaranteed to
+     * fail on the first request after an idle period — which is exactly when a moderator opens the
+     * Setup page — and the failure surfaced as "is the AI service awake?" with no way to wait.
+     */
     public Map<String, Object> knowledgeStatus() {
         return web.get().uri("/knowledge/status")
                 .retrieve()
                 .bodyToMono(Map.class)
-                .timeout(Duration.ofSeconds(15))
+                .timeout(Duration.ofSeconds(60))
                 .block();
     }
 
