@@ -1,8 +1,9 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpContext } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { AuthService } from './auth.service';
+import { SILENT } from './loading.service';
 
 /** One motion and how it went. */
 export interface ResolutionOutcome {
@@ -109,7 +110,13 @@ export class ReportService {
     return this.http.post(
       `${this.base}/download-minutes`,
       { meetingId },
-      { headers: this.headers(), responseType: 'blob' },
+      // The button shows "Preparing…" itself, and a download is something you should be able to
+      // start and then keep working.
+      {
+        headers: this.headers(),
+        responseType: 'blob',
+        context: new HttpContext().set(SILENT, true),
+      },
     );
   }
 }

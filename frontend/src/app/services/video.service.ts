@@ -364,7 +364,10 @@ export class VideoService {
     form.append('id', id);
     form.append('file', file, file.name);
     return this.http
-      .post<VideoCard>(`${this.admin}/upload-transcript`, form, { headers: this.headers() })
+      .post<VideoCard>(`${this.admin}/upload-transcript`, form, {
+        headers: this.headers(),
+        context: new HttpContext().set(SILENT, true),   // slow: re-embeds the transcript
+      })
       .pipe(map((card) => this.normalizeMediaUrls(card)));
   }
 
@@ -470,9 +473,12 @@ export class VideoService {
 
     return this.http
       .post<VideoCard>(`${this.admin}/upload-video`, form, {
+        // SILENT: a video upload has its own progress bar and can run for a long time. See
+        // ApiService.uploadAnnualReport for why long work must never raise the global blocker.
         headers: this.headers(),
         reportProgress: true,
         observe: "events",
+        context: new HttpContext().set(SILENT, true),
       })
       .pipe(map((event) => this.toProgress(event, file.size)));
   }

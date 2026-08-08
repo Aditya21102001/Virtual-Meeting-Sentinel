@@ -384,6 +384,11 @@ export class ApiService {
         headers: this.authHeaders(),
         reportProgress: true,
         observe: 'events',
+        // SILENT: this runs for minutes and reports its own byte-level and per-chunk progress on
+        // the page. Raising the global blocker for it would freeze the whole application for the
+        // length of an indexing run — and the user must stay free to navigate away and come back,
+        // because the server keeps working whether they watch it or not.
+        context: new HttpContext().set(SILENT, true),
       })
       .pipe(map((event) => toUploadPhase<AnnualReportResult>(event)), filter((p): p is UploadPhase<AnnualReportResult> => p !== null));
   }
@@ -398,7 +403,9 @@ export class ApiService {
     return this.http.post<KnowledgeStatus>(
       `${environment.apiBase}/api/admin/remove-knowledge-source`,
       { filename },
-      { headers: this.authHeaders() },
+      // Removal rebuilds the whole index — as slow as an upload. The row shows its own
+      // "Removing…" state, so the app must not freeze behind it.
+      { headers: this.authHeaders(), context: new HttpContext().set(SILENT, true) },
     );
   }
 
@@ -413,6 +420,7 @@ export class ApiService {
         headers: this.authHeaders(),
         reportProgress: true,
         observe: 'events',
+        context: new HttpContext().set(SILENT, true),   // own progress; see uploadAnnualReport
       })
       .pipe(map((event) => toUploadPhase<QuestionBankResult>(event)), filter((p): p is UploadPhase<QuestionBankResult> => p !== null));
   }
