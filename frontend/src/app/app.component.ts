@@ -1,4 +1,11 @@
-import { Component, HostListener, computed, effect, signal } from "@angular/core";
+import {
+  Component,
+  HostListener,
+  computed,
+  effect,
+  signal,
+  untracked,
+} from "@angular/core";
 import {
   RouterLink,
   RouterLinkActive,
@@ -519,6 +526,14 @@ export class AppComponent {
    */
   readonly openMenu = signal<'run' | 'admin' | 'account' | null>(null);
 
+  /**
+   * The signed-in state the session data was last loaded for, or null before the first run.
+   *
+   * <p>A plain field, not a signal, on purpose: writing a signal inside the effect that reads it
+   * is how loops start, and nothing renders this.
+   */
+  private sessionLoadedFor: boolean | null = null;
+
   /** First letter of the username, for the account button. */
   readonly initial = computed(() => (this.auth.username() ?? '?').charAt(0).toUpperCase());
 
@@ -567,17 +582,35 @@ export class AppComponent {
     private router: Router,
   ) {
     // Which features this user may see depends on who they are, so re-read whenever the session
-    // changes — on sign-in, on sign-out, and when a renewed token brings different roles.
+    // changes — on sign-in and on sign-out.
+    //
+    // GUARDED ON THE TRANSITION, and the guard is load-bearing.
+    //
+    // isAuthenticated() is a computed over the token signal, so it re-evaluates on every token
+    // WRITE — and the session renews itself periodically, with completeLogin() setting a brand-new
+    // token string each time. Without the guard this effect re-ran on every renewal and fired two
+    // more requests, which is how a single page load turned into my-features and active-meeting
+    // being called over and over.
+    //
+    // untracked() around the work is the second half: it stops anything read inside those calls
+    // from becoming a dependency and re-arming the effect for a reason nobody intended.
     effect(() => {
-      if (this.auth.isAuthenticated()) {
+      const signedIn = this.auth.isAuthenticated();
+
+      untracked(() => {
+        if (signedIn === this.sessionLoadedFor) return;   // nothing changed; do no work
+        this.sessionLoadedFor = signedIn;
+
+        if (!signedIn) {
+          this.features.clear();
+          return;
+        }
         this.features.refresh().subscribe({ error: () => {} });
         // Read once per session rather than polled: activating a meeting is a deliberate act by a
         // manager, not something that changes under a reader every few seconds. Screens that act
         // on it — the ballot, the board — refresh it themselves when they load.
         this.meetings.refreshActive().subscribe({ error: () => {} });
-      } else {
-        this.features.clear();
-      }
+      });
     });
   }
 
