@@ -337,9 +337,18 @@ export class ApiService {
    * one on a cold server the indexing does. Reporting them as one number would misattribute the
    * wait, and "stuck at 100%" is the usual result.
    */
-  uploadAnnualReport(file: File): Observable<UploadPhase<AnnualReportResult>> {
+  uploadAnnualReport(
+    file: File,
+    /**
+     * Which meeting the document belongs to. Omit for SHARED — retrievable by every meeting, and
+     * the right default for the articles or a standing policy. This is why a document uploaded
+     * without a choice turns up against a brand-new meeting.
+     */
+    meetingId?: string | null,
+  ): Observable<UploadPhase<AnnualReportResult>> {
     const form = new FormData();
     form.append('file', file, file.name);
+    if (meetingId) form.append('meetingId', meetingId);
 
     return this.http
       .post<AnnualReportResult>(`${environment.apiBase}/api/admin/upload-annual-report`, form, {

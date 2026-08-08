@@ -1,5 +1,6 @@
 import { Component, OnDestroy, OnInit, computed, signal } from '@angular/core';
-import { concatMap, from } from 'rxjs';
+import { concatMap, from, timeout } from 'rxjs';
+import { MeetingService, MeetingView } from '../services/meeting.service';
 import {
   AnnualReportResult,
   ApiService,
@@ -27,6 +28,34 @@ import {
           everything derived from it — its chunks and its embeddings.
         </p>
         <div class="row" style="margin-top:10px">
+          <!--
+            Which meeting these documents belong to.
+            Shared is the default and is listed first: the articles, a standing policy and a
+            reference report all apply to every meeting, and making somebody re-upload them per
+            meeting would be busywork that also multiplies the index. Scoping is the deliberate
+            choice, which is why it is a picker rather than an automatic tag from whatever happens
+            to be live.
+          -->
+          <label class="label" for="upload-scope">Applies to</label>
+          <select
+            id="upload-scope"
+            [value]="uploadMeetingId()"
+            (change)="uploadMeetingId.set($any($event.target).value)"
+            [disabled]="reportBusy()"
+          >
+            <option value="">Every meeting (shared)</option>
+            @for (m of meetings(); track m.id) {
+              <option [value]="m.id">Only “{{ m.title }}”</option>
+            }
+          </select>
+          <p class="muted" style="margin:6px 0 10px; font-size:12px">
+            @if (uploadMeetingId()) {
+              Only answers for this meeting will cite these documents.
+            } @else {
+              Every meeting will be able to cite these documents — including meetings created later.
+            }
+          </p>
+
           <label class="sr-only" for="report-file">Annual report PDFs to index</label>
           <input #reportInput id="report-file" type="file" accept="application/pdf" multiple
                  (change)="pickReport($event)" />
@@ -41,32 +70,36 @@ import {
             quiet spell can take up to a minute.
           </p>
         }
-        @if (statusErr()) {
-          <!--
-            A cold start is not a failure, and must not look like one. The AI service sleeps when
-            idle on a free tier, so the FIRST request after a quiet spell fails while every one
-            after it succeeds. Showing that as a red error box teaches people to distrust a panel
-            that was about to work on its own.
+        <!--
+          A cold start is not a failure, and must not look like one. The AI service sleeps when
+          idle on a free tier, so the FIRST request after a quiet spell fails while every one after
+          it succeeds. Showing that as a red error box teaches people to distrust a panel that was
+          about to work on its own.
 
-            So a 503 gets a calm, self-resolving "waking" state with the elapsed time visible, and
-            anything else — a real failure — still gets the error box it deserves.
-          -->
-          @if (waking()) {
-            <p class="waking" role="status">
-              <span class="spinner" aria-hidden="true"></span>
-              Waking the AI service — it sleeps when idle and takes up to a minute to start.
-              <span class="muted-inline">
-                Retrying automatically ({{ wakeSeconds() }}s, attempt {{ wakeAttempt() }}).
-              </span>
-            </p>
-          } @else if (statusErr()) {
-            <p class="error-box" style="margin-top:8px">
-              {{ statusErr() }}
-              <button (click)="retryStatus()" [disabled]="statusLoading()" style="margin-left:8px">
-                Retry
-              </button>
-            </p>
-          }
+          So a 503 gets a calm, self-resolving "waking" state with the elapsed time visible, and
+          anything else — a real failure — still gets the error box it deserves.
+
+          NOTE the two states are SIBLINGS, not nested. This block used to sit inside
+          @if (statusErr()), which made it unreachable: the 503 path deliberately does not set
+          statusErr (that is what stops the red box appearing), so the outer condition was always
+          false and the waking panel never rendered at all. The user got ~50 seconds of blank page
+          followed by the failure message — the exact opposite of the intent.
+        -->
+        @if (waking()) {
+          <p class="waking" role="status">
+            <span class="spinner" aria-hidden="true"></span>
+            Waking the AI service — it sleeps when idle and takes up to a minute to start.
+            <span class="muted-inline">
+              Retrying automatically ({{ wakeSeconds() }}s, attempt {{ wakeAttempt() }}).
+            </span>
+          </p>
+        } @else if (statusErr()) {
+          <p class="error-box" style="margin-top:8px">
+            {{ statusErr() }}
+            <button (click)="retryStatus()" [disabled]="statusLoading()" style="margin-left:8px">
+              Retry
+            </button>
+          </p>
         }
 
         @if (status(); as s) {
@@ -261,6 +294,13 @@ import {
     `
       button.danger { background: none; border: 1px solid #7f1d1d; color: #fca5a5; }
 
+      .label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        margin: 10px 0 5px;
+      }
+
       /* ---- upload / indexing progress ---- */
       .progress-panel {
         margin-top: 10px;
@@ -408,10 +448,22 @@ export class AdminComponent implements OnInit, OnDestroy {
   readonly uploadIndex = signal(0);
   readonly uploadTotal = signal(0);
 
+  /**
+   * Which meeting an uploaded document belongs to. Empty means shared with all of them.
+   *
+   * <p>Defaults to shared deliberately. Most documents — the articles, a standing policy, a
+   * reference report — apply to every meeting, and requiring a re-upload per meeting would be
+   * busywork that also multiplies the index. Scoping is the deliberate choice.
+   */
+  readonly uploadMeetingId = signal('');
+  readonly meetings = signal<MeetingView[]>([]);
+
   readonly bankPhase = signal<'idle' | 'uploading' | 'indexing'>('idle');
   readonly bankPercent = signal(0);
 
-  private pipelineTimer: ReturnType<typeof setInterval> | null = null;
+  private pipelineTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Guards against a second poll loop, and stops a re-arm after teardown. */
+  private pipelinePolling = false;
 
   /**
    * The run currently in flight, or null.
@@ -433,9 +485,18 @@ export class AdminComponent implements OnInit, OnDestroy {
   private static readonly WAKE_DELAYS_MS = [3000, 5000, 8000, 13000, 21000];
   private static readonly MAX_WAKE_ATTEMPTS = 5;
 
-  constructor(private api: ApiService) {}
+  constructor(
+    private api: ApiService,
+    private meetingService: MeetingService,
+  ) {}
 
   ngOnInit(): void {
+    // The meeting list, for scoping an upload. Silent on failure: without it the picker simply
+    // offers "shared", which is the default anyway.
+    this.meetingService.list().subscribe({
+      next: (list) => this.meetings.set(list),
+      error: () => {},
+    });
     // Token is already set by AuthService — the route guard ensures a logged-in moderator.
     this.refreshStatus();
   }
@@ -578,7 +639,7 @@ export class AdminComponent implements OnInit, OnDestroy {
           this.uploadName.set(f.name);
           this.uploadPhase.set('uploading');
           this.uploadPercent.set(0);
-          return this.api.uploadAnnualReport(f);
+          return this.api.uploadAnnualReport(f, this.uploadMeetingId() || null);
         }),
       )
       .subscribe({
@@ -706,19 +767,50 @@ export class AdminComponent implements OnInit, OnDestroy {
   // makes it visible WHILE it happens rather than in one lump once it has finished.
 
   private startPipelinePolling(): void {
-    if (this.pipelineTimer) return;
-    this.pipelineTimer = setInterval(() => {
-      this.api.knowledgeStatus().subscribe({
+    if (this.pipelinePolling) return;
+    this.pipelinePolling = true;
+    this.pollPipelineOnce();
+  }
+
+  /**
+   * One poll, re-arming itself only after the previous one settles.
+   *
+   * <h3>Why not setInterval</h3>
+   * A fixed 1.2 s interval assumes each poll finishes inside 1.2 s. When the AI service is busy —
+   * which, during indexing, is precisely always — it does not. Each late poll still occupies a
+   * Tomcat request thread on the backend while its 60-second server-side timeout runs down, so a
+   * naive interval reaches roughly 50 requests in flight (60 s ÷ 1.2 s) against a pool of 20.
+   *
+   * <p>The backend then serves nothing at all — not the board, not sign-in — until the pile drains.
+   * A progress bar that can take the whole application down is a bad trade for a progress bar.
+   *
+   * <p>Self-rearming caps it at ONE outstanding poll, whatever the server is doing. The 8-second
+   * client timeout is the second half: it releases the thread long before the server's 60 s would,
+   * because a status read that has not answered in 8 seconds is not going to say anything useful.
+   */
+  private pollPipelineOnce(): void {
+    if (!this.pipelinePolling) return;
+
+    this.api
+      .knowledgeStatus()
+      .pipe(timeout(8000))
+      .subscribe({
         next: (s) => this.status.set(s),
-        // Silent: a dropped poll during indexing is not worth an error banner, and the next tick
-        // will pick it up. The upload's own error path still reports a genuine failure.
-        error: () => {},
+        // Silent, and still re-arms: a dropped or slow poll during indexing is not worth an error
+        // banner, and the upload's own error path still reports a genuine failure.
+        error: () => this.rearmPipelinePoll(),
+        complete: () => this.rearmPipelinePoll(),
       });
-    }, 1200);
+  }
+
+  private rearmPipelinePoll(): void {
+    if (!this.pipelinePolling) return;
+    this.pipelineTimer = setTimeout(() => this.pollPipelineOnce(), 1200);
   }
 
   private stopPipelinePolling(): void {
-    if (this.pipelineTimer) clearInterval(this.pipelineTimer);
+    this.pipelinePolling = false;
+    if (this.pipelineTimer) clearTimeout(this.pipelineTimer);
     this.pipelineTimer = null;
   }
 }

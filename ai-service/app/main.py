@@ -19,6 +19,8 @@ from fastapi.responses import FileResponse
 
 import logging
 
+from starlette.concurrency import run_in_threadpool
+
 from .clustering import get_clusterer
 from .config import get_settings
 from .embeddings import get_embeddings
@@ -162,7 +164,17 @@ async def knowledge_upload(
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
     data = await file.read()
     try:
-        chunks = get_kb().add_pdf(file.filename, data, meeting_id=meeting_id)
+        # Off the event loop. add_pdf re-chunks, re-embeds and rebuilds FAISS — tens of seconds
+        # for a real report. Run inline, it blocks the single uvicorn worker for that entire time,
+        # so NO route is dispatched at all: /knowledge/status stops answering, and the admin page's
+        # progress poll cannot be served until the thing it is watching has already finished.
+        #
+        # Safe to move: add_pdf takes its own RLock (see rag.py), so it is already written for
+        # multi-threaded entry, and status() is deliberately lock-free so it stays readable while
+        # this runs — which is what makes live progress possible at all.
+        chunks = await run_in_threadpool(
+            get_kb().add_pdf, file.filename, data, meeting_id=meeting_id
+        )
     except ValueError as ex:
         # A name like "../x.pdf" satisfies the extension check above and is then refused at the
         # filesystem boundary. Without this it would surface as a 500 for what is a bad request.
@@ -230,7 +242,13 @@ async def transcribe(file: UploadFile = File(...)) -> dict:
     if not audio:
         raise HTTPException(status_code=400, detail="No audio was uploaded.")
     try:
-        vtt = transcribe_to_vtt(file.filename or "audio.mp3", audio)
+        # Off the event loop for the same reason as the upload above: this is a blocking network
+        # call to a speech-to-text provider that can run for minutes, kicked off by a background
+        # worker after any video upload. Held inline, it takes every other route down with it while
+        # nobody has clicked anything — which is exactly the shape of an outage that looks random.
+        vtt = await run_in_threadpool(
+            transcribe_to_vtt, file.filename or "audio.mp3", audio
+        )
     except TranscriptionUnavailable as ex:
         # 503, not 500: nothing is broken, the capability simply is not configured here.
         raise HTTPException(status_code=503, detail=str(ex)) from ex

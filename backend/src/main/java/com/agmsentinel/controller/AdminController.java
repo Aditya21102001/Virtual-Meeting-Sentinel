@@ -2,6 +2,8 @@ package com.agmsentinel.controller;
 
 import com.agmsentinel.service.AiClient;
 import com.agmsentinel.service.QuestionService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -13,6 +15,7 @@ import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Moderator setup endpoints: upload source PDFs (indexed into the RAG knowledge base — several may
@@ -24,6 +27,8 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/admin")
 public class AdminController {
+
+    private static final Logger log = LoggerFactory.getLogger(AdminController.class);
 
     private final AiClient ai;
     private final QuestionService questions;
@@ -51,6 +56,13 @@ public class AdminController {
         try {
             return ResponseEntity.ok(ai.knowledgeStatus());
         } catch (RuntimeException ex) {
+            // Logged, because the message returned below is the same for every cause. A timeout, a
+            // pool-acquire failure, a prematurely closed connection and a refused connection are
+            // four different problems with four different fixes, and without this line they are
+            // indistinguishable from each other in production — which is precisely what made this
+            // symptom hard to explain.
+            log.warn("knowledge-status failed ({}): {}",
+                     ex.getClass().getSimpleName(), ex.getMessage());
             return ResponseEntity.status(503).body(Map.of("error",
                     "The AI service is not responding yet. It sleeps when idle and takes "
                     + "up to a minute to wake — try again shortly."));
@@ -109,7 +121,14 @@ public class AdminController {
 
     /** Upload an annual-report PDF -> indexed into RAG at runtime. */
     @PostMapping("/upload-annual-report")
-    public ResponseEntity<?> uploadKnowledge(@RequestParam("file") MultipartFile file) throws IOException {
+    public ResponseEntity<?> uploadKnowledge(
+            @RequestParam("file") MultipartFile file,
+            /**
+             * Which meeting this document belongs to. Absent means SHARED with every meeting,
+             * which is the right default for the articles or a standing policy — and the reason a
+             * document uploaded without a choice appears against a brand-new meeting.
+             */
+            @RequestParam(value = "meetingId", required = false) UUID meetingId) throws IOException {
         if (file.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "No file provided."));
         }
@@ -120,7 +139,7 @@ public class AdminController {
         if (file.getSize() > MAX_PDF_BYTES) {
             return ResponseEntity.badRequest().body(Map.of("error", "PDF is larger than the 25 MB limit."));
         }
-        Map<String, Object> result = ai.uploadKnowledge(name, file.getBytes());
+        Map<String, Object> result = ai.uploadKnowledge(name, file.getBytes(), meetingId);
         return ResponseEntity.ok(result);
     }
 

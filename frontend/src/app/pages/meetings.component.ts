@@ -208,15 +208,61 @@ import {
           @if (openMeetingId() === m.id) {
             <div class="inspector">
               @if (m.status !== 'CLOSED') {
+                <!--
+                  Everyone with an account, one click from being added.
+
+                  A datalist alone was not enough: browsers only reveal its suggestions once you
+                  start typing, so the roster existed but was invisible to anyone who did not
+                  already know the names — which is precisely the person who needs it.
+
+                  Already-mapped users stay in the list, shown as added rather than filtered out.
+                  Hiding them would answer "who can I add" while leaving "who is already in"
+                  unanswerable without scrolling to a second list.
+                -->
+                @if (registeredUsers().length) {
+                  <div class="roster">
+                    <p class="muted note" id="roster-label-{{ m.id }}">
+                      Registered users — click to add with the role and weight below.
+                    </p>
+                    <ul class="roster-list" [attr.aria-labelledby]="'roster-label-' + m.id">
+                      @for (u of registeredUsers(); track u.id) {
+                        <li>
+                          @if (isMemberOf(u.username)) {
+                            <span class="roster-chip added">
+                              <span aria-hidden="true">✓</span>
+                              {{ u.username }}
+                              <span class="sr-only">already a member</span>
+                            </span>
+                          } @else {
+                            <button
+                              type="button"
+                              class="roster-chip"
+                              [disabled]="busy()"
+                              (click)="addNamed(m, u.username)"
+                            >
+                              <span aria-hidden="true">+</span>
+                              {{ u.username }}
+                              <span class="muted-inline">{{ u.role }}</span>
+                            </button>
+                          }
+                        </li>
+                      }
+                    </ul>
+                  </div>
+                }
+
                 <div class="row" style="margin:8px 0">
                   <!--
-                    A picker AND free text, deliberately. Registered users autocomplete, because
-                    typing a username from memory is how you map the wrong person — but the field
-                    still accepts anything, because this is an invitation list: somebody can be
-                    added before they have ever signed in, and a strict dropdown would make that
-                    impossible. See MeetingMember on why the username is stored as plain text.
+                    Free text as well as the roster above, because this is an INVITATION list:
+                    somebody can be added before they have ever signed in, and a picker restricted
+                    to existing accounts would make the main use case impossible. See MeetingMember
+                    on why the username is stored as plain text with no foreign key.
+
+                    The datalist stays for people who would rather type than click.
                   -->
-                  <label class="sr-only" [attr.for]="'member-' + m.id">Username to add</label>
+                  <label class="label-inline" [attr.for]="'member-' + m.id">
+                    Or invite someone without an account
+                  </label>
                   <input
                     [id]="'member-' + m.id"
                     type="text"
@@ -318,6 +364,49 @@ import {
       .weight input {
         width: 88px;
       }
+      /* ---- the registered-user roster ---- */
+      .roster {
+        margin: 10px 0;
+      }
+      .roster-list {
+        list-style: none;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 0;
+        margin: 8px 0 0;
+      }
+      .roster-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        border: 1px solid #334155;
+        background: transparent;
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 600;
+        width: auto;
+        cursor: pointer;
+      }
+      button.roster-chip:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      /* Already in: shown, not hidden, so the roster answers "who is in" as well as "who can I
+         add". Not a button, because there is nothing to press. */
+      .roster-chip.added {
+        opacity: 0.62;
+        cursor: default;
+        border-style: dashed;
+      }
+      .label-inline {
+        font-size: 13px;
+        color: var(--muted);
+        align-self: center;
+      }
+
       /* Amber, not red: unattributed data is a migration step to take, not a failure. */
       .orphans {
         border-left: 4px solid #f59e0b;
@@ -562,6 +651,30 @@ export class MeetingsComponent implements OnInit {
       next: (counts) => this.orphans.set(counts),
       error: () => this.orphans.set(null),
     });
+  }
+
+  /**
+   * Is this person already mapped to the meeting whose panel is open?
+   *
+   * <p>Drives the roster's "already a member" state. Compared case-insensitively because a username
+   * typed by hand is rarely typed the same way twice, and offering to add somebody who is already
+   * in — then quietly updating them instead — is a confusing way to say "they are already here".
+   */
+  isMemberOf(username: string): boolean {
+    const wanted = username.trim().toLowerCase();
+    return this.members().some((m) => m.username.trim().toLowerCase() === wanted);
+  }
+
+  /**
+   * Add a named user from the roster in one click.
+   *
+   * <p>Uses whatever role and weight are set in the fields below, so the common case — pick a role
+   * once, then click several names — costs one click each rather than a round trip through the
+   * text field.
+   */
+  addNamed(meeting: MeetingView, username: string): void {
+    this.newMember.set(username);
+    this.addMember(meeting);
   }
 
   runBackfill(): void {

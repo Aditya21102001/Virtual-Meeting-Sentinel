@@ -5,6 +5,7 @@ import com.agmsentinel.dto.ChatDtos.AiChatResult;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.BodyInserters;
@@ -23,7 +24,8 @@ public class AiClient {
 
     private final WebClient web;
 
-    public AiClient(@Value("${ai.service.url:http://localhost:8000}") String baseUrl) {
+    public AiClient(@Value("${ai.service.url:http://localhost:8000}") String baseUrl,
+                    ReactorClientHttpConnector connector) {
         // Raise WebClient's default 256KB in-memory buffer. fetchKnowledgeFile() reads a
         // whole proxied PDF into a byte[], and real annual-report PDFs exceed 256KB — which
         // otherwise throws DataBufferLimitException → 500 when a user opens a citation link.
@@ -35,6 +37,10 @@ public class AiClient {
         this.web = WebClient.builder()
                 .baseUrl(baseUrl)
                 .exchangeStrategies(strategies)
+                // Explicit connector rather than reactor-netty's global defaults — those have no
+                // idle eviction, no connect timeout and no response timeout, each of which fails
+                // intermittently in a way that looks like flakiness. See AiWebClientConfig.
+                .clientConnector(connector)
                 .build();
     }
 
@@ -116,6 +122,18 @@ public class AiClient {
     /** Forward an uploaded annual-report PDF to the AI service for runtime RAG indexing. */
     @SuppressWarnings("unchecked")
     public Map<String, Object> uploadKnowledge(String filename, byte[] bytes) {
+        return uploadKnowledge(filename, bytes, null);
+    }
+
+    /**
+     * Index a document, optionally scoped to one meeting.
+     *
+     * <p>A null meeting makes it <b>shared</b> — retrievable by every meeting. That is the right
+     * default for the articles, a standing policy or a reference report, and it is why a document
+     * uploaded without choosing a meeting shows up against a brand-new one.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> uploadKnowledge(String filename, byte[] bytes, UUID meetingId) {
         MultipartBodyBuilder builder = new MultipartBodyBuilder();
         builder.part("file", new ByteArrayResource(bytes) {
             @Override
@@ -123,6 +141,10 @@ public class AiClient {
                 return filename;   // required so the AI service sees a .pdf filename
             }
         }).contentType(MediaType.APPLICATION_PDF);
+
+        // Only sent when there is one: the AI service reads an absent field as "shared", and an
+        // empty string would be a meeting id that matches nothing.
+        if (meetingId != null) builder.part("meeting_id", meetingId.toString());
 
         return web.post().uri("/knowledge/upload")
                 .contentType(MediaType.MULTIPART_FORM_DATA)

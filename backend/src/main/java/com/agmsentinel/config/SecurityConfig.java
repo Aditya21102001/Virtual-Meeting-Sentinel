@@ -61,8 +61,12 @@ public class SecurityConfig {
                 // an expired session that could still renew itself would not be a timeout.
                 .requestMatchers("/api/auth/refresh-session").authenticated()
                 // Public auth endpoints + Google OAuth2 handshake.
+                // /health and /health/ai are public so an external uptime monitor can reach them
+                // without a token — and /health/ai doubles as the wake-up call that keeps a
+                // free-tier AI service from sleeping. See HealthController.
                 .requestMatchers("/api/auth/**", "/oauth2/**", "/login/**",
-                                 "/ws/**", "/actuator/health", "/health").permitAll()
+                                 "/ws/**", "/actuator/health",
+                                 "/health", "/health/**", "/api/health").permitAll()
                 .requestMatchers("/api/source/**").permitAll()   // PDF opened in a new tab (no auth header)
                 // Media URLs are fetched by the browser's own media stack (<video src>, native HLS,
                 // <img> posters), which cannot attach an Authorization header. They are permitted
