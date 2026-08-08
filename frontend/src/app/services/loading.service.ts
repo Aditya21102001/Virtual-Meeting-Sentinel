@@ -50,6 +50,21 @@ export class LoadingService {
   private static readonly SHOW_AFTER_MS = 250;
 
   private showTimer: ReturnType<typeof setTimeout> | null = null;
+  private failsafeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Hard ceiling on how long the blocking overlay may stay up.
+   *
+   * <p>THE MOST IMPORTANT LINE IN THIS FILE. The overlay stops the user interacting with anything,
+   * so if the counter ever sticks above zero — a request that neither completes nor errors, a bug
+   * in this class, an interceptor that swallows an event — the application is bricked until the
+   * page is reloaded. There is no recovery from inside it.
+   *
+   * <p>A stuck indicator is a cosmetic bug. A stuck *blocker* is an unusable application, so it is
+   * released unconditionally after this long whatever the counter says. Being briefly wrong about
+   * whether something is loading is a far cheaper failure than taking the app away.
+   */
+  private static readonly MAX_BLOCK_MS = 20000;
 
   start(): void {
     this.inFlight.update((n) => n + 1);
@@ -57,9 +72,28 @@ export class LoadingService {
       this.showTimer = setTimeout(() => {
         this.showTimer = null;
         // Re-checked: everything may have finished inside the delay, which is the common case.
-        if (this.inFlight() > 0) this.visible.set(true);
+        if (this.inFlight() > 0) {
+          this.visible.set(true);
+          this.armFailsafe();
+        }
       }, LoadingService.SHOW_AFTER_MS);
     }
+  }
+
+  /** Release the overlay come what may — see MAX_BLOCK_MS. */
+  private armFailsafe(): void {
+    if (this.failsafeTimer !== null) return;
+    this.failsafeTimer = setTimeout(() => {
+      this.failsafeTimer = null;
+      if (this.visible()) {
+        console.warn(
+          '[loading] Releasing the blocking overlay after ' +
+            `${LoadingService.MAX_BLOCK_MS}ms with ${this.inFlight()} request(s) still counted. ` +
+            'Something did not settle — the app stays usable, but this is worth investigating.',
+        );
+        this.visible.set(false);
+      }
+    }, LoadingService.MAX_BLOCK_MS);
   }
 
   stop(): void {
@@ -73,6 +107,10 @@ export class LoadingService {
         this.showTimer = null;
       }
       this.visible.set(false);
+    }
+    if (this.inFlight() === 0 && this.failsafeTimer !== null) {
+      clearTimeout(this.failsafeTimer);
+      this.failsafeTimer = null;
     }
   }
 }

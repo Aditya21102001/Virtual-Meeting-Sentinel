@@ -38,6 +38,24 @@ import { MeetingService } from "./services/meeting.service";
     -->
     @if (loading.visible()) {
       <div class="loading-bar" aria-hidden="true"><span></span></div>
+      <!--
+        Blocks interaction while a request the user is waiting on is outstanding, so a form cannot
+        be submitted twice and a stale screen cannot be acted on.
+
+        Only ever raised by NON-SILENT requests. Every poll and the session renewer are marked
+        silent, so a background refresh can never take the interface away from somebody — an
+        overlay that appears on a timer would be far worse than no overlay.
+
+        It also releases itself unconditionally after 20 seconds, whatever the request count says.
+        See MAX_BLOCK_MS: a stuck blocker is an unusable application, and no indicator is worth
+        that.
+      -->
+      <div class="blocking-overlay" role="alert" aria-live="assertive" aria-busy="true">
+        <div class="blocking-card">
+          <span class="blocking-spinner" aria-hidden="true"></span>
+          <span>Working…</span>
+        </div>
+      </div>
     }
     <a class="skip-link" href="#main">Skip to main content</a>
     <nav class="nav" aria-label="Main">
@@ -235,11 +253,49 @@ import { MeetingService } from "./services/meeting.service";
          full-width bar still says "something is happening" without moving. */
       @media (prefers-reduced-motion: reduce) {
         .caret { transition: none; }
+        .blocking-spinner {
+          animation: none;
+          border-right-color: var(--accent);
+          opacity: 0.6;
+        }
         .loading-bar span {
           animation: none;
           width: 100%;
           opacity: 0.6;
         }
+      }
+
+      .blocking-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 190;
+        display: grid;
+        place-items: center;
+        background: rgba(15, 23, 42, 0.55);
+        /* backdrop-filter is progressive: without support the dim alone still reads as "wait". */
+        backdrop-filter: blur(1.5px);
+      }
+      .blocking-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 22px;
+        border-radius: 12px;
+        background: var(--card);
+        border: 1px solid #334155;
+        box-shadow: 0 16px 44px #0009;
+        font-weight: 600;
+      }
+      .blocking-spinner {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 2px solid var(--accent);
+        border-right-color: transparent;
+        animation: blocking-spin 0.8s linear infinite;
+      }
+      @keyframes blocking-spin {
+        to { transform: rotate(360deg); }
       }
 
       .nav {
