@@ -37,6 +37,26 @@ import {
             choice, which is why it is a picker rather than an automatic tag from whatever happens
             to be live.
           -->
+          <!--
+            WHAT IS ACTUALLY HAPPENING RIGHT NOW, rather than what was configured.
+
+            Scoping is honoured only while a meeting is ACTIVE — with none active there is nothing
+            to filter by and every document is searched. That condition was invisible: somebody
+            could tag a document "Only AGM", see the confirmation, and then watch every meeting
+            cite it, with nothing on screen explaining why. The setting was right and the state was
+            unknowable, which is the worst combination.
+          -->
+          <p class="scope-state" [class.inactive]="!activeMeeting()" role="status">
+            @if (activeMeeting(); as live) {
+              <strong>Answers are currently scoped to “{{ live.title }}”.</strong>
+              Documents tagged to it, plus every shared document, can be cited right now.
+            } @else {
+              <strong>No meeting is active, so nothing is being filtered.</strong>
+              Every document is searchable regardless of what it is tagged with — there is no
+              meeting to filter by. Activate a meeting under Administration → Meetings.
+            }
+          </p>
+
           <label class="label" for="upload-scope">Applies to</label>
           <select
             id="upload-scope"
@@ -50,33 +70,27 @@ import {
             }
           </select>
           <!--
-            Scoping only takes effect when the MEETINGS feature is on. Tagging a document happens
-            unconditionally — that is deliberate, so switching the feature on later works
-            immediately — but FILTERING is conditional, so a document scoped while the feature is
-            off is still cited by everything.
+            What a scoped document actually does, stated exactly.
 
-            Saying so here is the whole point. Offering a choice the configuration will silently
-            ignore is worse than not offering it: the operator does the right thing, sees the
-            confirmation, and gets the opposite behaviour with nothing to explain why.
+            Scoping is honoured whenever a meeting is ACTIVE — it does not depend on the MEETINGS
+            feature flag. (It used to, and this panel used to say so. That was wrong in a way worth
+            recording: the application accepted an explicit per-document instruction and then
+            quietly ignored it because of an unrelated switch.)
+
+            The remaining caveat is real and is stated rather than hidden: with no meeting active
+            there is nothing to filter by, so every document is searched. That is the only possible
+            behaviour, but somebody choosing "Only this meeting" deserves to know it.
           -->
-          @if (uploadMeetingId() && !features.enabled('MEETINGS')) {
-            <p class="scope-warning" role="status">
-              <strong>This will be recorded but not enforced.</strong>
-              Per-meeting scoping only applies when the Meetings feature is switched on — until
-              then every meeting can cite every document, whatever it is tagged with. An admin can
-              enable it under Administration → Features. The tag is saved either way, so turning it
-              on later takes effect immediately.
-            </p>
-          } @else {
-            <p class="muted" style="margin:6px 0 10px; font-size:12px">
-              @if (uploadMeetingId()) {
-                Only answers for this meeting will cite these documents.
-              } @else {
-                Every meeting will be able to cite these documents — including meetings created
-                later.
-              }
-            </p>
-          }
+          <p class="muted" style="margin:6px 0 10px; font-size:12px">
+            @if (uploadMeetingId()) {
+              Only answers given while <strong>that meeting is active</strong> will cite these
+              documents. With no meeting active, everything is searched — there is nothing to
+              filter by.
+            } @else {
+              Every meeting will be able to cite these documents — including meetings created
+              later.
+            }
+          </p>
 
           <label class="sr-only" for="report-file">Annual report PDFs to index</label>
           <input #reportInput id="report-file" type="file" accept="application/pdf" multiple
@@ -130,9 +144,29 @@ import {
             {{ s.ready ? s.chunks_indexed + ' chunks indexed' : 'no documents indexed yet' }}
           </div>
 
-          @if (s.sources.length) {
+          <!--
+            GROUPED BY WHAT IS ACTUALLY USABLE RIGHT NOW, not just listed with a badge.
+
+            The list has to keep showing every document — an administrator cannot remove one they
+            cannot see. But a flat list of everything reads as "all of these apply", which is how a
+            document correctly tagged to one meeting looked like it had leaked into another. The
+            badge alone was not enough: it answered "what is this tagged with" when the question
+            being asked was "will this be cited right now".
+
+            So the split is by the ACTIVE meeting — the thing that actually decides retrieval — not
+            by whatever is selected in the upload picker above.
+          -->
+          @if (otherMeetingSources().length) {
+            <p class="muted note" style="margin-top:10px">
+              <strong>{{ availableSources().length }}</strong> document(s) can be cited
+              @if (activeMeeting(); as live) { in “{{ live.title }}” } @else { right now },
+              and <strong>{{ otherMeetingSources().length }}</strong> belong to other meetings.
+            </p>
+          }
+
+          @if (availableSources().length) {
             <ul class="sources">
-              @for (src of s.sources; track src) {
+              @for (src of availableSources(); track src) {
                 <li class="source-row">
                   <span class="source-name">
                     {{ src }}
@@ -163,6 +197,42 @@ import {
                     </button>
                   } @else {
                     <span class="muted">managed in Recordings</span>
+                  }
+                </li>
+              }
+            </ul>
+          }
+
+          <!-- Other meetings' documents: visible so they can be managed, dimmed so they are not
+               mistaken for something the current meeting can use. -->
+          @if (otherMeetingSources().length) {
+            <p class="muted note other-heading">
+              Belonging to other meetings — not citable
+              @if (activeMeeting(); as live) { in “{{ live.title }}” }
+            </p>
+            <ul class="sources other">
+              @for (src of otherMeetingSources(); track src) {
+                <li class="source-row">
+                  <span class="source-name">
+                    {{ src }}
+                    <span class="scope">{{ scopeOf(src) }}</span>
+                  </span>
+                  @if (isRemovable(src)) {
+                    <!--
+                      Disabled rather than hidden. A missing button raises "why can I not remove
+                      this"; a disabled one with a reason answers it. The server enforces the same
+                      rule regardless — this only saves a round trip.
+                    -->
+                    <button
+                      class="danger"
+                      disabled
+                      [title]="
+                        'Activate “' + scopeOf(src) + '” first — removing a document changes what ' +
+                        'that meeting can cite, and you are not looking at it.'
+                      "
+                    >
+                      Remove
+                    </button>
                   }
                 </li>
               }
@@ -338,6 +408,30 @@ import {
         color: #fcd34d;
         background: #3b2f17;
         border: 1px solid #7c5e10;
+      }
+
+      /* Green when filtering is on, amber when it is not — this is a state, not a warning, and
+         the amber case is the one people need to notice. */
+      .scope-state {
+        margin: 0 0 12px;
+        padding: 9px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        color: #6ee7b7;
+        background: #06281f;
+        border: 1px solid #115e49;
+      }
+      .scope-state.inactive {
+        color: #fcd34d;
+        background: #3b2f17;
+        border-color: #7c5e10;
+      }
+
+      .other-heading {
+        margin-top: 14px;
+      }
+      .sources.other .source-row {
+        opacity: 0.55;
       }
 
       .source-name {
@@ -526,6 +620,14 @@ export class AdminComponent implements OnInit, OnDestroy {
   readonly uploadMeetingId = signal('');
   readonly meetings = signal<MeetingView[]>([]);
 
+  /**
+   * The live meeting, which is what actually decides whether documents are filtered.
+   *
+   * <p>Read from the shared MeetingService signal rather than fetched here, so this panel cannot
+   * disagree with the header about which meeting is live.
+   */
+  readonly activeMeeting = computed(() => this.meetingService.active());
+
   readonly bankPhase = signal<'idle' | 'uploading' | 'indexing'>('idle');
   readonly bankPercent = signal(0);
 
@@ -540,6 +642,30 @@ export class AdminComponent implements OnInit, OnDestroy {
    * truth for what the pipeline is doing and no chance of the bar and the step list disagreeing.
    */
   readonly indexRun = computed<IndexRun | null>(() => this.status()?.last_index_run ?? null);
+
+  /**
+   * Documents the ACTIVE meeting can actually cite: shared ones, plus its own.
+   *
+   * <p>Mirrors the server's retrieval filter exactly — shared (untagged) documents are available to
+   * every meeting, and a tagged one only to its own. If these two ever disagree the page is lying,
+   * so the rule is written the same way in both places on purpose.
+   */
+  readonly availableSources = computed(() => {
+    const active = this.activeMeeting()?.id ?? null;
+    const tags = this.status()?.scoped_documents ?? {};
+    return (this.status()?.sources ?? []).filter((src) => {
+      const owner = tags[src];
+      // No tag = shared = citable by everyone. With no meeting active, nothing is filtered, so
+      // everything is citable — which is exactly what the backend does.
+      return !owner || !active || owner === active;
+    });
+  });
+
+  /** Documents belonging to a different meeting — shown, but plainly not usable here. */
+  readonly otherMeetingSources = computed(() => {
+    const available = new Set(this.availableSources());
+    return (this.status()?.sources ?? []).filter((src) => !available.has(src));
+  });
 
   /**
    * Which meeting may cite this document, or null when it is shared with all of them.
@@ -575,6 +701,8 @@ export class AdminComponent implements OnInit, OnDestroy {
   ) {}
 
   ngOnInit(): void {
+    // Which meeting is live — the condition that decides whether scoping applies at all.
+    this.meetingService.refreshActive().subscribe({ error: () => {} });
     // The meeting list, for scoping an upload. Silent on failure: without it the picker simply
     // offers "shared", which is the default anyway.
     this.meetingService.list().subscribe({

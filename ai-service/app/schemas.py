@@ -101,6 +101,11 @@ class KnowledgeRemoveRequest(BaseModel):
     here: one implementation, at the boundary that actually opens the path.
     """
     filename: str
+    # Which meeting the caller currently has active. A document tagged to a DIFFERENT meeting is
+    # refused: removing it would silently change what that meeting can cite, from a screen showing
+    # a different meeting's context. None means no meeting is live, in which case only shared
+    # documents can be removed.
+    meeting_id: str | None = None
 
 
 class Citation(BaseModel):

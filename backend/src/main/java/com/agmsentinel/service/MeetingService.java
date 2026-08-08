@@ -127,10 +127,23 @@ public class MeetingService {
     public Meeting activate(UUID id, String actor) {
         Meeting meeting = get(id);
         if (meeting.getStatus() == MeetingStatus.ACTIVE) return meeting;
-        if (meeting.getStatus() == MeetingStatus.CLOSED) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "This meeting has been closed. Create a new one rather than reopening it — its "
-                    + "questions and recordings are the record of what happened.");
+
+        // REOPENING A CLOSED MEETING IS ALLOWED.
+        //
+        // This used to be refused, on the reasoning that a closed meeting's questions and
+        // recordings are the record of what happened. That reasoning was too strict for how the
+        // application is actually used: a meeting gets closed by accident, or someone needs to
+        // manage its documents afterwards — and every operation that touches a meeting's data
+        // requires it to be the live one.
+        //
+        // Nothing is destroyed by reopening. The questions, votes and documents are exactly as
+        // they were; the only change is that this meeting becomes the one new activity attaches
+        // to. closedAt is cleared because it would otherwise claim the meeting ended at a moment
+        // it plainly did not, and the reopening is logged so the gap is explainable afterwards.
+        boolean reopening = meeting.getStatus() == MeetingStatus.CLOSED;
+        if (reopening) {
+            log.warn("Meeting {} (\"{}\") is being REOPENED by {} after being closed at {}.",
+                     id, meeting.getTitle(), actor, meeting.getClosedAt());
         }
 
         Optional<Meeting> current = meetings.findFirstByStatus(MeetingStatus.ACTIVE);
@@ -143,6 +156,7 @@ public class MeetingService {
 
         meeting.setStatus(MeetingStatus.ACTIVE);
         meeting.setActivatedAt(Instant.now());
+        meeting.setClosedAt(null);   // it is not closed any more; saying otherwise would be a lie
         try {
             Meeting saved = meetings.saveAndFlush(meeting);
             log.info("Meeting {} activated by {}.", id, actor);

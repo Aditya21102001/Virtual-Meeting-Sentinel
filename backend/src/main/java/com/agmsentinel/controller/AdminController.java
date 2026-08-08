@@ -1,6 +1,7 @@
 package com.agmsentinel.controller;
 
 import com.agmsentinel.service.AiClient;
+import com.agmsentinel.service.MeetingScope;
 import com.agmsentinel.service.QuestionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,9 +34,13 @@ public class AdminController {
     private final AiClient ai;
     private final QuestionService questions;
 
-    public AdminController(AiClient ai, QuestionService questions) {
+    /** Which meeting is live — decides what may be removed. */
+    private final MeetingScope scope;
+
+    public AdminController(AiClient ai, QuestionService questions, MeetingScope scope) {
         this.ai = ai;
         this.questions = questions;
+        this.scope = scope;
     }
 
     /**
@@ -100,7 +105,10 @@ public class AdminController {
         try {
             // The AI service returns the post-rebuild status, so the caller can refresh its whole
             // panel from this one response without a second round-trip.
-            return ResponseEntity.ok(ai.removeKnowledgeSource(name));
+            // The live meeting decides what may be removed: a document belonging to a different
+            // one is refused by the AI service, which owns the tag.
+            return ResponseEntity.ok(
+                    ai.removeKnowledgeSource(name, scope.knowledgeMeetingId().orElse(null)));
         } catch (WebClientResponseException.NotFound ex) {
             // The only AI-service 404 that is an expected, operator-caused outcome rather than a
             // fault — a stale sources list — so it is the only one worth translating here. Left
@@ -109,6 +117,11 @@ public class AdminController {
                     "That document is not in the knowledge base — the list may be out of date."));
         } catch (WebClientResponseException.BadRequest ex) {
             return ResponseEntity.badRequest().body(Map.of("error", "That is not a document name."));
+        } catch (WebClientResponseException.Conflict ex) {
+            // The document belongs to another meeting. The AI service's message names the way
+            // forward — activate that meeting first — so it is passed through rather than replaced.
+            return ResponseEntity.status(409).body(Map.of("error", detailOf(ex,
+                    "That document belongs to another meeting. Activate that meeting first.")));
         }
     }
 
@@ -118,6 +131,22 @@ public class AdminController {
      * relying on a shared global one.
      */
     private static final long MAX_PDF_BYTES = 25L * 1024 * 1024;
+
+    /**
+     * The AI service's own explanation, or a fallback.
+     *
+     * <p>FastAPI puts it in a {@code detail} field. Worth digging out: it is the sentence that says
+     * WHICH meeting owns the document, which the generic message cannot.
+     */
+    private String detailOf(WebClientResponseException ex, String fallback) {
+        try {
+            Object detail = ex.getResponseBodyAs(Map.class).get("detail");
+            if (detail instanceof String text && !text.isBlank()) return text;
+        } catch (RuntimeException ignored) {
+            // Body was not the expected shape; the fallback is fine.
+        }
+        return fallback;
+    }
 
     /** Upload an annual-report PDF -> indexed into RAG at runtime. */
     @PostMapping("/upload-annual-report")

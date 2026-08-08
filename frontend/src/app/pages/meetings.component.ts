@@ -186,6 +186,15 @@ import {
               @if (m.status === 'DRAFT') {
                 <button (click)="activate(m)" [disabled]="busy()">Activate</button>
               }
+              <!--
+                A closed meeting can be reopened. Its questions, votes and documents are untouched;
+                reopening only makes it the meeting new activity attaches to. Needed because every
+                operation on a meeting's data — managing its documents especially — requires it to
+                be the live one, and closing by accident should not be permanent.
+              -->
+              @if (m.status === 'CLOSED') {
+                <button class="ghost" (click)="reopen(m)" [disabled]="busy()">Reopen</button>
+              }
               @if (m.status !== 'CLOSED') {
                 <button class="ghost" (click)="close(m)" [disabled]="busy()">Close</button>
               }
@@ -675,6 +684,21 @@ export class MeetingsComponent implements OnInit {
   addNamed(meeting: MeetingView, username: string): void {
     this.newMember.set(username);
     this.addMember(meeting);
+  }
+
+  /**
+   * Reopen a closed meeting.
+   *
+   * <p>Confirmed, because it closes whichever meeting is currently live as a side effect — the
+   * one-active-at-a-time rule — and that is not obvious from a button labelled "Reopen".
+   */
+  reopen(meeting: MeetingView): void {
+    const live = this.active();
+    const alsoCloses = live && live.id !== meeting.id ? `
+
+This will close “${live.title}”.` : '';
+    if (!confirm(`Reopen “${meeting.title}”?${alsoCloses}`)) return;
+    this.activate(meeting);
   }
 
   runBackfill(): void {

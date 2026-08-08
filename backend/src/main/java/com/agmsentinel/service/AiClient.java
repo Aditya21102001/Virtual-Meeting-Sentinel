@@ -161,6 +161,13 @@ public class AiClient {
                 .block();
     }
 
+    private Map<String, Object> removalBody(String filename, UUID meetingId) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("filename", filename);
+        body.put("meeting_id", meetingId == null ? null : meetingId.toString());
+        return body;
+    }
+
     /** Fetch the raw bytes of an indexed source PDF (proxied to the browser for citation links). */
     public byte[] fetchKnowledgeFile(String filename) {
         return web.get().uri("/knowledge/files/{name}", filename)
@@ -296,8 +303,20 @@ public class AiClient {
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> removeKnowledgeSource(String filename) {
+        return removeKnowledgeSource(filename, null);
+    }
+
+    /**
+     * Remove a document, telling the AI service which meeting is live.
+     *
+     * <p>The AI service refuses when the document belongs to a different meeting — it owns the
+     * manifest, so it is the only place that knows. Enforced there rather than in the UI, because a
+     * check the client performs is a check the client can skip.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> removeKnowledgeSource(String filename, UUID meetingId) {
         return web.post().uri("/knowledge/remove")
-                .bodyValue(Map.of("filename", filename))
+                .bodyValue(removalBody(filename, meetingId))
                 .retrieve()
                 .bodyToMono(Map.class)
                 .timeout(Duration.ofSeconds(120))   // the whole index is re-embedded from disk

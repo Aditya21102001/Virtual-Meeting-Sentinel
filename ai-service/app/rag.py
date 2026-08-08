@@ -568,7 +568,7 @@ class KnowledgeBase:
         trace.finish()
         return len(docs)
 
-    def remove_source(self, filename: str) -> dict:
+    def remove_source(self, filename: str, active_meeting_id: str | None = None) -> dict:
         """Delete one document and everything derived from it. Returns the resulting status.
 
         Removal has to reach the vectors, not just the file. Deleting the PDF alone would leave its
@@ -577,11 +577,27 @@ class KnowledgeBase:
         name. That is the failure worth designing against — a deletion that appears to work.
         """
         with self._lock:
-            return self._remove_source_locked(filename)
+            return self._remove_source_locked(filename, active_meeting_id)
 
-    def _remove_source_locked(self, filename: str) -> dict:
+    def _remove_source_locked(self, filename: str, active_meeting_id: str | None = None) -> dict:
         name = self._safe_kb_name(filename)
         target = _KB_DIR / name
+
+        # A document belonging to another meeting cannot be removed from here.
+        #
+        # Removal is destructive and irreversible — the file, its chunks and its vectors all go —
+        # and doing it from a screen showing a different meeting's context means changing what THAT
+        # meeting can cite without seeing it. Requiring the meeting to be active first makes the
+        # consequence visible before the click.
+        #
+        # Shared documents (no tag) stay removable from anywhere: they belong to everything, so
+        # there is no other context to be looking at.
+        owner = self._load_manifest().get(name)
+        if owner and owner != (active_meeting_id or ""):
+            raise PermissionError(
+                f"“{name}” belongs to another meeting. Activate that meeting first, then remove it "
+                "— otherwise you would be changing what a meeting can cite without seeing it."
+            )
         trace = IndexTrace(f"Removing {name}")
         self._last_trace = trace
 

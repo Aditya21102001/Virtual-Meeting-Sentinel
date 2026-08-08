@@ -220,11 +220,15 @@ def knowledge_remove(req: KnowledgeRemoveRequest) -> dict:
     """
     kb = get_kb()
     try:
-        status = kb.remove_source(req.filename)
+        status = kb.remove_source(req.filename, active_meeting_id=req.meeting_id)
     except ValueError as ex:
         raise HTTPException(status_code=400, detail=str(ex)) from ex
     except FileNotFoundError as ex:
         raise HTTPException(status_code=404, detail=str(ex)) from ex
+    except PermissionError as ex:
+        # 409, not 403: the caller is allowed to do this, just not from where they are standing.
+        # The message names the way forward — activate the owning meeting first.
+        raise HTTPException(status_code=409, detail=str(ex)) from ex
     # remove_source already returned the post-rebuild status; re-reading it would open a window in
     # which another request had mutated the index between the two reads.
     return {"filename": req.filename, "removed": True, **status}
