@@ -503,6 +503,9 @@ export class VideoService {
       { id },
       {
         headers: this.headers(),
+        // Kicks off a transcode that runs for minutes on the server. The card shows PROCESSING
+        // and the list polls it — blocking the app behind it would be wrong on both counts.
+        context: new HttpContext().set(SILENT, true),
       },
     );
   }
