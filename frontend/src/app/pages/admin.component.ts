@@ -1,6 +1,11 @@
-import { Component, OnDestroy, OnInit, signal } from '@angular/core';
-import { concatMap, from, toArray } from 'rxjs';
-import { ApiService, KnowledgeStatus } from '../services/api.service';
+import { Component, OnDestroy, OnInit, computed, signal } from '@angular/core';
+import { concatMap, from } from 'rxjs';
+import {
+  AnnualReportResult,
+  ApiService,
+  IndexRun,
+  KnowledgeStatus,
+} from '../services/api.service';
 
 @Component({
   selector: 'app-admin',
@@ -97,6 +102,79 @@ import { ApiService, KnowledgeStatus } from '../services/api.service';
             </ul>
           }
 
+          <!--
+            Live progress. Two phases, shown as two different things on purpose:
+
+            * uploading — the browser measures this exactly, so it gets a real bar.
+            * indexing  — the server measures this, so the bar comes from the pipeline's own
+                          count of chunks embedded, and is absent until there is a real number.
+
+            One combined bar would reach 100% the moment the bytes landed and then sit there for
+            the whole embed, which is exactly when somebody most wants to know it is still alive.
+          -->
+          @if (uploadPhase() !== 'idle') {
+            <div class="progress-panel" role="status" aria-live="polite">
+              <div class="progress-head">
+                <strong>
+                  @if (uploadTotal() > 1) {
+                    File {{ uploadIndex() }} of {{ uploadTotal() }} —
+                  }
+                  {{ uploadName() }}
+                </strong>
+                <span class="muted-inline">
+                  {{ uploadPhase() === 'uploading' ? 'Uploading' : 'Indexing' }}
+                </span>
+              </div>
+
+              @if (uploadPhase() === 'uploading') {
+                <div
+                  class="bar"
+                  role="progressbar"
+                  [attr.aria-valuenow]="uploadPercent()"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  [attr.aria-valuetext]="'Uploading, ' + uploadPercent() + ' percent sent'"
+                >
+                  <span class="fill" [style.width.%]="uploadPercent()"></span>
+                </div>
+                <p class="muted small">
+                  {{ uploadPercent() }}% sent · {{ 100 - uploadPercent() }}% remaining
+                </p>
+              } @else {
+                <!-- The server's own measured progress, polled while it works. -->
+                @if (indexRun(); as run) {
+                  @if (run.percent !== null) {
+                    <div
+                      class="bar"
+                      role="progressbar"
+                      [attr.aria-valuenow]="run.percent"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      [attr.aria-valuetext]="
+                        'Indexing, ' + run.done + ' of ' + run.total + ' ' + run.unit + ' embedded'
+                      "
+                    >
+                      <span class="fill indexing" [style.width.%]="run.percent"></span>
+                    </div>
+                    <p class="muted small">
+                      {{ run.percent }}% · {{ run.done }} of {{ run.total }} {{ run.unit }} ·
+                      {{ run.total - run.done }} remaining
+                      @if (run.eta_ms) {
+                        · about {{ etaText(run.eta_ms) }} left
+                      }
+                    </p>
+                  } @else {
+                    <p class="muted small">
+                      Reading and splitting the document — the chunk count is not known yet.
+                    </p>
+                  }
+                } @else {
+                  <p class="muted small">Handed to the AI service…</p>
+                }
+              }
+            </div>
+          }
+
           <!-- What the pipeline actually did, rather than a spinner that explains nothing. -->
           @if (s.last_index_run; as run) {
             <div class="trace">
@@ -105,8 +183,12 @@ import { ApiService, KnowledgeStatus } from '../services/api.service';
                 — {{ run.running ? 'in progress…' : run.total_ms + ' ms' }}
               </div>
               @for (step of run.steps; track step.name) {
-                <div class="trace-step">
-                  <span class="badge" [class.failed]="step.status === 'failed'">
+                <div class="trace-step" [class.running]="step.status === 'running'">
+                  <span
+                    class="badge"
+                    [class.failed]="step.status === 'failed'"
+                    [class.active]="step.status === 'running'"
+                  >
                     {{ step.status === 'done' ? '✓' : step.status === 'failed' ? '✗' : '…' }}
                   </span>
                   <span>
@@ -136,6 +218,36 @@ import { ApiService, KnowledgeStatus } from '../services/api.service';
             {{ bankBusy() ? 'Ingesting…' : 'Upload & ingest' }}
           </button>
         </div>
+        <!--
+          The bank's two phases. Only the upload has a real percentage: the server clusters each
+          line as it goes and reports per question, not as a total, so the indexing phase says what
+          it is doing rather than showing a bar it cannot honestly fill.
+        -->
+        @if (bankPhase() !== 'idle') {
+          <div class="progress-panel" role="status" aria-live="polite">
+            @if (bankPhase() === 'uploading') {
+              <div
+                class="bar"
+                role="progressbar"
+                [attr.aria-valuenow]="bankPercent()"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                [attr.aria-valuetext]="'Uploading, ' + bankPercent() + ' percent sent'"
+              >
+                <span class="fill" [style.width.%]="bankPercent()"></span>
+              </div>
+              <p class="muted small">
+                {{ bankPercent() }}% sent · {{ 100 - bankPercent() }}% remaining
+              </p>
+            } @else {
+              <p class="muted small">
+                Clustering each question — this takes about as long as the same questions arriving
+                live, because it is the same pipeline.
+              </p>
+            }
+          </div>
+        }
+
         @if (bankMsg()) { <p class="muted" style="margin-top:8px">{{ bankMsg() }}</p> }
       </div>
 
@@ -148,6 +260,61 @@ import { ApiService, KnowledgeStatus } from '../services/api.service';
   styles: [
     `
       button.danger { background: none; border: 1px solid #7f1d1d; color: #fca5a5; }
+
+      /* ---- upload / indexing progress ---- */
+      .progress-panel {
+        margin-top: 10px;
+        padding: 12px;
+        border-radius: 8px;
+        background: #0b1220;
+        border: 1px solid #334155;
+      }
+      .progress-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+        font-size: 14px;
+      }
+      .bar {
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.25);
+        overflow: hidden;
+      }
+      .fill {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+        /* Eased, not animated on a loop: the width comes from a real measurement, so the only
+           motion should be between one true value and the next. */
+        transition: width 0.25s ease;
+      }
+      /* A different colour for the server's phase, so it is obvious the bar restarted for a
+         different reason rather than appearing to jump backwards. */
+      .fill.indexing {
+        background: #34d399;
+      }
+      .small {
+        font-size: 12px;
+        margin: 6px 0 0;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* The step being worked on right now, so a long run shows where it is. */
+      .trace-step.running {
+        color: var(--text);
+      }
+      .badge.active {
+        background: var(--accent);
+        color: #04222f;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .fill { transition: none; }
+      }
 
       /* Waiting, not failing. Deliberately NOT styled like .error-box: a cold start resolves
          itself, and dressing it in red teaches people to distrust a panel that was about to work.
@@ -227,6 +394,42 @@ export class AdminComponent implements OnInit, OnDestroy {
 
   private wakeTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // ---- upload progress ------------------------------------------------------
+  //
+  // Two phases, tracked separately, because they measure different things: pushing bytes is the
+  // browser's business and exactly measurable, while indexing is the server's and only knowable by
+  // asking it. One combined bar would hit 100% the instant the bytes landed and then sit there for
+  // the whole embed — which is exactly when somebody most wants to know it is still alive.
+
+  readonly uploadPhase = signal<'idle' | 'uploading' | 'indexing'>('idle');
+  readonly uploadPercent = signal(0);
+  readonly uploadName = signal('');
+  /** Which file of how many, so a multi-file upload is not an opaque wait. */
+  readonly uploadIndex = signal(0);
+  readonly uploadTotal = signal(0);
+
+  readonly bankPhase = signal<'idle' | 'uploading' | 'indexing'>('idle');
+  readonly bankPercent = signal(0);
+
+  private pipelineTimer: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * The run currently in flight, or null.
+   *
+   * <p>Read through the polled status rather than tracked separately, so there is one source of
+   * truth for what the pipeline is doing and no chance of the bar and the step list disagreeing.
+   */
+  readonly indexRun = computed<IndexRun | null>(() => this.status()?.last_index_run ?? null);
+
+  /** "12s" / "2m 05s" — a duration is easier to judge at a glance than a millisecond count. */
+  etaText(ms: number): string {
+    const seconds = Math.max(1, Math.round(ms / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    const m = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    return `${m}m ${String(rest).padStart(2, '0')}s`;
+  }
+
   private static readonly WAKE_DELAYS_MS = [3000, 5000, 8000, 13000, 21000];
   private static readonly MAX_WAKE_ATTEMPTS = 5;
 
@@ -238,8 +441,9 @@ export class AdminComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
-    // A pending retry on a page nobody is looking at is a request for nothing.
+    // A pending retry or poll on a page nobody is looking at is a request for nothing.
     this.stopWaking();
+    this.stopPipelinePolling();
   }
 
   /** Manual re-read. Still offered — an automatic retry that cannot be hurried is frustrating. */
@@ -357,36 +561,66 @@ export class AdminComponent implements OnInit, OnDestroy {
   uploadReport(input?: HTMLInputElement): void {
     const files = this.reportFiles();
     if (!files.length) return;
+
     this.reportBusy.set(true);
+    this.reportMsg.set('');
+    this.uploadTotal.set(files.length);
+    this.uploadIndex.set(0);
+    const done: AnnualReportResult[] = [];
+
     // Sequential on purpose. The AI service holds one knowledge base behind one lock, so parallel
     // uploads would queue behind each other's re-embedding anyway — and would report progress in
     // an order unrelated to the list the user picked.
     from(files)
       .pipe(
-        concatMap((f) => this.api.uploadAnnualReport(f)),
-        toArray(),
+        concatMap((f, i) => {
+          this.uploadIndex.set(i + 1);
+          this.uploadName.set(f.name);
+          this.uploadPhase.set('uploading');
+          this.uploadPercent.set(0);
+          return this.api.uploadAnnualReport(f);
+        }),
       )
       .subscribe({
-        next: (results) => {
-          const chunks = results.reduce((n, r) => n + r.chunks_indexed, 0);
-          // The last response already carries the post-index status; no second round-trip.
-          this.status.set(results[results.length - 1]);
+        next: (phase) => {
+          if (phase.phase === 'uploading') {
+            this.uploadPhase.set('uploading');
+            this.uploadPercent.set(phase.percent);
+            return;
+          }
+          if (phase.phase === 'indexing') {
+            // The bytes have landed; the wait is now the server's. Start polling so the pipeline's
+            // own steps and percentage appear while it works, rather than all at once at the end.
+            this.uploadPhase.set('indexing');
+            this.uploadPercent.set(100);
+            this.startPipelinePolling();
+            return;
+          }
+          done.push(phase.result);
+          this.status.set(phase.result);
           this.statusErr.set('');
+        },
+        error: (err) => {
+          this.stopPipelinePolling();
+          this.reportMsg.set('✗ ' + (err?.error?.error ?? 'Upload failed. Is the server running?'));
+          this.reportBusy.set(false);
+          this.uploadPhase.set('idle');
+          // Earlier files in the sequence may already be indexed, so re-read rather than assume.
+          this.refreshStatus();
+        },
+        complete: () => {
+          this.stopPipelinePolling();
+          const chunks = done.reduce((n, r) => n + r.chunks_indexed, 0);
           this.reportMsg.set(
-            `✓ Indexed ${results.length} document(s), ${chunks} chunk(s): ` +
-              results.map((r) => r.filename).join(', '),
+            `✓ Indexed ${done.length} document(s), ${chunks} chunk(s): ` +
+              done.map((r) => r.filename).join(', '),
           );
           this.reportFiles.set([]);
           // Clear the picker, or the button stays armed with the same files and a stray second
           // click becomes a same-name re-upload — which re-embeds the entire knowledge base.
           if (input) input.value = '';
           this.reportBusy.set(false);
-        },
-        error: (err) => {
-          this.reportMsg.set('✗ ' + (err?.error?.error ?? 'Upload failed. Is the server running?'));
-          this.reportBusy.set(false);
-          // Earlier files in the sequence may already be indexed, so re-read rather than assume.
-          this.refreshStatus();
+          this.uploadPhase.set('idle');
         },
       });
   }
@@ -430,16 +664,61 @@ export class AdminComponent implements OnInit, OnDestroy {
   uploadBank(): void {
     const file = this.bankFile();
     if (!file) return;
+
     this.bankBusy.set(true);
+    this.bankMsg.set('');
+    this.bankPhase.set('uploading');
+    this.bankPercent.set(0);
+
     this.api.uploadQuestionBank(file).subscribe({
-      next: (res) => {
-        this.bankMsg.set(`✓ Ingested ${res.ingested} of ${res.received} questions.`);
+      next: (phase) => {
+        if (phase.phase === 'uploading') {
+          this.bankPercent.set(phase.percent);
+          return;
+        }
+        if (phase.phase === 'indexing') {
+          // Every line is embedded and clustered server-side, so this phase is the long one for a
+          // bank of any size. No percentage is available for it — the AI service reports its
+          // clustering per question, not as a total — so the UI says what is happening instead of
+          // inventing a number.
+          this.bankPhase.set('indexing');
+          this.bankPercent.set(100);
+          return;
+        }
+        this.bankMsg.set(
+          `✓ Ingested ${phase.result.ingested} of ${phase.result.received} questions.`,
+        );
         this.bankBusy.set(false);
+        this.bankPhase.set('idle');
       },
       error: () => {
         this.bankMsg.set('✗ Upload failed. Is the server running?');
         this.bankBusy.set(false);
+        this.bankPhase.set('idle');
       },
     });
+  }
+
+  // ---- watching the pipeline ------------------------------------------------
+  //
+  // Once the bytes are sent, the remaining wait is the server reading, splitting and embedding.
+  // IndexTrace already records that as named steps with a measured percentage; polling is what
+  // makes it visible WHILE it happens rather than in one lump once it has finished.
+
+  private startPipelinePolling(): void {
+    if (this.pipelineTimer) return;
+    this.pipelineTimer = setInterval(() => {
+      this.api.knowledgeStatus().subscribe({
+        next: (s) => this.status.set(s),
+        // Silent: a dropped poll during indexing is not worth an error banner, and the next tick
+        // will pick it up. The upload's own error path still reports a genuine failure.
+        error: () => {},
+      });
+    }, 1200);
+  }
+
+  private stopPipelinePolling(): void {
+    if (this.pipelineTimer) clearInterval(this.pipelineTimer);
+    this.pipelineTimer = null;
   }
 }

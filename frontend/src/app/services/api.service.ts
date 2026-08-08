@@ -1,6 +1,6 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpEvent, HttpEventType, HttpResponse } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { Observable } from 'rxjs';
+import { Observable, filter, map } from 'rxjs';
 import { environment } from '../../environments/environment';
 
 export interface IngestResult {
@@ -79,12 +79,77 @@ export interface IndexStep {
   ms: number | null;
 }
 
+/**
+ * One indexing run, as the pipeline reports it.
+ *
+ * `percent` is MEASURED — chunks actually embedded over chunks to embed — not a timer. It is null
+ * until there is something real to report, and the UI shows the step list alone in that case
+ * rather than inventing a zero.
+ */
 export interface IndexRun {
   label: string;
   running: boolean;
   note: string | null;
   total_ms: number;
   steps: IndexStep[];
+  /** null when the run has no measurable long stage yet. */
+  percent: number | null;
+  done: number;
+  total: number;
+  /** What `done`/`total` are counting, e.g. "chunks". */
+  unit: string;
+  /** Extrapolated from the rate achieved so far; null until 10% is done, and null once finished. */
+  eta_ms: number | null;
+}
+
+export interface AnnualReportResult extends KnowledgeStatus {
+  filename: string;
+  chunks_indexed: number;
+}
+
+export interface QuestionBankResult {
+  received: number;
+  ingested: number;
+}
+
+/**
+ * Where an upload has got to.
+ *
+ * Two phases rather than one number, because they measure different things and behave differently.
+ * `uploading` is the browser pushing bytes — exactly measurable. `indexing` is the server reading,
+ * splitting and embedding — measurable too, but only by asking the server, which is why this phase
+ * carries no percentage and the caller polls for it.
+ *
+ * Reporting them as a single bar is the usual mistake: it reaches 100% the instant the bytes land
+ * and then sits there for the entire embed, which is precisely when the user most wants to know
+ * something is happening.
+ */
+export type UploadPhase<T> =
+  | { phase: 'uploading'; percent: number }
+  | { phase: 'indexing' }
+  | { phase: 'done'; result: T };
+
+/**
+ * Translate Angular's HTTP events into phases.
+ *
+ * Returns null for events that say nothing useful (`Sent`, response headers), which the caller
+ * filters out rather than emitting a phase that means nothing.
+ *
+ * `event.total` can be absent when the server does not report a length. Guarded rather than
+ * assumed: dividing by undefined yields NaN, and a NaN width silently collapses the bar to nothing.
+ */
+function toUploadPhase<T>(event: HttpEvent<T>): UploadPhase<T> | null {
+  if (event.type === HttpEventType.UploadProgress) {
+    if (!event.total) return null;
+    const percent = Math.round((event.loaded / event.total) * 100);
+    // 100% of the bytes sent means the server now has the work — the wait continues, it just
+    // stops being about the network.
+    return percent >= 100 ? { phase: 'indexing' } : { phase: 'uploading', percent };
+  }
+  if (event instanceof HttpResponse && event.body != null) {
+    return { phase: 'done', result: event.body };
+  }
+  return null;
 }
 
 export interface Member {
@@ -261,15 +326,28 @@ export class ApiService {
     );
   }
 
-  /** Upload the annual-report PDF -> indexed into the RAG knowledge base. */
-  uploadAnnualReport(file: File): Observable<{ filename: string; chunks_indexed: number } & KnowledgeStatus> {
+  /**
+   * Upload an annual-report PDF and index it, reporting progress as it goes.
+   *
+   * Emits `{ phase: 'uploading', percent }` while the bytes are in flight — a real figure the
+   * browser measures, not an estimate — then `{ phase: 'indexing' }` once the request is fully sent
+   * and the server has it, and finally `{ phase: 'done', result }`.
+   *
+   * The middle phase matters: for a large PDF on a slow link the upload dominates, and for a small
+   * one on a cold server the indexing does. Reporting them as one number would misattribute the
+   * wait, and "stuck at 100%" is the usual result.
+   */
+  uploadAnnualReport(file: File): Observable<UploadPhase<AnnualReportResult>> {
     const form = new FormData();
     form.append('file', file, file.name);
-    return this.http.post<{ filename: string; chunks_indexed: number } & KnowledgeStatus>(
-      `${environment.apiBase}/api/admin/upload-annual-report`,
-      form,
-      { headers: this.authHeaders() },
-    );
+
+    return this.http
+      .post<AnnualReportResult>(`${environment.apiBase}/api/admin/upload-annual-report`, form, {
+        headers: this.authHeaders(),
+        reportProgress: true,
+        observe: 'events',
+      })
+      .pipe(map((event) => toUploadPhase<AnnualReportResult>(event)), filter((p): p is UploadPhase<AnnualReportResult> => p !== null));
   }
 
   /**
@@ -287,15 +365,18 @@ export class ApiService {
   }
 
   /** Upload a question bank (one question per line; .txt or .csv). */
-  uploadQuestionBank(file: File, weight = 0.1): Observable<{ received: number; ingested: number }> {
+  uploadQuestionBank(file: File, weight = 0.1): Observable<UploadPhase<QuestionBankResult>> {
     const form = new FormData();
     form.append('file', file, file.name);
     form.append('weight', String(weight));
-    return this.http.post<{ received: number; ingested: number }>(
-      `${environment.apiBase}/api/admin/upload-question-bank`,
-      form,
-      { headers: this.authHeaders() },
-    );
+
+    return this.http
+      .post<QuestionBankResult>(`${environment.apiBase}/api/admin/upload-question-bank`, form, {
+        headers: this.authHeaders(),
+        reportProgress: true,
+        observe: 'events',
+      })
+      .pipe(map((event) => toUploadPhase<QuestionBankResult>(event)), filter((p): p is UploadPhase<QuestionBankResult> => p !== null));
   }
 
   // ---- Member directory / role management (moderator/admin) ----------------

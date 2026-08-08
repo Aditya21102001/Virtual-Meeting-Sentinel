@@ -84,6 +84,10 @@ class IndexTrace:
         self.note: str | None = None
         self._started = time.perf_counter()
         self._finished: float | None = None
+        # Real work done / real work total, for the one stage long enough to need a bar.
+        self._done = 0
+        self._total = 0
+        self._unit = "chunks"
 
     @contextmanager
     def step(self, name: str, tool: str, detail: str = ""):
@@ -103,18 +107,55 @@ class IndexTrace:
         entry["status"] = "done"
         entry["ms"] = round((time.perf_counter() - started) * 1000)
 
+    def progress(self, done: int, total: int, unit: str = "chunks") -> None:
+        """Report how far through the long stage we are.
+
+        MEASURED, NOT ESTIMATED. The count is the number of chunks actually embedded, which is why
+        embedding runs in batches rather than one call — a bar that advances on a timer is a
+        decoration, and the moment it disagrees with reality nobody believes the next one either.
+
+        Only the embedding stage reports this. Reading and splitting a PDF are fast and their
+        duration is dominated by the file, so a percentage there would be noise dressed as
+        information.
+        """
+        self._done = max(0, done)
+        self._total = max(0, total)
+        self._unit = unit
+
     def finish(self, note: str | None = None) -> None:
         self.note = note
         self._finished = time.perf_counter()
+        # Snap to complete. A run that ends at 97% because the last batch was short reads as
+        # something having gone wrong.
+        if self._total:
+            self._done = self._total
 
     def snapshot(self) -> dict:
         end = self._finished if self._finished is not None else time.perf_counter()
+        elapsed_ms = round((end - self._started) * 1000)
+        percent = round(self._done * 100 / self._total, 1) if self._total else None
+
+        # Time remaining, extrapolated from the rate achieved SO FAR rather than from a guess at
+        # what the machine can do. Withheld until a tenth of the work is done: an estimate drawn
+        # from the first two chunks of a cold-started process is wildly wrong, and a wrong number
+        # is worse than no number.
+        eta_ms = None
+        if self._total and self._done >= max(1, self._total // 10) and self._done < self._total:
+            per_unit = elapsed_ms / self._done
+            eta_ms = round(per_unit * (self._total - self._done))
+
         return {
             "label": self.label,
             "running": self._finished is None,
             "note": self.note,
-            "total_ms": round((end - self._started) * 1000),
+            "total_ms": elapsed_ms,
             "steps": [dict(s) for s in self.steps],
+            # None until there is something real to report — the UI shows steps alone in that case.
+            "percent": percent,
+            "done": self._done,
+            "total": self._total,
+            "unit": self._unit,
+            "eta_ms": eta_ms,
         }
 
 
@@ -403,6 +444,38 @@ class KnowledgeBase:
         # One file per recording, so re-indexing replaces rather than accumulates.
         return f"recording-{os.path.basename(video_id)}.vtt"
 
+    # How many chunks to embed per batch.
+    #
+    # A trade between accuracy of the progress bar and throughput: smaller batches update more
+    # often but pay the per-call overhead more times. 32 puts an update roughly every second on a
+    # small host, which is frequent enough to look alive without measurably slowing the run.
+    _EMBED_BATCH = 32
+
+    def _index_in_batches(self, docs: list[Document], trace: "IndexTrace | None" = None) -> None:
+        """Embed and index in batches, reporting real progress as it goes.
+
+        The whole reason batching exists here. Embedding every chunk in one call is marginally
+        faster and gives the caller nothing to look at for the entire wait — which, on a cold host
+        with a large report, is the difference between "working" and "hung" from the outside.
+
+        Failure leaves the store holding the batches that succeeded. That is deliberate and
+        matches how the rest of this class already behaves: a partially indexed document is
+        recoverable by re-uploading it (which replaces), whereas discarding good work on the last
+        batch's failure would make a transient error cost the whole run.
+        """
+        if not docs:
+            return
+
+        total = len(docs)
+        if trace is not None:
+            trace.progress(0, total)
+
+        for start in range(0, total, self._EMBED_BATCH):
+            batch = docs[start:start + self._EMBED_BATCH]
+            self._index(batch)
+            if trace is not None:
+                trace.progress(min(start + len(batch), total), total)
+
     def _index(self, docs: list[Document]) -> None:
         """Add documents to the live index, replacing the empty placeholder if that is all there is."""
         embeddings = get_embeddings()
@@ -472,7 +545,10 @@ class KnowledgeBase:
         else:
             with trace.step("Embed and index the chunks",
                             "all-MiniLM-L6-v2 on ONNX Runtime → FAISS") as s:
-                self._index(docs)
+                # Batched so the percentage is measured rather than guessed — see
+                # _index_in_batches. This is the stage that takes the time, and the only one worth
+                # putting a bar against.
+                self._index_in_batches(docs, trace)
                 self._sources.add(name)
                 s["detail"] = f"{len(docs)} vector(s), 384 dimensions each"
 
