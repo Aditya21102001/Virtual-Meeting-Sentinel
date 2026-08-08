@@ -1,4 +1,4 @@
-import { HttpClient } from "@angular/common/http";
+import { HttpClient, HttpContext } from "@angular/common/http";
 import { Injectable, computed, inject, signal } from "@angular/core";
 import { Router } from "@angular/router";
 import { firstValueFrom, Observable } from "rxjs";
@@ -7,6 +7,7 @@ import {
   startAuthentication,
 } from "@simplewebauthn/browser";
 import { environment } from "../../environments/environment";
+import { SILENT } from "./loading.service";
 import { ApiService } from "./api.service";
 
 export interface LoginResult {

@@ -1,7 +1,8 @@
-import { HttpClient, HttpEvent, HttpEventType } from "@angular/common/http";
+import { HttpClient, HttpContext, HttpEvent, HttpEventType } from "@angular/common/http";
 import { Injectable, computed, inject, signal } from "@angular/core";
 import { Observable, Subscription, map } from "rxjs";
 import { environment } from "../../environments/environment";
+import { SILENT } from "./loading.service";
 import { AuthService } from "./auth.service";
 
 export type VideoStatus = "UPLOADED" | "PROCESSING" | "READY" | "FAILED";
