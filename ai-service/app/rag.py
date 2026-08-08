@@ -177,14 +177,91 @@ class KnowledgeBase:
             self._chat_chain = _CHAT_PROMPT | get_llm() | StrOutputParser()
         return self._chat_chain
 
+    # ---- per-meeting scoping -------------------------------------------------
+    #
+    # A document belongs either to ONE meeting or to all of them. "All of them" is the default
+    # and is stored as None: the articles of association, a standing policy, last year's report
+    # kept for reference — these apply to every meeting, and making somebody re-upload them per
+    # meeting would be busywork that also multiplies the index.
+    #
+    # ONE INDEX, FILTERED AT QUERY TIME, rather than an index per meeting. FAISS accepts a
+    # metadata predicate, and this service runs in a small container that has already been
+    # OOM-killed once — holding a separate index (with its own copy of every embedding) per
+    # meeting is the version of this that falls over.
+
+    def _meeting_filter(self, meeting_id: str | None):
+        """Restrict retrieval to global documents plus one meeting's.
+
+        Returns None when no meeting is given, which means "search everything" — the behaviour
+        this service had before scoping existed, and what an unscoped deployment still gets.
+
+        The predicate deliberately admits `None`. A document with no meeting is shared, not
+        orphaned, so excluding it would hide the annual report from every meeting at once.
+        """
+        if not meeting_id:
+            return None
+
+        wanted = meeting_id.strip()
+
+        def keep(metadata: dict) -> bool:
+            owner = metadata.get("meeting_id")
+            return owner is None or owner == wanted
+
+        return keep
+
+    def _manifest_path(self) -> Path:
+        return _KB_DIR / "_manifest.json"
+
+    def _load_manifest(self) -> dict[str, str | None]:
+        """filename -> meeting id (or None for a shared document).
+
+        Kept beside the files rather than inferred from them, because the index is rebuilt from
+        disk on every restart and a tag that lived only in memory would silently become "shared"
+        the first time the service bounced — quietly widening a document's audience, which is the
+        wrong direction for a mistake to go.
+        """
+        path = self._manifest_path()
+        if not path.exists():
+            return {}
+        try:
+            import json
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            return {str(k): (str(v) if v else None) for k, v in raw.items()}
+        except Exception as exc:  # noqa: BLE001 - a corrupt manifest must not stop the KB loading
+            log.warning("Could not read the knowledge manifest (%s); treating every document as "
+                        "shared.", exc)
+            return {}
+
+    def _save_manifest(self, manifest: dict[str, str | None]) -> None:
+        try:
+            import json
+            _KB_DIR.mkdir(parents=True, exist_ok=True)
+            self._manifest_path().write_text(
+                json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Could not write the knowledge manifest (%s); this document will be "
+                        "treated as shared after the next restart.", exc)
+
+    def _tag_document(self, filename: str, meeting_id: str | None) -> None:
+        manifest = self._load_manifest()
+        if meeting_id:
+            manifest[filename] = meeting_id
+        else:
+            manifest.pop(filename, None)   # absent means shared; no need to store a null
+        self._save_manifest(manifest)
+
     def _load_documents(self) -> list[Document]:
         docs: list[Document] = []
         if not _KB_DIR.exists():
             return docs
+        # Which documents belong to which meeting. Applied here rather than remembered in memory,
+        # because this runs on every restart and an untagged rebuild would quietly promote every
+        # meeting-specific document to shared.
+        manifest = self._load_manifest()
         for pdf in _KB_DIR.glob("*.pdf"):
             reader = PdfReader(str(pdf))
             self._sources.add(pdf.name)
-            docs.extend(self._docs_from_reader(reader, pdf.name))
+            docs.extend(self._docs_from_reader(reader, pdf.name, manifest.get(pdf.name)))
         # Transcripts persisted by add_transcript. Without this an indexed recording would drop out
         # of the knowledge base on the next restart — the same class of bug as an unsaved draft.
         for vtt_path in _KB_DIR.glob("recording-*.vtt"):
@@ -192,11 +269,16 @@ class KnowledgeBase:
             video_id = vtt_path.stem.removeprefix("recording-")
             title = _title_from_note(text) or video_id
             self._sources.add(self._transcript_label(title))
-            docs.extend(self._docs_from_vtt(video_id, title, text))
+            docs.extend(self._docs_from_vtt(video_id, title, text,
+                                            manifest.get(vtt_path.name)))
         return docs
 
-    def _docs_from_reader(self, reader: PdfReader, source_name: str) -> list[Document]:
-        """Split every page of a PDF into embeddable, source-tagged chunks."""
+    def _docs_from_reader(self, reader: PdfReader, source_name: str,
+                          meeting_id: str | None = None) -> list[Document]:
+        """Split every page of a PDF into embeddable, source-tagged chunks.
+
+        `meeting_id` None means the document is shared with every meeting.
+        """
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
         docs: list[Document] = []
         for page_no, page in enumerate(reader.pages, start=1):
@@ -206,7 +288,11 @@ class KnowledgeBase:
             for chunk in splitter.split_text(text):
                 docs.append(Document(
                     page_content=chunk,
-                    metadata={"source": f"{source_name} p.{page_no}"},
+                    metadata={
+                        "source": f"{source_name} p.{page_no}",
+                        # None = shared. The retrieval filter admits it for every meeting.
+                        "meeting_id": meeting_id,
+                    },
                 ))
         return docs
 
@@ -217,7 +303,8 @@ class KnowledgeBase:
     # answer cite what was actually said, at the second it was said, instead of being limited to
     # what the report happens to cover.
 
-    def add_transcript(self, video_id: str, title: str, vtt: str, persist: bool = True) -> int:
+    def add_transcript(self, video_id: str, title: str, vtt: str, persist: bool = True,
+                       meeting_id: str | None = None) -> int:
         """Index a recording's WebVTT captions as timestamped, citable passages.
 
         Returns the number of passages indexed.
@@ -229,10 +316,11 @@ class KnowledgeBase:
         everything, which is why it is not the path taken for a first-time index.
         """
         with self._lock:
-            return self._add_transcript_locked(video_id, title, vtt, persist)
+            return self._add_transcript_locked(video_id, title, vtt, persist, meeting_id)
 
-    def _add_transcript_locked(self, video_id: str, title: str, vtt: str, persist: bool) -> int:
-        docs = self._docs_from_vtt(video_id, title, vtt)
+    def _add_transcript_locked(self, video_id: str, title: str, vtt: str, persist: bool,
+                               meeting_id: str | None = None) -> int:
+        docs = self._docs_from_vtt(video_id, title, vtt, meeting_id)
         if not docs:
             return 0
 
@@ -241,6 +329,9 @@ class KnowledgeBase:
 
         if persist:
             _KB_DIR.mkdir(parents=True, exist_ok=True)
+            # Recorded BEFORE the rebuild below, so a re-index picks the tag up from the manifest
+            # rather than rebuilding this transcript as shared.
+            self._tag_document(target.name, meeting_id)
             # Kept so the index survives a restart, exactly as uploaded PDFs are. The title rides
             # in a NOTE block because the filename cannot carry it losslessly.
             target.write_text(
@@ -257,7 +348,8 @@ class KnowledgeBase:
             self._sources.add(self._transcript_label(title))
         return len(docs)
 
-    def _docs_from_vtt(self, video_id: str, title: str, vtt: str) -> list[Document]:
+    def _docs_from_vtt(self, video_id: str, title: str, vtt: str,
+                       meeting_id: str | None = None) -> list[Document]:
         """Group consecutive cues into passages large enough to retrieve on.
 
         A single cue is one spoken line — far too little context for a useful embedding, and it
@@ -285,6 +377,8 @@ class KnowledgeBase:
                         "video_id": video_id,
                         "at_seconds": buffer_start,
                         "kind": "recording",
+                        # None = shared with every meeting; see _meeting_filter.
+                        "meeting_id": meeting_id,
                     },
                 ))
             buffer = []
@@ -320,7 +414,8 @@ class KnowledgeBase:
             self._store.add_documents(docs)
             self._chunk_count += len(docs)
 
-    def add_pdf(self, filename: str, data: bytes, persist: bool = True) -> int:
+    def add_pdf(self, filename: str, data: bytes, persist: bool = True,
+                meeting_id: str | None = None) -> int:
         """Ingest an uploaded annual-report PDF into the live FAISS index at runtime.
 
         Returns the number of chunks indexed. Several PDFs may be indexed side by side — each is
@@ -335,9 +430,10 @@ class KnowledgeBase:
         reasoning already governs {@code add_transcript}.
         """
         with self._lock:
-            return self._add_pdf_locked(filename, data, persist)
+            return self._add_pdf_locked(filename, data, persist, meeting_id)
 
-    def _add_pdf_locked(self, filename: str, data: bytes, persist: bool) -> int:
+    def _add_pdf_locked(self, filename: str, data: bytes, persist: bool,
+                        meeting_id: str | None = None) -> int:
         name = self._safe_kb_name(filename)
         trace = IndexTrace(f"Indexing {name}")
         self._last_trace = trace
@@ -348,8 +444,9 @@ class KnowledgeBase:
 
         with trace.step("Split text into chunks",
                         "RecursiveCharacterTextSplitter (1000 chars, 150 overlap)") as s:
-            docs = self._docs_from_reader(reader, name)
-            s["detail"] = f"{len(docs)} chunk(s)"
+            docs = self._docs_from_reader(reader, name, meeting_id)
+            s["detail"] = f"{len(docs)} chunk(s)" + (
+                "" if meeting_id is None else " — scoped to one meeting")
 
         if not docs:
             trace.finish("No extractable text — a scanned PDF needs OCR before it can be indexed.")
@@ -361,6 +458,9 @@ class KnowledgeBase:
             with trace.step("Store the document", "filesystem") as s:
                 _KB_DIR.mkdir(parents=True, exist_ok=True)
                 (_KB_DIR / name).write_bytes(data)
+                # Recorded BEFORE any rebuild below, so replacing a document re-reads the tag from
+                # the manifest instead of silently promoting it to shared.
+                self._tag_document(name, meeting_id)
                 s["detail"] = f"saved as {name}" + (" (replacing the previous version)" if replacing else "")
 
         if replacing:
@@ -400,6 +500,10 @@ class KnowledgeBase:
             if not target.exists():
                 raise FileNotFoundError(f"“{name}” is not in the knowledge base.")
             target.unlink()
+            # Drop the tag too. A manifest entry for a file that no longer exists is harmless
+            # today, but it would silently re-scope a future upload that happened to reuse the
+            # name — and "why is this document invisible" is a bad puzzle to leave behind.
+            self._tag_document(name, None)
             s["detail"] = f"{name} deleted"
 
         with trace.step("Rebuild the index from the remaining documents",
@@ -455,8 +559,12 @@ class KnowledgeBase:
         return name
 
     def status(self) -> dict:
+        manifest = self._load_manifest()
         return {
             "sources": sorted(self._sources),
+            # filename -> meeting id, for documents that belong to one meeting. Anything absent
+            # is shared with every meeting, which is the default.
+            "scoped_documents": manifest,
             "chunks_indexed": self._chunk_count,
             "ready": bool(self._sources),
             # The most recent indexing or removal run, so the UI can show what the pipeline did.
@@ -464,7 +572,27 @@ class KnowledgeBase:
             "last_index_run": self._last_trace.snapshot() if self._last_trace else None,
         }
 
-    def search(self, query: str, k: int = 8) -> list[SearchHit]:
+    def _retrieval_kwargs(self, k: int, meeting_id: str | None) -> dict:
+        """Search arguments, with the meeting filter applied when there is one.
+
+        FAISS applies a metadata predicate AFTER fetching, so a filtered search that fetches only
+        `k` candidates can return fewer than `k` results — or none at all — purely because the
+        nearest neighbours happened to belong to another meeting. `fetch_k` widens the candidate
+        pool so the filter has something to keep.
+
+        The multiplier is a trade: too small and a meeting with few documents returns a thin
+        answer, too large and every query pays for scanning the whole index. Four times the
+        requested k, floored at 40, keeps small meetings usable without making the common case
+        expensive.
+        """
+        kwargs: dict = {"k": k}
+        predicate = self._meeting_filter(meeting_id)
+        if predicate is not None:
+            kwargs["filter"] = predicate
+            kwargs["fetch_k"] = max(40, k * 4)
+        return kwargs
+
+    def search(self, query: str, k: int = 8, meeting_id: str | None = None) -> list[SearchHit]:
         """Semantic search over everything indexed — retrieval with no generation.
 
         <p>The same vector search that feeds {@code draft}, stopping before the LLM. That makes it
@@ -484,13 +612,15 @@ class KnowledgeBase:
             return []
 
         k = max(1, min(k, 25))
+        kwargs = self._retrieval_kwargs(k, meeting_id)
         try:
-            scored = self._store.similarity_search_with_relevance_scores(clean, k=k)
+            scored = self._store.similarity_search_with_relevance_scores(clean, **kwargs)
         except Exception:
             # Relevance scoring depends on the store's distance strategy having a known mapping.
             # Falling back to raw distance keeps search working rather than failing over a number
             # that only decorates the result.
-            scored = [(doc, None) for doc, _ in self._store.similarity_search_with_score(clean, k=k)]
+            scored = [(doc, None)
+                      for doc, _ in self._store.similarity_search_with_score(clean, **kwargs)]
 
         hits: list[SearchHit] = []
         for doc, score in scored:
@@ -504,7 +634,8 @@ class KnowledgeBase:
             ))
         return hits
 
-    def draft(self, cluster_id: str, question: str, k: int = 4) -> DraftResponse:
+    def draft(self, cluster_id: str, question: str, k: int = 4,
+              meeting_id: str | None = None) -> DraftResponse:
         """The RAG step: retrieve → augment → generate a grounded, cited answer.
 
         1. RETRIEVE the k report chunks most semantically similar to the question (vector search).
@@ -513,17 +644,20 @@ class KnowledgeBase:
         4. Attach the retrieved chunks as citations so the moderator can verify the source.
         """
         assert self._store is not None, "KB not loaded"
-        hits = self._store.similarity_search(question, k=k)          # 1) top-k nearest chunks
+        # Retrieval is confined to this meeting's documents plus the shared ones, so an answer
+        # cannot be grounded in a document belonging to a different meeting.
+        hits = self._store.similarity_search(
+            question, **self._retrieval_kwargs(k, meeting_id))       # 1) top-k nearest chunks
         context = "\n\n".join(f"[{d.metadata.get('source')}] {d.page_content}" for d in hits)  # 2)
         answer = self._get_chain().invoke({"question": question, "context": context})          # 3)
         citations = [_citation(d) for d in hits]                      # 4) source + seek target
         return DraftResponse(cluster_id=cluster_id, answer=answer.strip(), citations=citations)
 
-    def chat(self, message: str, k: int = 4) -> ChatResponse:
+    def chat(self, message: str, k: int = 4, meeting_id: str | None = None) -> ChatResponse:
         """Shareholder-facing GenAI chat: same RAG retrieve→augment→generate as draft(), but with
         a conversational prompt. Grounded on the annual report, returns answer + citations."""
         assert self._store is not None, "KB not loaded"
-        hits = self._store.similarity_search(message, k=k)
+        hits = self._store.similarity_search(message, **self._retrieval_kwargs(k, meeting_id))
         context = "\n\n".join(f"[{d.metadata.get('source')}] {d.page_content}" for d in hits)
         answer = self._get_chat_chain().invoke({"question": message, "context": context})
         citations = [_citation(d) for d in hits]

@@ -44,13 +44,16 @@ public class MeetingService {
     private final MeetingMemberRepository members;
     private final ResolutionRepository resolutions;
     private final VoteRepository votes;
+    /** Used only to reset the clusterer's in-memory state on activation. */
+    private final AiClient ai;
 
     public MeetingService(MeetingRepository meetings, MeetingMemberRepository members,
-                          ResolutionRepository resolutions, VoteRepository votes) {
+                          ResolutionRepository resolutions, VoteRepository votes, AiClient ai) {
         this.meetings = meetings;
         this.members = members;
         this.resolutions = resolutions;
         this.votes = votes;
+        this.ai = ai;
     }
 
     // ---- reading -------------------------------------------------------------
@@ -143,12 +146,37 @@ public class MeetingService {
         try {
             Meeting saved = meetings.saveAndFlush(meeting);
             log.info("Meeting {} activated by {}.", id, actor);
+            resetClusteringState(id);
             return saved;
         } catch (DataIntegrityViolationException ex) {
             // The partial unique index refused it: someone else activated a meeting in the moment
             // between the read above and this write.
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Another meeting was activated at the same time. Reload and try again.", ex);
+        }
+    }
+
+    /**
+     * Tell the AI service to keep only this meeting's clustering state.
+     *
+     * <p>This is what makes a new meeting start genuinely clean rather than merely filtered. The
+     * clusterer keeps a centroid per topic in memory and assigns every incoming question to the
+     * nearest one; without this the centroids from every meeting ever run stay resident, and
+     * memory grows meeting by meeting on a container that has already been killed for exceeding it.
+     *
+     * <p><b>Best effort, and deliberately not part of the transaction.</b> Failing to clear a cache
+     * is not a reason to refuse to start a meeting — the centroids are rebuildable, the durable
+     * record of every topic is in {@code cluster_drafts}, and clustering stays correct regardless
+     * because it is partitioned by meeting at the point of assignment. The worst case is stale
+     * memory, which the next activation clears.
+     */
+    private void resetClusteringState(UUID meetingId) {
+        try {
+            ai.retainMeeting(meetingId);
+        } catch (RuntimeException ex) {
+            log.warn("Meeting {} is active, but the AI service kept its previous clustering state: "
+                     + "{}. Harmless — questions still cluster within their own meeting.",
+                     meetingId, ex.getMessage());
         }
     }
 

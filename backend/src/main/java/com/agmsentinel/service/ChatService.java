@@ -29,14 +29,18 @@ public class ChatService {
     private final AppUserRepository users;
     private final PresenceService presence;
     private final AiClient ai;
+    /** Confines the assistant's retrieval to the live meeting's documents when scoping is on. */
+    private final MeetingScope scope;
     private final SimpMessagingTemplate broker;
 
     public ChatService(DirectMessageRepository messages, AppUserRepository users,
-                       PresenceService presence, AiClient ai, SimpMessagingTemplate broker) {
+                       PresenceService presence, AiClient ai, MeetingScope scope,
+                       SimpMessagingTemplate broker) {
         this.messages = messages;
         this.users = users;
         this.presence = presence;
         this.ai = ai;
+        this.scope = scope;
         this.broker = broker;
     }
 
@@ -100,7 +104,8 @@ public class ChatService {
     /** GenAI assistant: persist the exchange and return a RAG-grounded, cited answer. */
     public AiChatResult askAi(String me, String body) {
         messages.save(new DirectMessage(me, AI_PEER, body, DirectMessage.Kind.USER));
-        AiChatResult result = ai.chat(body);
+        // Answered from the live meeting's documents plus the shared ones.
+        AiChatResult result = ai.chat(body, scope.activeMeetingId().orElse(null));
         messages.save(new DirectMessage(AI_PEER, me, result.answer(), DirectMessage.Kind.AI));
         return result;
     }

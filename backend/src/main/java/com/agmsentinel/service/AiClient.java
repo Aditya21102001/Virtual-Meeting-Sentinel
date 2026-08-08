@@ -13,7 +13,9 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /** Thin HTTP client over the Python AI service (embedding, clustering, RAG). */
 @Component
@@ -36,13 +38,31 @@ public class AiClient {
                 .build();
     }
 
-    public IngestResult ingest(String questionId, String text, String attendeeId, float weight) {
+    /**
+     * Embed and cluster one question.
+     *
+     * <p>{@code meetingId} partitions the clustering: the AI service compares this question only
+     * against centroids from the same meeting. Without it, a question at this year's AGM would be
+     * folded into a topic from last year's — not a tidiness problem but a wrong answer, and one
+     * invisible until somebody reads the board and finds a question nobody asked.
+     *
+     * <p>Sent unconditionally, whether or not the MEETINGS flag is on, for the same reason the
+     * backend stamps {@code meeting_id} unconditionally: partitioning that followed the flag would
+     * leave everything ingested with it off in the wrong partition the moment it was switched on.
+     */
+    public IngestResult ingest(String questionId, String text, String attendeeId, float weight,
+                               UUID meetingId) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("question_id", questionId);
+        body.put("text", text);
+        body.put("attendee_id", attendeeId);
+        body.put("weight", weight);
+        // HashMap rather than Map.of: the meeting is genuinely absent when none is active, and
+        // Map.of rejects a null value outright.
+        body.put("meeting_id", meetingId == null ? null : meetingId.toString());
+
         return web.post().uri("/ingest")
-                .bodyValue(Map.of(
-                        "question_id", questionId,
-                        "text", text,
-                        "attendee_id", attendeeId,
-                        "weight", weight))
+                .bodyValue(body)
                 .retrieve()
                 .bodyToMono(IngestResult.class)
                 .timeout(Duration.ofSeconds(30))   // generous: covers free-tier cold starts
@@ -50,10 +70,24 @@ public class AiClient {
     }
 
     public DraftResult draft(String clusterId, String representativeQuestion) {
+        return draft(clusterId, representativeQuestion, null);
+    }
+
+    /**
+     * Draft an answer, grounded only in what this meeting may cite.
+     *
+     * <p>{@code meetingId} confines retrieval to that meeting's documents plus the shared ones. A
+     * null searches everything, which is what an unscoped deployment gets and what this method did
+     * before scoping existed.
+     */
+    public DraftResult draft(String clusterId, String representativeQuestion, UUID meetingId) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("cluster_id", clusterId);
+        body.put("representative_question", representativeQuestion);
+        body.put("meeting_id", meetingId == null ? null : meetingId.toString());
+
         return web.post().uri("/draft")
-                .bodyValue(Map.of(
-                        "cluster_id", clusterId,
-                        "representative_question", representativeQuestion))
+                .bodyValue(body)
                 .retrieve()
                 .bodyToMono(DraftResult.class)
                 .timeout(Duration.ofSeconds(60))
@@ -62,8 +96,17 @@ public class AiClient {
 
     /** GenAI assistant: RAG-grounded answer to a shareholder's free-form message. */
     public AiChatResult chat(String message) {
+        return chat(message, null);
+    }
+
+    /** The assistant, answering from this meeting's documents plus the shared ones. */
+    public AiChatResult chat(String message, UUID meetingId) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("message", message);
+        body.put("meeting_id", meetingId == null ? null : meetingId.toString());
+
         return web.post().uri("/chat")
-                .bodyValue(Map.of("message", message))
+                .bodyValue(body)
                 .retrieve()
                 .bodyToMono(AiChatResult.class)
                 .timeout(Duration.ofSeconds(60))
@@ -108,8 +151,27 @@ public class AiClient {
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> indexTranscript(String videoId, String title, String webVtt) {
+        return indexTranscript(videoId, title, webVtt, null);
+    }
+
+    /**
+     * Index a recording's captions, optionally scoped to one meeting.
+     *
+     * <p>A null meeting shares the transcript with every meeting. That is the safer default for a
+     * recording whose meeting is not known — a document nobody can find is worse than one a second
+     * meeting can also cite.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> indexTranscript(String videoId, String title, String webVtt,
+                                               UUID meetingId) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("video_id", videoId);
+        body.put("title", title);
+        body.put("vtt", webVtt);
+        body.put("meeting_id", meetingId == null ? null : meetingId.toString());
+
         return web.post().uri("/knowledge/transcript")
-                .bodyValue(Map.of("video_id", videoId, "title", title, "vtt", webVtt))
+                .bodyValue(body)
                 .retrieve()
                 .bodyToMono(Map.class)
                 .timeout(Duration.ofSeconds(120))   // embedding a long transcript takes a moment
@@ -156,8 +218,19 @@ public class AiClient {
      */
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> search(String query, int k) {
+        return search(query, k, null);
+    }
+
+    /** Semantic search across this meeting's documents plus the shared ones. */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> search(String query, int k, UUID meetingId) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("query", query == null ? "" : query);
+        body.put("k", k);
+        body.put("meeting_id", meetingId == null ? null : meetingId.toString());
+
         return web.post().uri("/search")
-                .bodyValue(Map.of("query", query == null ? "" : query, "k", k))
+                .bodyValue(body)
                 .retrieve()
                 .bodyToFlux(Map.class)
                 .collectList()
@@ -203,12 +276,51 @@ public class AiClient {
                 .block();
     }
 
+    /** Every meeting's topics, merged and re-ranked. The unscoped board. */
     public List<ClusterView> clusters(int limit) {
-        return web.get().uri(uri -> uri.path("/clusters").queryParam("limit", limit).build())
+        return clusters(limit, null);
+    }
+
+    /**
+     * The ranked board, optionally for one meeting.
+     *
+     * <p>Omitting {@code meetingId} means <em>all</em> meetings merged, not "the meeting-less
+     * ones" — that asymmetry is deliberate and documented on the Python side too, because the
+     * alternative silently turns a request for one meeting's board into a request for every
+     * meeting's.
+     */
+    public List<ClusterView> clusters(int limit, UUID meetingId) {
+        return web.get().uri(uri -> {
+                    uri.path("/clusters").queryParam("limit", limit);
+                    if (meetingId != null) uri.queryParam("meeting_id", meetingId.toString());
+                    return uri.build();
+                })
                 .retrieve()
                 .bodyToFlux(ClusterView.class)
                 .collectList()
                 .timeout(Duration.ofSeconds(30))
+                .block();
+    }
+
+    /**
+     * Tell the AI service to keep only this meeting's clustering state.
+     *
+     * <p>Called when a meeting is activated, so the new meeting starts genuinely clean rather than
+     * merely filtered — and so memory does not grow with every meeting ever run.
+     *
+     * <p>Best effort by design. Losing this call means stale centroids linger in memory; it does
+     * not mean anything is wrong with the meeting, and refusing to activate because a cache could
+     * not be cleared would be the wrong trade entirely. The centroids are rebuildable and the
+     * durable record is in {@code cluster_drafts}.
+     */
+    public void retainMeeting(UUID meetingId) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("meeting_id", meetingId == null ? null : meetingId.toString());
+        web.post().uri("/meetings/retain")
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(Map.class)
+                .timeout(Duration.ofSeconds(20))
                 .block();
     }
 }

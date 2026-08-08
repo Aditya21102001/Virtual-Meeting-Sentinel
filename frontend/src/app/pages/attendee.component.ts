@@ -18,7 +18,8 @@ import { RoomService, TopicView } from '../services/room.service';
       </p>
 
       <div class="card">
-        <textarea [ngModel]="text()" (ngModelChange)="text.set($event)" rows="3"
+        <label class="sr-only" for="question-text">Your question</label>
+        <textarea id="question-text" [ngModel]="text()" (ngModelChange)="text.set($event)" rows="3"
                   placeholder="e.g. When will this year's dividend be paid?"></textarea>
         <div class="row" style="margin-top:12px">
           <label class="muted" style="flex:1">

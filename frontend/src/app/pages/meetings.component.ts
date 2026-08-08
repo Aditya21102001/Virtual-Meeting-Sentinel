@@ -1,7 +1,9 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
+import { ApiService, Member } from '../services/api.service';
 import { AuthService } from '../services/auth.service';
 import {
+  BackfillResult,
   MeetingMemberView,
   MeetingService,
   MeetingView,
@@ -19,30 +21,89 @@ import {
   standalone: true,
   imports: [DatePipe],
   template: `
-    <div class="container">
-      <h1>Meetings</h1>
-      <p class="muted">
-        Everything belongs to a meeting: the questions asked, the board they are ranked on, and the
-        recording afterwards. Exactly one meeting is live at a time — activating another closes it.
-      </p>
+    <div class="container meetings-page">
+      <header class="page-head">
+        <h1>Meetings</h1>
+        <p class="muted sub">
+          Everything belongs to a meeting: the questions asked, the board they are ranked on, and
+          the recording afterwards. Exactly one meeting is live at a time — activating another
+          closes it.
+        </p>
+      </header>
 
       @if (error()) {
-        <div class="error-box">{{ error() }}</div>
+        <div class="error-box" role="alert">{{ error() }}</div>
+      }
+
+      <!--
+        One list for the whole page rather than one per meeting: the roster is the same either way,
+        and a datalist per expanded meeting would fetch and render the same names repeatedly.
+      -->
+      <datalist id="registered-users">
+        @for (u of registeredUsers(); track u.id) {
+          <option [value]="u.username">{{ u.username }} — {{ u.role }}</option>
+        }
+      </datalist>
+
+      <!--
+        The migration warning. Questions and topics recorded before meetings existed belong to no
+        meeting, and once the board filters by meeting they stop appearing anywhere. Shown here,
+        before anyone activates anything, because the fix is the same before or after but the
+        discovery is far less alarming beforehand.
+      -->
+      @if (orphans(); as o) {
+        @if (o.questions > 0 || o.topics > 0) {
+          <div class="card orphans">
+            <strong>{{ o.questions }} questions and {{ o.topics }} topics belong to no meeting.</strong>
+            <p class="muted note">
+              These were recorded before meetings existed. Once the board is filtered by meeting
+              they will not appear on any of them. Adopt them into whichever meeting they actually
+              belong to — this only ever claims items with no meeting, so it cannot move anything
+              between meetings and running it again is harmless.
+            </p>
+            <div class="row" style="margin-top:8px">
+              <label class="sr-only" for="backfill-target">Meeting to adopt them into</label>
+              <select
+                id="backfill-target"
+                [value]="backfillTarget()"
+                (change)="backfillTarget.set($any($event.target).value)"
+              >
+                <option value="">Choose a meeting…</option>
+                @for (m of meetings(); track m.id) {
+                  <option [value]="m.id">{{ m.title }}</option>
+                }
+              </select>
+              <button (click)="runBackfill()" [disabled]="!backfillTarget() || busy()">
+                Adopt them
+              </button>
+            </div>
+          </div>
+        }
+      }
+      @if (backfillDone(); as done) {
+        <div class="card" role="status">
+          Adopted {{ done.questionsAdopted }} questions and {{ done.topicsAdopted }} topics into
+          <strong>{{ done.meetingTitle }}</strong>.
+        </div>
       }
 
       <!-- What is live right now, for anyone who lands here. -->
       @if (active(); as live) {
-        <div class="card live">
-          <div class="row">
-            <span class="badge hot">● LIVE</span>
-            <strong>{{ live.title }}</strong>
-            <span class="muted">{{ live.memberCount }} member(s)</span>
-            <span style="flex:1"></span>
-            @if (canManageMeetings()) {
-              <button class="ghost" (click)="close(live)" [disabled]="busy()">Close meeting</button>
-            }
+        <section class="card live" aria-labelledby="live-heading">
+          <div class="live-head">
+            <span class="badge hot live-pill">
+              <span class="live-dot" aria-hidden="true"></span>LIVE
+            </span>
+            <h2 id="live-heading" class="live-title">{{ live.title }}</h2>
           </div>
-        </div>
+          <p class="muted note">
+            {{ live.memberCount }} {{ live.memberCount === 1 ? 'member' : 'members' }} · questions
+            asked now are attached to this meeting.
+          </p>
+          @if (canManageMeetings()) {
+            <button class="ghost" (click)="close(live)" [disabled]="busy()">Close meeting</button>
+          }
+        </section>
       } @else {
         <div class="card">
           <span class="muted">
@@ -53,26 +114,33 @@ import {
 
       <!-- Create (MEETING_MANAGER) -->
       @if (canManageMeetings()) {
-        <div class="card">
-          <div class="q">Schedule a meeting</div>
+        <section class="card" aria-labelledby="create-heading">
+          <h2 id="create-heading" class="section-title">Schedule a meeting</h2>
           <div class="field">
+            <label class="label" for="new-title">Title</label>
             <input
+              id="new-title"
               type="text"
-              placeholder="Title, e.g. Annual General Meeting 2026"
+              placeholder="Annual General Meeting 2026"
               [value]="title()"
               (input)="title.set($any($event.target).value)"
             />
           </div>
           <div class="field">
+            <label class="label" for="new-desc">
+              Description <span class="muted-inline">(optional)</span>
+            </label>
             <textarea
+              id="new-desc"
               rows="2"
-              placeholder="Description (optional)"
               [value]="description()"
               (input)="description.set($any($event.target).value)"
             ></textarea>
           </div>
           <div class="field">
-            <label class="muted" for="when">Scheduled for (optional)</label>
+            <label class="label" for="when">
+              Scheduled for <span class="muted-inline">(optional)</span>
+            </label>
             <input
               id="when"
               type="datetime-local"
@@ -83,7 +151,7 @@ import {
           <button (click)="create()" [disabled]="!title().trim() || busy()">
             {{ busy() ? 'Saving…' : 'Create meeting' }}
           </button>
-        </div>
+        </section>
       }
 
       <!-- The schedule -->
@@ -95,16 +163,25 @@ import {
       }
 
       @for (m of meetings(); track m.id) {
-        <div class="card">
-          <div class="row">
+        <article class="card meeting" [attr.data-status]="m.status">
+          <div class="meeting-head">
+            <h3 class="meeting-title">{{ m.title }}</h3>
             <span class="badge" [class.hot]="m.active">{{ m.status }}</span>
-            <strong>{{ m.title }}</strong>
-            @if (m.scheduledAt) {
-              <span class="muted">{{ m.scheduledAt | date: 'medium' }}</span>
-            }
-            <span class="muted">{{ m.memberCount }} member(s)</span>
-            <span style="flex:1"></span>
+          </div>
 
+          <p class="muted meta">
+            @if (m.scheduledAt) {
+              <span>{{ m.scheduledAt | date: 'medium' }}</span>
+            }
+            <span>{{ m.memberCount }} {{ m.memberCount === 1 ? 'member' : 'members' }}</span>
+            <span>quorum {{ m.quorumThresholdPercent }}%</span>
+          </p>
+
+          @if (m.description) {
+            <p class="muted desc">{{ m.description }}</p>
+          }
+
+          <div class="actions">
             @if (canManageMeetings()) {
               @if (m.status === 'DRAFT') {
                 <button (click)="activate(m)" [disabled]="busy()">Activate</button>
@@ -117,29 +194,42 @@ import {
               }
             }
             @if (canManageMembers()) {
-              <button class="link" (click)="toggleMembers(m)">
+              <button
+                class="ghost"
+                (click)="toggleMembers(m)"
+                [attr.aria-expanded]="openMeetingId() === m.id"
+              >
                 {{ openMeetingId() === m.id ? '▾' : '▸' }} Members
               </button>
             }
           </div>
-
-          @if (m.description) {
-            <p class="muted desc">{{ m.description }}</p>
-          }
 
           <!-- Member mapping (USER_MANAGER) -->
           @if (openMeetingId() === m.id) {
             <div class="inspector">
               @if (m.status !== 'CLOSED') {
                 <div class="row" style="margin:8px 0">
+                  <!--
+                    A picker AND free text, deliberately. Registered users autocomplete, because
+                    typing a username from memory is how you map the wrong person — but the field
+                    still accepts anything, because this is an invitation list: somebody can be
+                    added before they have ever signed in, and a strict dropdown would make that
+                    impossible. See MeetingMember on why the username is stored as plain text.
+                  -->
+                  <label class="sr-only" [attr.for]="'member-' + m.id">Username to add</label>
                   <input
+                    [id]="'member-' + m.id"
                     type="text"
-                    placeholder="Username"
+                    list="registered-users"
+                    placeholder="Username (or type a new one)"
+                    autocomplete="off"
                     [value]="newMember()"
                     (input)="newMember.set($any($event.target).value)"
                     (keyup.enter)="addMember(m)"
                   />
+                  <label class="sr-only" [attr.for]="'role-' + m.id">Role at this meeting</label>
                   <select
+                    [id]="'role-' + m.id"
                     [value]="newMemberRole()"
                     (change)="newMemberRole.set($any($event.target).value)"
                   >
@@ -206,7 +296,7 @@ import {
               }
             </div>
           }
-        </div>
+        </article>
       }
     </div>
   `,
@@ -227,6 +317,139 @@ import {
       }
       .weight input {
         width: 88px;
+      }
+      /* Amber, not red: unattributed data is a migration step to take, not a failure. */
+      .orphans {
+        border-left: 4px solid #f59e0b;
+      }
+
+      .page-head h1 {
+        margin-bottom: 4px;
+      }
+      .sub {
+        margin: 0;
+        max-width: 70ch;
+      }
+      .section-title {
+        margin: 0 0 12px;
+        font-size: 16px;
+      }
+
+      /* ---- the live meeting ---- */
+      .live {
+        border-left: 4px solid var(--hot);
+      }
+      .live-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .live-title {
+        margin: 0;
+        font-size: 17px;
+      }
+      .live-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex: 0 0 auto;
+      }
+      .live-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: currentColor;
+        animation: meeting-pulse 2s ease-in-out infinite;
+      }
+      @keyframes meeting-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+      }
+
+      /* ---- a meeting in the list ----
+         Title first, meta underneath, actions on their own line. Previously the title competed
+         with a badge, a date, a member count and five buttons on one wrapping row, which
+         collapsed into an unreadable stack on anything narrow. */
+      .meeting {
+        border-left: 3px solid rgba(128, 128, 128, 0.3);
+      }
+      .meeting[data-status='ACTIVE'] {
+        border-left-color: var(--hot);
+      }
+      .meeting[data-status='CLOSED'] {
+        border-left-color: rgba(128, 128, 128, 0.18);
+      }
+      .meeting-head {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .meeting-title {
+        margin: 0;
+        font-size: 16px;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      /* Separators as generated content, so screen readers do not read a row of bullets. */
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 14px;
+        margin: 6px 0 0;
+      }
+      .meta span + span::before {
+        content: '·';
+        margin-right: 14px;
+        opacity: 0.5;
+      }
+      .desc {
+        margin: 8px 0 0;
+        max-width: 70ch;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      /* ---- fields ---- */
+      .field {
+        margin-bottom: 12px;
+      }
+      .label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 5px;
+      }
+
+      /* ---- members ---- */
+      .member {
+        gap: 10px;
+      }
+
+      @media (max-width: 640px) {
+        /* Actions go full width and stack: five of them side by side leaves no room for labels. */
+        .actions button {
+          width: 100%;
+          min-width: 0;
+        }
+        .meta {
+          gap: 4px 0;
+          flex-direction: column;
+        }
+        .meta span + span::before {
+          content: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .live-dot {
+          animation: none;
+        }
       }
       .weight-badge {
         font-variant-numeric: tabular-nums;
@@ -265,6 +488,8 @@ import {
 export class MeetingsComponent implements OnInit {
   private readonly service = inject(MeetingService);
   private readonly auth = inject(AuthService);
+  /** Only for the registered-user roster that autocompletes the username field. */
+  private readonly api = inject(ApiService);
 
   readonly meetings = signal<MeetingView[]>([]);
   readonly loading = signal(true);
@@ -300,9 +525,73 @@ export class MeetingsComponent implements OnInit {
    */
   readonly newMemberWeight = signal('');
 
+  // ---- migration: adopting data that predates meetings -----------------------
+  //
+  // Everything recorded before meetings existed carries no meeting. Once the board filters by
+  // meeting, those items stop appearing on any of them. Surfacing the count here — before anyone
+  // activates anything — turns a frightening discovery into a one-click step.
+
+  /**
+   * Everyone with an account, to autocomplete the username field.
+   *
+   * <p>A convenience, not a constraint: the field still accepts a name that is not in this list,
+   * because a meeting's member list is an invitation list and people are routinely added before
+   * they sign up. Loaded once for the page.
+   */
+  readonly registeredUsers = signal<Member[]>([]);
+
+  readonly orphans = signal<{ questions: number; topics: number } | null>(null);
+  readonly backfillTarget = signal('');
+  readonly backfillDone = signal<BackfillResult | null>(null);
+
   ngOnInit(): void {
     this.service.refreshActive().subscribe({ error: () => {} });
     this.refresh();
+    this.checkOrphans();
+    // Silent on failure: without it the field is still usable, just without autocomplete.
+    this.api.listUsers().subscribe({
+      next: (users) => this.registeredUsers.set(users),
+      error: () => {},
+    });
+  }
+
+  private checkOrphans(): void {
+    // Silent on failure: this is an advisory panel, and an error banner over it would suggest the
+    // meetings screen itself was broken.
+    this.service.unattributedCount().subscribe({
+      next: (counts) => this.orphans.set(counts),
+      error: () => this.orphans.set(null),
+    });
+  }
+
+  runBackfill(): void {
+    const target = this.backfillTarget();
+    if (!target || this.busy()) return;
+
+    const meeting = this.meetings().find((m) => m.id === target);
+    if (
+      !confirm(
+        `Adopt every question and topic that has no meeting into "${meeting?.title ?? target}"?\n\n` +
+          'They will count towards that meeting from now on, including in its report.',
+      )
+    ) {
+      return;
+    }
+
+    this.busy.set(true);
+    this.error.set('');
+    this.service.backfillInto(target).subscribe({
+      next: (result) => {
+        this.busy.set(false);
+        this.backfillDone.set(result);
+        this.backfillTarget.set('');
+        this.checkOrphans(); // should now report zero — re-read rather than assume
+      },
+      error: (err) => {
+        this.busy.set(false);
+        this.error.set(this.message(err, 'Could not adopt those items.'));
+      },
+    });
   }
 
   private refresh(): void {

@@ -44,13 +44,16 @@ public class ClusterDraftService {
     private final ClusterDraftRepository drafts;
     private final AiClient ai;
     private final SimpMessagingTemplate broker;
+    /** Whether to filter to the live meeting, and which one. The single decision point. */
+    private final MeetingScope scope;
     private final ObjectMapper json = new ObjectMapper();
 
     public ClusterDraftService(ClusterDraftRepository drafts, AiClient ai,
-                               SimpMessagingTemplate broker) {
+                               SimpMessagingTemplate broker, MeetingScope scope) {
         this.drafts = drafts;
         this.ai = ai;
         this.broker = broker;
+        this.scope = scope;
     }
 
     // ---- board ---------------------------------------------------------------
@@ -69,6 +72,12 @@ public class ClusterDraftService {
      */
     @Transactional(readOnly = true)
     public List<ClusterView> board(int limit) {
+        // When a meeting is live and MEETINGS is on, the database decides which topics belong to it
+        // — the AI service has no idea about meetings and returns everything it is holding. See
+        // scopedBoard for why the direction of the join flips.
+        Optional<UUID> meeting = scope.activeMeetingId();
+        if (meeting.isPresent()) return scopedBoard(meeting.get(), limit);
+
         List<ClusterView> live;
         try {
             live = ai.clusters(limit);
@@ -91,6 +100,53 @@ public class ClusterDraftService {
             merged.add(overlay(view, stored.get(parseId(view.cluster_id()))));
         }
         return merged;
+    }
+
+    /**
+     * The board for one meeting.
+     *
+     * <p><b>Driven from the stored rows, not the live list.</b> Unscoped, the AI service's ranking
+     * leads and stored answers are laid over it. That cannot work here: the AI service knows nothing
+     * about meetings, so filtering its list would mean dropping anything we could not find a row
+     * for — including a topic whose row simply had not been written yet, which would make questions
+     * flicker off the board.
+     *
+     * <p>So membership comes from the database, which is the only thing that knows it, and the live
+     * ranking is applied where it exists. A meeting with no topics yields an empty board, which is
+     * the correct and intended answer for a meeting nobody has asked anything at.
+     */
+    private List<ClusterView> scopedBoard(UUID meetingId, int limit) {
+        List<ClusterDraft> rows = drafts.findByMeetingIdOrderByPriorityScoreDesc(meetingId);
+        if (rows.isEmpty()) return List.of();
+
+        // The live ranking is an enrichment, never a filter. If the AI service is unreachable the
+        // board still renders from the stored rows — the same fallback as the unscoped path.
+        Map<UUID, ClusterView> live = new LinkedHashMap<>();
+        try {
+            // Asked for THIS meeting's ranking, not everything: the AI service partitions by
+            // meeting too, so requesting the merged board would fetch every meeting's topics
+            // and discard all but one meeting's worth.
+            List<ClusterView> ranked = ai.clusters(Math.max(limit, rows.size()), meetingId);
+            if (ranked != null) {
+                for (ClusterView view : ranked) {
+                    UUID id = parseId(view.cluster_id());
+                    if (id != null) live.put(id, view);
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.warn("AI service unreachable ({}); ranking this meeting's board from stored rows.",
+                     ex.getMessage());
+        }
+
+        List<ClusterView> merged = new ArrayList<>(rows.size());
+        for (ClusterDraft row : rows) {
+            ClusterView ranked = live.get(row.getClusterId());
+            merged.add(ranked == null ? toView(row) : overlay(ranked, row));
+        }
+        // Re-sorted on the live score where one arrived, since the stored ordering is only as fresh
+        // as the last refresh.
+        merged.sort(Comparator.comparingDouble(ClusterView::priority_score).reversed());
+        return merged.stream().limit(Math.max(1, limit)).toList();
     }
 
     /** Everything we know without asking the AI service. Ranked as of the last refresh. */
@@ -150,12 +206,28 @@ public class ClusterDraftService {
      */
     @Transactional
     public boolean recordAndNeedsDraft(UUID clusterId, String representativeQuestion,
-                                       int size, double priorityScore) {
+                                       int size, double priorityScore, UUID meetingId) {
         ClusterDraft row = drafts.findById(clusterId).orElse(null);
         if (row == null) {
             row = new ClusterDraft(clusterId, representativeQuestion, size, priorityScore);
+            // Stamped from the ACTIVE MEETING, never from MeetingScope.
+            //
+            // The distinction matters and is easy to get backwards. Scope answers "should the board
+            // filter right now", which is false while the MEETINGS flag is off. If the stamp
+            // followed that, every topic raised with the flag off would be recorded with no meeting
+            // — and the moment somebody switched the flag on, the board would filter to a meeting
+            // whose topics all carry null and show nothing.
+            //
+            // Recording is unconditional; only FILTERING is conditional. That way turning the flag
+            // on is instant and turning it off loses nothing.
+            row.setMeetingId(meetingId);
             drafts.save(row);
             return true;
+        }
+        // An existing topic raised again while a meeting is live: adopt it, but never move it from
+        // one meeting to another. A topic belongs to the meeting it was first raised at.
+        if (row.getMeetingId() == null && meetingId != null) {
+            row.setMeetingId(meetingId);
         }
         // Keep the snapshot current so the offline board does not go stale.
         row.setSize(size);
@@ -221,9 +293,15 @@ public class ClusterDraftService {
     /** Clusters waiting on a human, most important first — the moderator's to-do list. */
     @Transactional(readOnly = true)
     public List<ClusterView> awaitingManualAnswer() {
-        return drafts.findByStatusOrderByPriorityScoreDesc(DraftStatus.NEEDS_MANUAL).stream()
-                .map(this::toView)
-                .toList();
+        // Scoped in step with the board. A to-do list showing an item the board does not have would
+        // send a moderator hunting for a topic they cannot reach — two screens disagreeing about
+        // what exists is worse than either rule applied consistently.
+        List<ClusterDraft> rows = scope.activeMeetingId()
+                .map(id -> drafts.findByMeetingIdAndStatusOrderByPriorityScoreDesc(
+                        id, DraftStatus.NEEDS_MANUAL))
+                .orElseGet(() -> drafts.findByStatusOrderByPriorityScoreDesc(
+                        DraftStatus.NEEDS_MANUAL));
+        return rows.stream().map(this::toView).toList();
     }
 
     /** Let a moderator ask the model to try again after it was flagged as needing a manual answer. */

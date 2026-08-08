@@ -319,7 +319,8 @@ public class VideoProcessingWorker {
             // what was said. Separately guarded — a knowledge-base failure must not discard captions
             // that were successfully produced and saved.
             try {
-                ai.indexTranscript(video.getId().toString(), video.getTitle(), webVtt);
+                ai.indexTranscript(video.getId().toString(), video.getTitle(), webVtt,
+                                   video.getMeetingId());
             } catch (RuntimeException ex) {
                 log.warn("Saved generated captions for video {} but could not index them: {}. "
                          + "Use Index for answers to retry.", video.getId(), ex.getMessage());

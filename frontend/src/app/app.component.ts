@@ -8,29 +8,55 @@ import {
 import { HelpWidgetComponent } from "./components/help-widget.component";
 import { AuthService } from "./services/auth.service";
 import { FeatureService } from "./services/feature.service";
+import { MeetingService } from "./services/meeting.service";
 
 @Component({
   selector: "app-root",
   standalone: true,
   imports: [RouterOutlet, RouterLink, RouterLinkActive, HelpWidgetComponent],
   template: `
-    <nav class="nav">
+    <!--
+      First thing in the tab order and invisible until focused. Without it a keyboard user tabs
+      through every navigation link on every page before reaching the content.
+    -->
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <nav class="nav" aria-label="Main">
       <div class="nav-bar">
         <a class="brand" routerLink="/ask" (click)="close()"
           >🛡️ VIRTUAL MEETING Sentinel</a
         >
+
+        <!--
+          Which meeting is live. Everything on every other screen belongs to it — the questions,
+          the board, the ballot — so the answer to "am I looking at the right meeting" should be
+          on screen rather than a page away. role="status" so a change is announced rather than
+          only noticed.
+        -->
+        @if (features.enabled("MEETINGS")) {
+          @if (meetings.active(); as live) {
+            <span class="live-meeting" role="status">
+              <span class="live-dot" aria-hidden="true"></span>
+              <span class="live-label">
+                <span class="sr-only">Live meeting: </span>{{ live.title }}
+              </span>
+            </span>
+          } @else {
+            <span class="live-meeting none" role="status">No meeting live</span>
+          }
+        }
         <button
           class="nav-toggle"
           type="button"
           (click)="toggle()"
           [attr.aria-expanded]="menuOpen()"
-          aria-label="Toggle navigation"
+          aria-controls="nav-links"
+          [attr.aria-label]="menuOpen() ? 'Close navigation' : 'Open navigation'"
         >
           {{ menuOpen() ? "✕" : "☰" }}
         </button>
       </div>
 
-      <div class="nav-links" [class.open]="menuOpen()">
+      <div id="nav-links" class="nav-links" [class.open]="menuOpen()">
         <a routerLink="/ask" routerLinkActive="active" (click)="close()"
           >Ask a question</a
         >
@@ -112,7 +138,10 @@ import { FeatureService } from "./services/feature.service";
         }
       </div>
     </nav>
-    <router-outlet></router-outlet>
+    <!-- tabindex="-1" so the skip link can move focus here, not just the scroll position. -->
+    <main id="main" tabindex="-1">
+      <router-outlet></router-outlet>
+    </main>
 
     <!--
       Outside the outlet on purpose: it is available on every page, and mounting it per route would
@@ -132,8 +161,52 @@ import { FeatureService } from "./services/feature.service";
       .nav-bar {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        gap: 12px;
         padding: 12px 24px;
+      }
+      .brand {
+        margin-right: auto;
+      }
+
+      .live-meeting {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        background: rgba(56, 189, 248, 0.14);
+        color: var(--accent);
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        /* A long meeting title must not push the hamburger off a narrow screen. */
+        max-width: 42vw;
+        min-width: 0;
+      }
+      .live-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .live-meeting.none {
+        background: transparent;
+        color: var(--muted);
+        border-color: #33415588;
+      }
+      .live-dot {
+        flex: 0 0 auto;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: currentColor;
+        animation: live-pulse 2s ease-in-out infinite;
+      }
+      @keyframes live-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .live-dot { animation: none; }
       }
       .brand {
         color: var(--accent);
@@ -187,6 +260,11 @@ import { FeatureService } from "./services/feature.service";
         .nav-bar {
           padding: 12px 16px;
         }
+        /* The title is the useful part on a phone; the pill chrome is not worth the width. */
+        .live-meeting {
+          max-width: 38vw;
+          padding: 4px 9px;
+        }
         .nav-toggle {
           display: block;
         }
@@ -221,6 +299,7 @@ export class AppComponent {
   constructor(
     public auth: AuthService,
     public features: FeatureService,
+    public meetings: MeetingService,
     private router: Router,
   ) {
     // Which features this user may see depends on who they are, so re-read whenever the session
@@ -228,6 +307,10 @@ export class AppComponent {
     effect(() => {
       if (this.auth.isAuthenticated()) {
         this.features.refresh().subscribe({ error: () => {} });
+        // Read once per session rather than polled: activating a meeting is a deliberate act by a
+        // manager, not something that changes under a reader every few seconds. Screens that act
+        // on it — the ballot, the board — refresh it themselves when they load.
+        this.meetings.refreshActive().subscribe({ error: () => {} });
       } else {
         this.features.clear();
       }

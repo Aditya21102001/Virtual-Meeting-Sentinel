@@ -380,14 +380,17 @@ import {
         background:
           conic-gradient(var(--for) 0 var(--pct), rgba(128, 128, 128, 0.18) var(--pct) 100%);
       }
-      /* The hole in the doughnut. Inherits the card's background so it works in either theme. */
+      /* The hole in the doughnut. --card is the card's own background, so the ring reads as a ring
+         rather than a filled disc with a pale blob in it. (This was --card-bg, which is not a
+         variable this application defines — it fell through to the #fff fallback and punched a
+         white circle into a dark card.) */
       .dial::before {
         content: '';
         position: absolute;
         width: 68px;
         height: 68px;
         border-radius: 50%;
-        background: var(--card-bg, #fff);
+        background: var(--card);
       }
       .dial {
         position: relative;

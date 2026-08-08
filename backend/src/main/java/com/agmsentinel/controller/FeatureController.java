@@ -53,9 +53,16 @@ public class FeatureController {
         }
     }
 
+    /**
+     * {@code allowedRoles} null means "leave the roles alone" — an on/off flip should not also
+     * rewrite the role configuration. Empty means "no role", explicitly, and is stored as such.
+     */
     public record UpdateFeatureRequest(String key, boolean enabled, Set<String> allowedRoles) { }
 
     public record FeatureRef(String key) { }
+
+    /** Applies one decision to every feature. {@code allowedRoles} follows the same null rule. */
+    public record BulkUpdateRequest(boolean enabled, Set<String> allowedRoles) { }
 
     /**
      * What this caller may use. Any signed-in user.
@@ -86,6 +93,25 @@ public class FeatureController {
         Feature feature = lookup(req.key());
         return FeatureView.of(
                 features.update(feature, req.enabled(), req.allowedRoles(), currentSubject()));
+    }
+
+    /**
+     * Apply one decision to every feature at once — the setup step for a fresh deployment.
+     *
+     * <p>Granting every role to everything cannot escalate anything: roles on a feature narrow
+     * access and never widen it, because Spring Security is checked first and independently. That is
+     * what makes a control this blunt safe to offer, and {@code reset-all-features} is the way back.
+     */
+    @PostMapping("/set-all-features")
+    public List<FeatureView> setAllFeatures(@RequestBody BulkUpdateRequest req) {
+        return features.updateAll(req.enabled(), req.allowedRoles(), currentSubject())
+                .stream().map(FeatureView::of).toList();
+    }
+
+    /** Clear every override, returning the whole deployment to how it ships. */
+    @PostMapping("/reset-all-features")
+    public List<FeatureView> resetAllFeatures() {
+        return features.resetAll(currentSubject()).stream().map(FeatureView::of).toList();
     }
 
     /** Drop the override, returning the feature to how it ships. */

@@ -12,7 +12,7 @@ and reports.
 ## Table of contents
 
 1. [Feature flags — the switchboard](#1-feature-flags--the-switchboard)
-2. [Meetings and membership](#2-meetings-and-membership)
+2. [Meetings and membership](#2-meetings-and-membership) · [2a. Per-meeting scoping](#2a-per-meeting-scoping)
 3. [Roles](#3-roles)
 4. [Voting, resolutions and quorum](#4-voting-resolutions-and-quorum)
 5. [Cluster curation — fixing the grouping](#5-cluster-curation--fixing-the-grouping)
@@ -147,6 +147,92 @@ same person may hold a different number of shares at the next one. It is set by 
 Adding a member is idempotent — re-adding updates their role and weight rather than failing. Leaving
 the weight field blank leaves an existing member's entitlement alone; `0` deliberately means "listed
 but holding no vote".
+
+### 2a. Per-meeting scoping
+
+Activating a different meeting gives a **fresh, clean board — without deleting the previous
+meeting's record**. Those are different things, and conflating them would be a mistake: the reports
+in §7 read a past meeting's questions, answers and votes, and an AGM record has to survive the next
+AGM.
+
+So nothing is cleared. `questions` and `cluster_drafts` carry a `meeting_id`, and the board, the
+awaiting-answers list, the attendee board and the run of show all filter on it. A new meeting starts
+empty because nothing carries its id yet.
+
+**Scoping applies only when both** the `MEETINGS` feature is on **and** a meeting is actually
+active. Otherwise everything behaves exactly as it did before meetings existed. The second condition
+matters as much as the first: with the flag on but every meeting closed, filtering by "the active
+meeting" would filter by nothing and blank the board. That decision lives in one class,
+`MeetingScope`, so the four screens cannot drift apart — a to-do list showing an item the board does
+not have would send a moderator hunting for a topic they cannot reach.
+
+#### Clustering is partitioned too
+
+Filtering the board is only half of it. The clusterer keeps a centroid per topic and assigns each
+incoming question to the nearest one — so without partitioning, a question at this year's AGM would
+be folded into a topic from last year's. That is not untidy, it is a **wrong answer**, and an
+invisible one: the board simply shows a topic whose count is too high, containing questions nobody
+at this meeting asked.
+
+So `/ingest` carries the meeting and the nearest-centroid search never leaves that partition.
+Questions belonging to no meeting share a partition of their own, which keeps behaviour identical
+for deployments that never use meetings.
+
+`/clusters` returns one meeting's topics when asked for one, and **every meeting merged** when not.
+That asymmetry is deliberate: `meeting_id=None` means the meeting-less partition *specifically*, not
+"any meeting". Conflating them would silently turn a request for one meeting's board into a request
+for all of them.
+
+#### Activating a meeting clears the clusterer
+
+`POST /meetings/retain` drops every partition but the new one. This is what makes a new meeting start
+*genuinely* clean rather than merely filtered, and it bounds memory — this service runs in a small
+container and has been killed for exceeding it, so holding every past meeting's centroids forever is
+a leak with a slow fuse.
+
+Safe to lose: centroids are a cache. Every topic's durable record is in `cluster_drafts`, and a board
+whose live ranking is missing falls back to those rows. The call is best-effort and deliberately
+outside the activation transaction — failing to clear a cache is not a reason to refuse to start a
+meeting.
+
+`scripts/check_clustering.py` covers this, including the case that matters most: two identical
+questions that *would* merge in one meeting must **not** merge across two.
+
+#### The knowledge base is scoped too
+
+A document belongs either to **one meeting** or to **all of them**. "All of them" is the default,
+stored as a null meeting: the articles, a standing policy, a reference report — these apply to every
+meeting, and making somebody re-upload them per meeting would be busywork that also multiplies the
+index. Scoping a document is the deliberate choice, not the default.
+
+Retrieval — drafting, the assistant, and semantic search — is then confined to *this meeting's
+documents plus the shared ones*, so an answer cannot be grounded in a document belonging to a
+different meeting.
+
+**One index, filtered at query time**, rather than an index per meeting. FAISS accepts a metadata
+predicate, and this service runs in a small container that has already been OOM-killed once —
+holding a separate index, with its own copy of every embedding, per meeting is the version of this
+that falls over.
+
+Two details that would otherwise bite:
+
+- **`fetch_k` is widened when filtering.** FAISS applies the predicate *after* fetching, so a
+  filtered search that fetches only `k` candidates can return fewer than `k` — or none — purely
+  because the nearest neighbours happened to belong to another meeting.
+- **Tags live in a manifest on disk** (`knowledge/_manifest.json`), not only in memory. The index is
+  rebuilt from disk on every restart, and a tag that lived only in memory would silently become
+  "shared" the first time the service bounced — quietly widening a document's audience, which is the
+  wrong direction for a mistake to go.
+
+> **Recording is unconditional; only filtering is conditional.** A topic's `meeting_id` is stamped
+> from the active meeting whether or not the flag is on. If the stamp followed the flag, every topic
+> raised with it off would carry null — and switching the flag on would filter to a meeting whose
+> topics all carry null and show nothing.
+
+**Before switching filtering on, adopt the orphans.** Everything recorded before meetings existed
+carries no meeting and would vanish from every board at once. Meetings → *unattributed data* shows
+the count and adopts them into a meeting you choose. It only ever claims rows with no meeting, so it
+cannot move anything between meetings and re-running is harmless.
 
 ---
 
@@ -480,7 +566,8 @@ cluster_merges(source_cluster_id PK, target_cluster_id, source_question, merged_
 cluster_upvotes(id, cluster_id, voter_id, created_at)
   └─ UNIQUE (cluster_id, voter_id)
 
-cluster_drafts  += published_at, run_order, discussion_started_at, discussion_ended_at
+cluster_drafts  += published_at, run_order, discussion_started_at, discussion_ended_at,
+                   meeting_id (nullable) -- which meeting the topic belongs to; the scoping key
 questions       += meeting_id (nullable)
 ```
 
@@ -605,7 +692,7 @@ Stated because a document that omits them is one you cannot trust the rest of.
 | **Split is not durable** | Future similar questions land wherever the clusterer puts them. Merge is durable; split is not. |
 | **Quorum is inferred from voting** | "Represented" means "cast at least one vote". The application has no register of who is in the room, and inferring presence from a websocket would count someone who opened the page and left. |
 | **Questions before meeting-stamping** | Carry no meeting and always will. Reports disclose the count rather than guessing. |
-| **Meeting scoping is phase one** | `questions.meeting_id` and `videos.meeting_id` are recorded but **nothing filters on them yet**. The board is still global. Turning scoping on is a separate, deliberate change. |
+| **Recordings are not scoped** | `videos.meeting_id` is recorded but the library stays browsable across meetings — "watch last year's AGM" is a feature, not leakage. Questions, topics and the room *are* scoped; see §2a. |
 | **Attendee identity is self-asserted** | Fine for upvotes, refused for votes (§11). |
 | **Not yet exercised** | Everything here compiles and is unit-tested at the points where being wrong is expensive (the carried/not-carried boundary, merge resolution, flag coverage). None of it has been run end to end. |
 

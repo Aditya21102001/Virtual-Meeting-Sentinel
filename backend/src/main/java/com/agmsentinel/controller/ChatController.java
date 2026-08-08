@@ -4,6 +4,7 @@ import com.agmsentinel.dto.ChatDtos.*;
 import com.agmsentinel.security.Feature;
 import com.agmsentinel.security.RequiresFeature;
 import com.agmsentinel.service.AiClient;
+import com.agmsentinel.service.MeetingScope;
 import com.agmsentinel.service.ChatService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -33,10 +34,13 @@ public class ChatController {
 
     private final ChatService chat;
     private final AiClient ai;
+    /** Confines search to the live meeting's documents when scoping is on. */
+    private final MeetingScope scope;
 
-    public ChatController(ChatService chat, AiClient ai) {
+    public ChatController(ChatService chat, AiClient ai, MeetingScope scope) {
         this.chat = chat;
         this.ai = ai;
+        this.scope = scope;
     }
 
     /** Names the other side of a conversation. In the body, so the route keeps a readable name. */
@@ -91,7 +95,9 @@ public class ChatController {
     @PostMapping("/semantic-search")
     public List<Map<String, Object>> semanticSearch(@RequestBody SearchRequest req) {
         int k = req.k() == null ? 8 : Math.max(1, Math.min(req.k(), 25));
-        return ai.search(req.query(), k);
+        // Scoped to the live meeting's documents plus the shared ones, so the help widget
+        // cannot surface a document belonging to a different meeting.
+        return ai.search(req.query(), k, scope.activeMeetingId().orElse(null));
     }
 
     /** Ask the GenAI assistant (RAG-grounded on the annual report). */

@@ -6,6 +6,14 @@ import { AuthService } from './auth.service';
 
 export type MeetingStatus = 'DRAFT' | 'ACTIVE' | 'CLOSED';
 
+/** What a backfill actually moved. */
+export interface BackfillResult {
+  meetingId: string;
+  meetingTitle: string;
+  questionsAdopted: number;
+  topicsAdopted: number;
+}
+
 export interface MeetingView {
   id: string;
   title: string;
@@ -112,6 +120,35 @@ export class MeetingService {
 
   remove(id: string): Observable<unknown> {
     return this.http.post(`${this.base}/delete-meeting`, { id }, { headers: this.headers() });
+  }
+
+  /**
+   * How many questions and topics belong to no meeting.
+   *
+   * Everything recorded before meetings existed carries no meeting. Switching on per-meeting
+   * filtering without adopting those first makes the board appear empty — every question ever
+   * asked becomes invisible at once.
+   */
+  unattributedCount(): Observable<{ questions: number; topics: number }> {
+    return this.http.post<{ questions: number; topics: number }>(
+      `${this.base}/unattributed-count`,
+      {},
+      { headers: this.headers() },
+    );
+  }
+
+  /**
+   * Adopt everything unattributed into one meeting.
+   *
+   * Only ever claims rows with no meeting, so it cannot move anything between meetings and running
+   * it twice is harmless.
+   */
+  backfillInto(id: string): Observable<BackfillResult> {
+    return this.http.post<BackfillResult>(
+      `${this.base}/backfill-into-meeting`,
+      { id },
+      { headers: this.headers() },
+    );
   }
 
   members(id: string): Observable<MeetingMemberView[]> {

@@ -101,7 +101,14 @@ export class FeatureService {
     return this.http.post<string[]>(`${this.base}/assignable-roles`, {}, { headers: this.headers() });
   }
 
-  set(key: FeatureKey, enabled: boolean, allowedRoles: string[]): Observable<FeatureView> {
+  /**
+   * Turn a feature on or off, and optionally change which roles may use it.
+   *
+   * Pass `null` for `allowedRoles` to leave the role configuration alone — the server reads null as
+   * "not changing this". An empty array is different: it explicitly means "no role", and is stored.
+   * Conflating the two made unticking the last role silently restore every default.
+   */
+  set(key: FeatureKey, enabled: boolean, allowedRoles: string[] | null): Observable<FeatureView> {
     return this.http
       .post<FeatureView>(
         `${this.base}/set-feature`,
@@ -109,6 +116,29 @@ export class FeatureService {
         { headers: this.headers() },
       )
       // The change may affect the current user's own menu, so re-read what they can see.
+      .pipe(tap(() => this.refresh().subscribe({ error: () => {} })));
+  }
+
+  /**
+   * Apply one decision to every feature at once — the setup step for a fresh deployment.
+   *
+   * Granting every role to everything cannot escalate anything: roles narrow access and never widen
+   * it, since the server checks Spring Security first and independently.
+   */
+  setAll(enabled: boolean, allowedRoles: string[] | null): Observable<FeatureView[]> {
+    return this.http
+      .post<FeatureView[]>(
+        `${this.base}/set-all-features`,
+        { enabled, allowedRoles },
+        { headers: this.headers() },
+      )
+      .pipe(tap(() => this.refresh().subscribe({ error: () => {} })));
+  }
+
+  /** Clear every override, returning the deployment to how it ships. The way back from setAll. */
+  resetAll(): Observable<FeatureView[]> {
+    return this.http
+      .post<FeatureView[]>(`${this.base}/reset-all-features`, {}, { headers: this.headers() })
       .pipe(tap(() => this.refresh().subscribe({ error: () => {} })));
   }
 

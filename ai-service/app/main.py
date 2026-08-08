@@ -12,10 +12,12 @@ to enable it. Both feed the same OnlineClusterer.
 """
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from fastapi.responses import FileResponse
+
+import logging
 
 from .clustering import get_clusterer
 from .config import get_settings
@@ -24,9 +26,13 @@ from .rag import get_kb, knowledge_file_path
 from .transcribe import TranscriptionUnavailable, transcribe_to_vtt
 from .schemas import (
     ChatRequest, ChatResponse, ClusterView, DraftRequest, DraftResponse,
-    IngestRequest, IngestResponse, KnowledgeRemoveRequest, SearchHit, SearchRequest,
+    IngestRequest, IngestResponse, KnowledgeRemoveRequest, RetainMeetingRequest,
+    SearchHit, SearchRequest,
     TranscriptIndexRequest,
 )
+
+
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -92,7 +98,11 @@ def kafka_status() -> dict:
 @app.post("/ingest", response_model=IngestResponse)
 def ingest(req: IngestRequest) -> IngestResponse:
     embedding = get_embeddings().embed_query(req.text)
-    result = get_clusterer().assign(req.text, embedding, weight=req.weight)
+    # meeting_id partitions the search: the clusterer only ever compares this question
+    # against centroids from the same meeting.
+    result = get_clusterer().assign(
+        req.text, embedding, weight=req.weight, meeting_id=req.meeting_id
+    )
     return IngestResponse(
         question_id=req.question_id,
         cluster_id=result.cluster.cluster_id,
@@ -104,7 +114,8 @@ def ingest(req: IngestRequest) -> IngestResponse:
 
 @app.post("/draft", response_model=DraftResponse)
 def draft(req: DraftRequest) -> DraftResponse:
-    result = get_kb().draft(req.cluster_id, req.representative_question)
+    result = get_kb().draft(req.cluster_id, req.representative_question,
+                            meeting_id=req.meeting_id)
     # Cache the draft + its citations on the cluster so they ride along on the board push.
     cluster = get_clusterer().get(req.cluster_id)
     if cluster is not None:
@@ -116,7 +127,7 @@ def draft(req: DraftRequest) -> DraftResponse:
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest) -> ChatResponse:
     """Shareholder-facing GenAI assistant — RAG-grounded answer over the annual report."""
-    return get_kb().chat(req.message)
+    return get_kb().chat(req.message, meeting_id=req.meeting_id)
 
 
 @app.get("/knowledge/status")
@@ -138,13 +149,20 @@ def knowledge_file(filename: str) -> FileResponse:
 
 
 @app.post("/knowledge/upload")
-async def knowledge_upload(file: UploadFile = File(...)) -> dict:
+async def knowledge_upload(
+    file: UploadFile = File(...),
+    # Which meeting this document belongs to. OMITTED MEANS SHARED with every meeting,
+    # which is the right default: the articles, a standing policy or a reference report
+    # apply to all of them, and requiring a re-upload per meeting would be busywork that
+    # also multiplies the index. Scoping is the deliberate choice, not the default.
+    meeting_id: str | None = Form(default=None),
+) -> dict:
     """Ingest a source PDF (annual report or similar) — several may be indexed side by side."""
     if not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
     data = await file.read()
     try:
-        chunks = get_kb().add_pdf(file.filename, data)
+        chunks = get_kb().add_pdf(file.filename, data, meeting_id=meeting_id)
     except ValueError as ex:
         # A name like "../x.pdf" satisfies the extension check above and is then refused at the
         # filesystem boundary. Without this it would surface as a 500 for what is a bad request.
@@ -165,7 +183,8 @@ def knowledge_transcript(req: TranscriptIndexRequest) -> dict:
     Re-indexing the same video replaces its passages rather than adding a second copy.
     """
     kb = get_kb()
-    passages = kb.add_transcript(req.video_id, req.title, req.vtt)
+    passages = kb.add_transcript(req.video_id, req.title, req.vtt,
+                                 meeting_id=req.meeting_id)
     if passages == 0:
         raise HTTPException(
             status_code=422,
@@ -228,11 +247,24 @@ def search(req: SearchRequest) -> list[SearchHit]:
     milliseconds. It is the cheap half of what /draft does, exposed on its own because "show me where
     this was discussed" is a different question from "write me an answer".
     """
-    return get_kb().search(req.query, req.k)
+    return get_kb().search(req.query, req.k, meeting_id=req.meeting_id)
 
 
 @app.get("/clusters", response_model=list[ClusterView])
-def clusters(limit: int = 20) -> list[ClusterView]:
+def clusters(limit: int = 20, meeting_id: str | None = None) -> list[ClusterView]:
+    """The ranked board.
+
+    With `meeting_id`, one meeting's topics. Without it, every meeting merged and re-ranked
+    — which is what the backend asks for when per-meeting filtering is switched off, so that
+    deployment sees exactly what it saw before clustering was partitioned.
+
+    Note the asymmetry: omitting the parameter means "all meetings", NOT "the meeting-less
+    partition". Anything genuinely belonging to no meeting is reachable by asking for it
+    explicitly, and appears in the merged view either way.
+    """
+    board = get_clusterer().top(
+        limit, meeting_id=meeting_id, all_meetings=meeting_id is None
+    )
     return [
         ClusterView(
             cluster_id=c.cluster_id,
@@ -242,5 +274,34 @@ def clusters(limit: int = 20) -> list[ClusterView]:
             draft=c.draft,
             citations=c.citations or [],
         )
-        for c in get_clusterer().top(limit)
+        for c in board
     ]
+
+
+@app.post("/meetings/retain")
+def retain_meeting(req: RetainMeetingRequest) -> dict:
+    """Keep one meeting's clustering state and drop every other meeting's.
+
+    Called by the backend when a meeting is activated, so a new meeting starts genuinely
+    clean rather than merely filtered.
+
+    Safe to lose: centroids are a cache. Every topic's durable record lives in the backend's
+    `cluster_drafts`, and a board whose live ranking is missing falls back to those rows.
+    It also bounds memory — this service runs in a small container and holding every past
+    meeting's centroids forever is a leak with a slow fuse.
+    """
+    dropped = get_clusterer().retain_only(req.meeting_id)
+    log.info(
+        "Meeting %s activated: kept %s clusters, dropped %s clusters across %s other meetings.",
+        req.meeting_id,
+        dropped["remaining_clusters"],
+        dropped["dropped_clusters"],
+        dropped["dropped_meetings"],
+    )
+    return dropped
+
+
+@app.get("/clusters/stats")
+def cluster_stats() -> dict:
+    """Per-meeting cluster counts. Diagnostic: the first thing to look at on a memory alert."""
+    return get_clusterer().stats()

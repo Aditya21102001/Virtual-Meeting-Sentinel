@@ -52,6 +52,20 @@ public class ClusterDraft {
     private UUID clusterId;
 
     /**
+     * Which meeting this topic belongs to.
+     *
+     * <p>Stamped from whichever meeting was live when the first question landed in the cluster. It
+     * is what lets a new meeting start with a clean board without deleting the last one's — the
+     * previous meeting's topics still exist, they simply do not match the filter.
+     *
+     * <p><b>Nullable, and stays that way.</b> Topics that predate meeting tracking have no meeting
+     * and never will; so do topics created while no meeting was active. Making this required would
+     * have meant either inventing a meeting for them or throwing them away.
+     */
+    @Column(name = "meeting_id")
+    private UUID meetingId;
+
+    /**
      * A snapshot of the cluster as the AI service last described it. Held so the board still
      * renders — with answers — when that service is asleep or restarting.
      */
@@ -148,6 +162,8 @@ public class ClusterDraft {
     }
 
     public UUID getClusterId() { return clusterId; }
+    public UUID getMeetingId() { return meetingId; }
+    public void setMeetingId(UUID meetingId) { this.meetingId = meetingId; }
     public String getRepresentativeQuestion() { return representativeQuestion; }
     public void setRepresentativeQuestion(String q) { this.representativeQuestion = q; }
     public int getSize() { return size; }

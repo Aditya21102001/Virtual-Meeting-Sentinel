@@ -35,6 +35,8 @@ public class ClusterDraftWorker {
 
     private final ClusterDraftService drafts;
     private final AiClient ai;
+    /** Confines retrieval to the live meeting's documents when scoping is on. */
+    private final MeetingScope scope;
     private final int maxAttempts;
     private final long baseDelayMs;
 
@@ -47,11 +49,12 @@ public class ClusterDraftWorker {
      */
     private final Set<UUID> inFlight = ConcurrentHashMap.newKeySet();
 
-    public ClusterDraftWorker(ClusterDraftService drafts, AiClient ai,
+    public ClusterDraftWorker(ClusterDraftService drafts, AiClient ai, MeetingScope scope,
                               @Value("${draft.max-attempts:3}") int maxAttempts,
                               @Value("${draft.retry-delay-ms:6000}") long baseDelayMs) {
         this.drafts = drafts;
         this.ai = ai;
+        this.scope = scope;
         this.maxAttempts = Math.max(1, maxAttempts);
         this.baseDelayMs = Math.max(0, baseDelayMs);
     }
@@ -72,7 +75,11 @@ public class ClusterDraftWorker {
         try {
             for (int attempt = 1; attempt <= maxAttempts; attempt++) {
                 try {
-                    DraftResult result = ai.draft(clusterId.toString(), representativeQuestion);
+                    // Same scoping as the synchronous path: an answer must not be grounded in
+                    // a document belonging to a different meeting just because it was drafted
+                    // in the background.
+                    DraftResult result = ai.draft(clusterId.toString(), representativeQuestion,
+                                                  scope.activeMeetingId().orElse(null));
                     if (result == null || result.answer() == null || result.answer().isBlank()) {
                         throw new IllegalStateException("The model returned an empty answer.");
                     }

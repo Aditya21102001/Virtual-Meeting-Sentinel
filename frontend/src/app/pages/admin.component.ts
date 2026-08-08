@@ -1,4 +1,4 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, signal } from '@angular/core';
 import { concatMap, from, toArray } from 'rxjs';
 import { ApiService, KnowledgeStatus } from '../services/api.service';
 
@@ -22,7 +22,9 @@ import { ApiService, KnowledgeStatus } from '../services/api.service';
           everything derived from it — its chunks and its embeddings.
         </p>
         <div class="row" style="margin-top:10px">
-          <input #reportInput type="file" accept="application/pdf" multiple (change)="pickReport($event)" />
+          <label class="sr-only" for="report-file">Annual report PDFs to index</label>
+          <input #reportInput id="report-file" type="file" accept="application/pdf" multiple
+                 (change)="pickReport($event)" />
           <button (click)="uploadReport(reportInput)" [disabled]="!reportFiles().length || reportBusy()">
             {{ reportBusy() ? 'Indexing…' : 'Upload & index' }}
           </button>
@@ -35,12 +37,31 @@ import { ApiService, KnowledgeStatus } from '../services/api.service';
           </p>
         }
         @if (statusErr()) {
-          <p class="error-box" style="margin-top:8px">
-            {{ statusErr() }}
-            <button (click)="retryStatus()" [disabled]="statusLoading()" style="margin-left:8px">
-              Retry
-            </button>
-          </p>
+          <!--
+            A cold start is not a failure, and must not look like one. The AI service sleeps when
+            idle on a free tier, so the FIRST request after a quiet spell fails while every one
+            after it succeeds. Showing that as a red error box teaches people to distrust a panel
+            that was about to work on its own.
+
+            So a 503 gets a calm, self-resolving "waking" state with the elapsed time visible, and
+            anything else — a real failure — still gets the error box it deserves.
+          -->
+          @if (waking()) {
+            <p class="waking" role="status">
+              <span class="spinner" aria-hidden="true"></span>
+              Waking the AI service — it sleeps when idle and takes up to a minute to start.
+              <span class="muted-inline">
+                Retrying automatically ({{ wakeSeconds() }}s, attempt {{ wakeAttempt() }}).
+              </span>
+            </p>
+          } @else if (statusErr()) {
+            <p class="error-box" style="margin-top:8px">
+              {{ statusErr() }}
+              <button (click)="retryStatus()" [disabled]="statusLoading()" style="margin-left:8px">
+                Retry
+              </button>
+            </p>
+          }
         }
 
         @if (status(); as s) {
@@ -109,7 +130,8 @@ import { ApiService, KnowledgeStatus } from '../services/api.service';
           Each line is clustered like a live question, so duplicates collapse automatically.
         </p>
         <div class="row" style="margin-top:10px">
-          <input type="file" accept=".txt,.csv" (change)="pickBank($event)" />
+          <label class="sr-only" for="bank-file">Question bank file</label>
+          <input id="bank-file" type="file" accept=".txt,.csv" (change)="pickBank($event)" />
           <button (click)="uploadBank()" [disabled]="!bankFile() || bankBusy()">
             {{ bankBusy() ? 'Ingesting…' : 'Upload & ingest' }}
           </button>
@@ -126,6 +148,44 @@ import { ApiService, KnowledgeStatus } from '../services/api.service';
   styles: [
     `
       button.danger { background: none; border: 1px solid #7f1d1d; color: #fca5a5; }
+
+      /* Waiting, not failing. Deliberately NOT styled like .error-box: a cold start resolves
+         itself, and dressing it in red teaches people to distrust a panel that was about to work.
+         Amber and a moving spinner read as "in progress"; red reads as "you have a problem". */
+      .waking {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        font-size: 14px;
+        color: #fcd34d;
+        background: #3b2f17;
+        border: 1px solid #7c5e10;
+      }
+      .spinner {
+        flex: 0 0 auto;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: 2px solid currentColor;
+        border-right-color: transparent;
+        animation: waking-spin 0.8s linear infinite;
+      }
+      @keyframes waking-spin {
+        to { transform: rotate(360deg); }
+      }
+      /* Without motion the spinner would be a static broken ring, which reads as an icon rather
+         than as activity — so it becomes a steady dot and the text carries the meaning. */
+      @media (prefers-reduced-motion: reduce) {
+        .spinner {
+          animation: none;
+          border-right-color: currentColor;
+          opacity: 0.6;
+        }
+      }
       .sources { list-style: none; padding: 0; margin: 8px 0 0; }
       .source-row {
         display: flex; align-items: center; gap: 10px; justify-content: space-between;
@@ -141,7 +201,7 @@ import { ApiService, KnowledgeStatus } from '../services/api.service';
     `,
   ],
 })
-export class AdminComponent implements OnInit {
+export class AdminComponent implements OnInit, OnDestroy {
   readonly reportFiles = signal<File[]>([]);
   readonly bankFile = signal<File | null>(null);
   readonly reportBusy = signal(false);
@@ -154,6 +214,22 @@ export class AdminComponent implements OnInit {
   readonly removing = signal<string | null>(null);
   readonly confirmingRemove = signal<string | null>(null);
 
+  // ---- cold-start handling --------------------------------------------------
+  //
+  // The AI service sleeps when idle. Rather than surface that as an error, the panel says it is
+  // waking and retries until it answers — see refreshStatus.
+
+  /** True while a cold start is being waited out. Not an error state. */
+  readonly waking = signal(false);
+  readonly wakeAttempt = signal(0);
+  /** Roughly how long we have been waiting, so the wait is visibly bounded. */
+  readonly wakeSeconds = signal(0);
+
+  private wakeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private static readonly WAKE_DELAYS_MS = [3000, 5000, 8000, 13000, 21000];
+  private static readonly MAX_WAKE_ATTEMPTS = 5;
+
   constructor(private api: ApiService) {}
 
   ngOnInit(): void {
@@ -161,32 +237,97 @@ export class AdminComponent implements OnInit {
     this.refreshStatus();
   }
 
-  /** Manual re-read, offered next to the error so a sleeping AI service is one click from fixed. */
+  ngOnDestroy(): void {
+    // A pending retry on a page nobody is looking at is a request for nothing.
+    this.stopWaking();
+  }
+
+  /** Manual re-read. Still offered — an automatic retry that cannot be hurried is frustrating. */
   retryStatus(): void {
+    this.stopWaking();
     this.refreshStatus();
   }
 
+  /**
+   * Re-read the knowledge base status, absorbing a cold start.
+   *
+   * <h3>Why 503 is treated differently from every other error</h3>
+   * The AI service sleeps when idle on a free tier. The backend answers a request it cannot forward
+   * with a deliberate <b>503</b> — see {@code AdminController.knowledgeStatus} — and that
+   * specifically means "not awake yet", not "broken". A cold start resolves itself in well under a
+   * minute, so the honest response is to say what is happening and keep trying, rather than to show
+   * a red box for a condition that is about to clear on its own.
+   *
+   * <p>Any other status is a real failure and is reported immediately without retrying: retrying a
+   * 401 or a 500 just delays the bad news behind a spinner.
+   */
   private refreshStatus(): void {
     this.statusLoading.set(true);
-    this.statusErr.set('');
+    if (!this.waking()) this.statusErr.set('');
+
     this.api.knowledgeStatus().subscribe({
       next: (s) => {
         this.status.set(s);
         this.statusErr.set('');
         this.statusLoading.set(false);
+        this.stopWaking();
       },
-      // Reported rather than swallowed. Without this an unreachable AI service leaves the panel
-      // blank, which reads as "nothing is indexed" at the very moment the Remove controls vanish.
-      //
-      // The server's own sentence wins when it sent one: it knows whether the AI service is merely
-      // waking or genuinely unreachable, and this page cannot tell the difference.
       error: (err) => {
+        this.statusLoading.set(false);
+        if (err?.status === 503) {
+          this.scheduleWake();
+          return;
+        }
+        // Not a cold start. Report it, and stop any wake loop that was running — continuing to
+        // retry would hide a genuine fault behind a reassuring message.
+        this.stopWaking();
         this.statusErr.set(
           err?.error?.error ?? 'Could not read the knowledge base. Is the AI service awake?',
         );
-        this.statusLoading.set(false);
       },
     });
+  }
+
+  /**
+   * Queue the next attempt while the service wakes.
+   *
+   * <p>Backs off rather than hammering: a service busy loading an embedding model does not benefit
+   * from a request every second, and a cold boot is the moment it can least afford them.
+   *
+   * <p>Bounded. Past the cap this stops claiming the service is "waking" and says plainly that it
+   * did not come back — an indefinite spinner is a lie told slowly.
+   */
+  private scheduleWake(): void {
+    if (this.wakeAttempt() >= AdminComponent.MAX_WAKE_ATTEMPTS) {
+      this.stopWaking();
+      this.statusErr.set(
+        'The AI service did not come back after about a minute. It may be down rather than ' +
+          'asleep — check its logs, then use Retry.',
+      );
+      return;
+    }
+
+    this.waking.set(true);
+    this.wakeAttempt.update((n) => n + 1);
+
+    // 3s, 5s, 8s, 13s, 21s — roughly a minute in total, front-loaded so a quick wake is noticed
+    // quickly and a slow one is not pestered.
+    const delay = AdminComponent.WAKE_DELAYS_MS[
+      Math.min(this.wakeAttempt() - 1, AdminComponent.WAKE_DELAYS_MS.length - 1)
+    ];
+
+    this.wakeTimer = setTimeout(() => {
+      this.wakeSeconds.update((n) => n + Math.round(delay / 1000));
+      this.refreshStatus();
+    }, delay);
+  }
+
+  private stopWaking(): void {
+    if (this.wakeTimer) clearTimeout(this.wakeTimer);
+    this.wakeTimer = null;
+    this.waking.set(false);
+    this.wakeAttempt.set(0);
+    this.wakeSeconds.set(0);
   }
 
   /**

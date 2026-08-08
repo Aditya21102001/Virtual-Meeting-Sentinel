@@ -48,12 +48,15 @@ public class RunOfShowService {
     private final ClusterDraftRepository drafts;
     private final ClusterUpvoteRepository upvotes;
     private final ClusterCurationService curation;
+    /** Whether the room shows one meeting's topics or all of them. */
+    private final MeetingScope scope;
 
     public RunOfShowService(ClusterDraftRepository drafts, ClusterUpvoteRepository upvotes,
-                            ClusterCurationService curation) {
+                            ClusterCurationService curation, MeetingScope scope) {
         this.drafts = drafts;
         this.upvotes = upvotes;
         this.curation = curation;
+        this.scope = scope;
     }
 
     /**
@@ -90,7 +93,7 @@ public class RunOfShowService {
      */
     @Transactional(readOnly = true)
     public List<TopicView> attendeeBoard(String viewerId, int limit) {
-        List<ClusterDraft> all = drafts.findAll();
+        List<ClusterDraft> all = topicsInScope();
         if (all.isEmpty()) return List.of();
 
         List<UUID> ids = all.stream().map(ClusterDraft::getClusterId).toList();
@@ -110,7 +113,7 @@ public class RunOfShowService {
     /** The same list for a moderator, who sees unpublished answers too. */
     @Transactional(readOnly = true)
     public List<TopicView> runOfShow(String viewerId) {
-        List<ClusterDraft> all = drafts.findAll();
+        List<ClusterDraft> all = topicsInScope();
         if (all.isEmpty()) return List.of();
 
         List<UUID> ids = all.stream().map(ClusterDraft::getClusterId).toList();
@@ -137,6 +140,19 @@ public class RunOfShowService {
                 .thenComparing(d -> d.getRunOrder() == null ? 0 : d.getRunOrder())
                 .thenComparing(Comparator.<ClusterDraft>comparingLong(
                         d -> d.getSize() + support.getOrDefault(d.getClusterId(), 0L)).reversed());
+    }
+
+    /**
+     * The topics this meeting owns, or every topic when scoping is off.
+     *
+     * <p>One helper rather than the check repeated at each call site: the room's four operations
+     * have to agree about which topics exist, and a run of show covering topics the attendee board
+     * does not show would let a chair "take next" something nobody in the room can see.
+     */
+    private List<ClusterDraft> topicsInScope() {
+        return scope.activeMeetingId()
+                .map(drafts::findByMeetingIdOrderByPriorityScoreDesc)
+                .orElseGet(drafts::findAll);
     }
 
     private Map<UUID, Long> supportCounts(List<UUID> clusterIds) {
@@ -204,7 +220,10 @@ public class RunOfShowService {
      */
     @Transactional
     public void setRunOrder(List<UUID> orderedClusterIds, String actor) {
-        List<ClusterDraft> all = drafts.findAll();
+        // Scoped, so reordering this meeting's agenda cannot clear the running order somebody set
+        // for a different meeting — every topic not in the list has its position cleared, and
+        // unscoped that would reach across meetings.
+        List<ClusterDraft> all = topicsInScope();
         Map<UUID, Integer> positions = new HashMap<>();
         for (int i = 0; i < orderedClusterIds.size(); i++) {
             positions.put(curation.resolve(orderedClusterIds.get(i)), i + 1);
@@ -231,7 +250,7 @@ public class RunOfShowService {
         UUID cluster = curation.resolve(clusterId);
         Instant now = Instant.now();
 
-        for (ClusterDraft other : drafts.findAll()) {
+        for (ClusterDraft other : topicsInScope()) {
             if (other.isUnderDiscussion() && !other.getClusterId().equals(cluster)) {
                 other.setDiscussionEndedAt(now);
                 drafts.save(other);

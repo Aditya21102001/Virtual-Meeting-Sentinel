@@ -647,11 +647,34 @@ export class ModeratorComponent implements OnInit, OnDestroy {
       : { v: citation.video_id! };
   }
 
+  /**
+   * Ask the model for an answer now.
+   *
+   * <p>A failure here used to be swallowed: the button stopped saying "Drafting…" and nothing else
+   * happened. That is the worst of the options — a moderator mid-meeting cannot tell whether the
+   * model is thinking, has finished, or never started, so they press it again.
+   *
+   * <p>A cold start is called by its name. The AI service sleeps when idle, and 502/503/504 (or a
+   * status of 0, which is what a dropped connection looks like from the browser) means it is waking
+   * rather than broken — the difference between "wait a moment" and "something is wrong", and the
+   * one the person running a meeting actually needs.
+   */
   draft(c: ClusterView): void {
     this.mutateDrafting((s) => s.add(c.cluster_id));
+    this.error.set(null);
     this.api.requestDraft(c.cluster_id, c.representative_question).subscribe({
       next: () => this.mutateDrafting((s) => s.delete(c.cluster_id)),
-      error: () => this.mutateDrafting((s) => s.delete(c.cluster_id)),
+      error: (err) => {
+        this.mutateDrafting((s) => s.delete(c.cluster_id));
+        const waking = err?.status === 0 || err?.status >= 502;
+        this.error.set(
+          waking
+            ? 'The AI service is waking up — it sleeps when idle and takes up to a minute. ' +
+              'Try again shortly, or write the answer yourself in the meantime.'
+            : (err?.error?.message ??
+              'Could not draft that answer. You can write it by hand instead.'),
+        );
+      },
     });
   }
 

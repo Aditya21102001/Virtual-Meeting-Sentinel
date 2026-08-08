@@ -156,7 +156,10 @@ public class VideoAdminController {
         String webVtt = library.readTranscript(video).orElseThrow(() ->
                 new ResponseStatusException(HttpStatus.CONFLICT,
                         "This recording has no transcript to index. Upload a .vtt or .srt first."));
-        return ai.indexTranscript(video.getId().toString(), video.getTitle(), webVtt);
+        // Tagged with the recording's own meeting. Null makes it shared with every meeting,
+        // which is the right default for a recording whose meeting was never recorded.
+        return ai.indexTranscript(video.getId().toString(), video.getTitle(), webVtt,
+                                  video.getMeetingId());
     }
 
     /**
@@ -169,7 +172,8 @@ public class VideoAdminController {
      */
     private void indexTranscriptQuietly(Video video, String webVtt) {
         try {
-            ai.indexTranscript(video.getId().toString(), video.getTitle(), webVtt);
+            ai.indexTranscript(video.getId().toString(), video.getTitle(), webVtt,
+                               video.getMeetingId());
         } catch (RuntimeException ex) {
             log.warn("Saved the transcript for video {} but could not index it into the knowledge "
                      + "base: {}. Use index-transcript to retry.", video.getId(), ex.getMessage());

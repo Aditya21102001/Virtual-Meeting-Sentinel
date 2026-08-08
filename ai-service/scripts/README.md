@@ -1,6 +1,6 @@
-# Demo scripts
+# Scripts
 
-Two helpers to make the project demo-ready for recruiters.
+Two helpers to make the project demo-ready, and one correctness check.
 
 ## 1. `generate_report.py` — mock annual report
 
@@ -32,3 +32,21 @@ python scripts/seed_questions.py https://your.koyeb.app # a deployed backend
 **Demo flow:** open the moderator board (`/board`), run the seed script, and watch clusters
 appear and grow in real time. Then click **Draft answer** on the dividend cluster — the RAG
 chain answers "…paid on or before 5 September 2024" with a citation to the report.
+
+
+## 3. `check_clustering.py` — questions must not merge across meetings
+
+The clusterer folds each new question into the nearest existing topic. If that search is
+not confined to one meeting, a question at this year's AGM gets absorbed into a topic from
+last year's — and nothing *looks* broken. The board just shows a topic whose count is too
+high, containing questions nobody at this meeting asked.
+
+```bash
+cd ai-service
+./.venv/Scripts/python.exe scripts/check_clustering.py     # Windows venv
+# or:  python scripts/check_clustering.py
+```
+
+Needs no extra dependencies and exits non-zero on failure, so it works as a pre-commit or
+CI step. Written as plain functions with asserts, so it becomes a pytest module unchanged
+if pytest is ever added.

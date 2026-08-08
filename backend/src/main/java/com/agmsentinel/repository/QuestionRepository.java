@@ -31,6 +31,16 @@ public interface QuestionRepository extends JpaRepository<Question, UUID> {
     long countUnattributed();
 
     /**
+     * Adopt every unattributed question into one meeting — the backfill.
+     *
+     * <p>Scoped to {@code meetingId is null} so it can only claim orphans, never move a question
+     * from one meeting to another. Re-running it is harmless.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update Question q set q.meetingId = :meetingId where q.meetingId is null")
+    int adoptUnattributed(@Param("meetingId") UUID meetingId);
+
+    /**
      * The clusters this meeting's questions fell into, with how many of them landed in each.
      *
      * <p>Grouped in the database: a report covers a whole meeting, and loading every question to

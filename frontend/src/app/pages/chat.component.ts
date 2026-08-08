@@ -109,6 +109,7 @@ import { Citation, parseCitation } from '../services/api.service';
           <footer class="composer">
             <input [ngModel]="draft()" (ngModelChange)="onType($event)"
                    (keyup.enter)="send()"
+                   [attr.aria-label]="peer === AI_PEER ? 'Ask the AI assistant' : 'Message ' + peer"
                    [placeholder]="peer === AI_PEER ? 'Ask the AI assistant…' : 'Type a message…'" />
             <button (click)="send()" [disabled]="!draft().trim() || busy()">
               {{ busy() ? '…' : 'Send' }}

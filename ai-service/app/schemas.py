@@ -9,6 +9,23 @@ class IngestRequest(BaseModel):
     attendee_id: str
     # Shareholder equity weight (0..1) — feeds the ranking score. Optional.
     weight: float = 0.0
+    # Which meeting this was asked at. Clustering never compares across meetings, so a
+    # question at this year's AGM cannot be folded into a topic from last year's.
+    #
+    # Optional, and None is a real value rather than "unknown": it means the question
+    # belongs to no meeting, and those share a partition of their own. That is what keeps
+    # behaviour identical for deployments that do not use meetings.
+    meeting_id: str | None = None
+
+
+class RetainMeetingRequest(BaseModel):
+    """Keep one meeting's clustering state in memory and drop the rest.
+
+    Sent when a meeting is activated. Safe because these centroids are a cache — the durable
+    record of every topic is the backend's `cluster_drafts` table.
+    """
+
+    meeting_id: str | None = None
 
 
 class IngestResponse(BaseModel):
@@ -22,16 +39,25 @@ class IngestResponse(BaseModel):
 class DraftRequest(BaseModel):
     cluster_id: str
     representative_question: str
+    # Restricts retrieval to this meeting's documents plus the shared ones, so an
+    # answer cannot be grounded in a document belonging to a different meeting.
+    # None searches everything — the behaviour of an unscoped deployment.
+    meeting_id: str | None = None
 
 
 class ChatRequest(BaseModel):
     # A shareholder's free-form question to the GenAI assistant.
     message: str
+    # As DraftRequest.
+    meeting_id: str | None = None
 
 
 class SearchRequest(BaseModel):
     query: str
     k: int = 8
+    # As DraftRequest: None searches everything, a meeting id searches that meeting's
+    # documents plus the shared ones.
+    meeting_id: str | None = None
 
 
 class SearchHit(BaseModel):
@@ -58,6 +84,9 @@ class TranscriptIndexRequest(BaseModel):
     video_id: str
     title: str
     vtt: str
+    # Which meeting this recording belongs to. None makes it shared with every meeting,
+    # which is the right default for a document that is not specific to one.
+    meeting_id: str | None = None
 
 
 class KnowledgeRemoveRequest(BaseModel):

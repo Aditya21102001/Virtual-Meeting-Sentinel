@@ -160,11 +160,23 @@ public class FeatureService {
 
     // ---- changing ------------------------------------------------------------
 
-    /** Turn a feature on or off, and optionally narrow which roles may use it. */
+    /**
+     * Turn a feature on or off, and optionally narrow which roles may use it.
+     *
+     * <p><b>Null and empty mean different things.</b> Null is "I am not changing the roles" — the
+     * caller is only flipping the switch — and keeps whatever is already configured. Empty is an
+     * explicit "no role may use this", and is stored as such.
+     *
+     * <p>They were once treated the same, both falling back to the catalogue defaults. That made
+     * unticking the last role silently re-tick every default one, which reads as the screen undoing
+     * the click. An admin narrowing a feature to nothing has said something deliberate, and the
+     * honest response is to store it — the feature is then effectively off for everyone but ADMIN,
+     * which is exactly what they asked for and is visible on the screen.
+     */
     @Transactional
     public Resolved update(Feature feature, boolean enabled, Set<String> allowedRoles, String actor) {
-        Set<String> roles = allowedRoles == null || allowedRoles.isEmpty()
-                ? feature.defaultRoles()
+        Set<String> roles = allowedRoles == null
+                ? resolve(feature).allowedRoles()
                 : Set.copyOf(allowedRoles);
 
         FeatureFlag flag = flags.findById(feature.key()).orElse(null);
@@ -180,6 +192,57 @@ public class FeatureService {
         log.info("Feature {} {} by {} (roles: {}).", feature.key(),
                  enabled ? "enabled" : "disabled", actor, roles);
         return resolve(feature);
+    }
+
+    /**
+     * Apply one decision to every feature at once.
+     *
+     * <p>Exists because configuring sixteen features one switch at a time is the common case for a
+     * fresh deployment — "turn everything on for everyone" is a setup step, not a fine adjustment,
+     * and doing it by hand invites missing one.
+     *
+     * <p><b>Granting every role cannot escalate anything.</b> Roles on a feature narrow access; they
+     * never widen it, because {@code SecurityConfig} is checked first and independently. A
+     * shareholder listed against a moderator-only route still gets a 403 from Spring Security. That
+     * is what makes a blunt bulk action safe to offer.
+     *
+     * <p>Written as one transaction and one refresh, so the cached state is never half-applied.
+     *
+     * @param roles null to leave each feature's roles as they are — see {@link #update}
+     */
+    @Transactional
+    public List<Resolved> updateAll(boolean enabled, Set<String> roles, String actor) {
+        for (Feature feature : Feature.values()) {
+            Set<String> effective = roles == null ? resolve(feature).allowedRoles() : Set.copyOf(roles);
+            FeatureFlag flag = flags.findById(feature.key()).orElse(null);
+            if (flag == null) {
+                flag = new FeatureFlag(feature.key(), enabled, effective, actor);
+            } else {
+                flag.setEnabled(enabled);
+                flag.setAllowedRoles(effective);
+                flag.setUpdatedBy(actor);
+            }
+            flags.save(flag);
+        }
+        refresh();
+        log.warn("ALL {} features {} by {}{}.", Feature.values().length,
+                 enabled ? "enabled" : "disabled", actor,
+                 roles == null ? "" : " for roles " + roles);
+        return all();
+    }
+
+    /**
+     * Drop every override, returning the whole deployment to how it ships.
+     *
+     * <p>The way back from a bulk change that went too far, and the reason
+     * {@link #updateAll} is safe to press.
+     */
+    @Transactional
+    public List<Resolved> resetAll(String actor) {
+        flags.deleteAll();
+        refresh();
+        log.warn("All feature overrides cleared by {} — every feature is back to its default.", actor);
+        return all();
     }
 
     /** Drop the override so the feature returns to its catalogue default. */

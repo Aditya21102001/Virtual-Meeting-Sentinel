@@ -5,6 +5,7 @@ import com.agmsentinel.dto.MeetingDtos.MeetingView;
 import com.agmsentinel.model.Meeting;
 import com.agmsentinel.security.Feature;
 import com.agmsentinel.security.RequiresFeature;
+import com.agmsentinel.service.MeetingBackfillService;
 import com.agmsentinel.service.MeetingService;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.security.core.Authentication;
@@ -36,9 +37,11 @@ import java.util.UUID;
 public class MeetingController {
 
     private final MeetingService meetings;
+    private final MeetingBackfillService backfill;
 
-    public MeetingController(MeetingService meetings) {
+    public MeetingController(MeetingService meetings, MeetingBackfillService backfill) {
         this.meetings = meetings;
+        this.backfill = backfill;
     }
 
     public record MeetingRef(@NotNull UUID id) { }
@@ -138,6 +141,31 @@ public class MeetingController {
     public DeletedResponse removeMember(@RequestBody MemberRequest req) {
         meetings.removeMember(req.id(), req.username());
         return new DeletedResponse(req.id(), true);
+    }
+
+    // ---- backfill (MEETING_MANAGER) -------------------------------------------
+
+    /**
+     * How much data belongs to no meeting.
+     *
+     * <p>Read this before switching on per-meeting filtering. Everything recorded before meetings
+     * existed carries no meeting, and filtering without adopting it first makes the board appear
+     * empty — every question ever asked becomes invisible at once.
+     */
+    @PostMapping("/unattributed-count")
+    public MeetingBackfillService.Unattributed unattributedCount() {
+        return backfill.count();
+    }
+
+    /**
+     * Adopt everything unattributed into one meeting.
+     *
+     * <p>Only ever claims rows that have no meeting, so it cannot move anything between meetings and
+     * running it twice is harmless.
+     */
+    @PostMapping("/backfill-into-meeting")
+    public MeetingBackfillService.BackfillResult backfillIntoMeeting(@RequestBody MeetingRef req) {
+        return backfill.adoptInto(req.id());
     }
 
     private MeetingView view(Meeting meeting) {

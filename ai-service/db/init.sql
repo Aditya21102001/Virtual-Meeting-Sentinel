@@ -498,3 +498,51 @@ CREATE TABLE IF NOT EXISTS cluster_upvotes (
 );
 
 CREATE INDEX IF NOT EXISTS cluster_upvotes_cluster_idx ON cluster_upvotes (cluster_id);
+
+-- ---------------------------------------------------------------------------
+-- PER-MEETING SCOPING (phase two): one meeting's board at a time.
+--
+-- Activating a different meeting should give a fresh, clean board — WITHOUT
+-- deleting the previous meeting's record. Those are different things, and
+-- conflating them would be a mistake:
+--
+--   * "Fresh and clean" is about what people SEE. Filtering on meeting_id gives
+--     that completely: the new meeting's board is empty because nothing carries
+--     its id yet.
+--   * Deleting would break the meeting reports, which read a past meeting's
+--     questions, answers and votes — and an AGM record is exactly the kind of
+--     thing that has to survive the next AGM.
+--
+-- So nothing here clears anything. The AI service's in-memory clustering state
+-- is the part that genuinely resets on activation; the database keeps the record.
+-- ---------------------------------------------------------------------------
+
+-- Which meeting a topic belongs to. Stamped from whichever meeting was live when
+-- the first question landed in the cluster.
+--
+-- NULLABLE, AND STAYS THAT WAY. Topics from before meeting tracking have no
+-- meeting and never will, and so do topics raised while no meeting was active.
+-- Making it NOT NULL would mean inventing a meeting for them or discarding them.
+--
+-- Recording this is UNCONDITIONAL; only filtering is conditional on the MEETINGS
+-- feature flag. If the stamp followed the flag, every topic raised with the flag
+-- off would carry null — and the moment somebody enabled the flag, the board
+-- would filter to a meeting whose topics all carry null and show nothing.
+ALTER TABLE cluster_drafts ADD COLUMN IF NOT EXISTS meeting_id UUID REFERENCES meetings (id);
+
+CREATE INDEX IF NOT EXISTS cluster_drafts_meeting_idx ON cluster_drafts (meeting_id);
+
+-- BEFORE SWITCHING FILTERING ON, adopt the orphans. Everything recorded before
+-- meetings existed carries meeting_id = NULL, and filtering without adopting it
+-- makes the board appear empty — every question ever asked becomes invisible at
+-- once, which is an alarming thing to discover in production.
+--
+-- The application does this from Meetings → "unattributed data" rather than by
+-- migration, so an administrator can see the count and choose the meeting. The
+-- equivalent by hand, if you prefer SQL:
+--
+--   UPDATE questions      SET meeting_id = '<meeting-uuid>' WHERE meeting_id IS NULL;
+--   UPDATE cluster_drafts SET meeting_id = '<meeting-uuid>' WHERE meeting_id IS NULL;
+--
+-- Both statements are scoped to IS NULL, so they only ever claim orphans: they
+-- cannot move anything from one meeting to another, and re-running is harmless.

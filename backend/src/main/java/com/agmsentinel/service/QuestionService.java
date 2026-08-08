@@ -39,15 +39,19 @@ public class QuestionService {
     private final ClusterCurationService curation;
     /** Only used to stamp the live meeting onto an incoming question — see stampActiveMeeting. */
     private final MeetingService meetings;
+    /** Confines retrieval to the live meeting's documents when scoping is on. */
+    private final MeetingScope scope;
     private final ObjectProvider<KafkaQuestionProducer> kafkaProducer;  // present only in kafka mode
     private final boolean kafkaMode;
 
     public QuestionService(QuestionRepository questions, AiClient ai,
                            ClusterDraftService drafts, ClusterDraftWorker draftWorker,
                            ClusterCurationService curation, MeetingService meetings,
+                           MeetingScope scope,
                            ObjectProvider<KafkaQuestionProducer> kafkaProducer,
                            @Value("${queue.mode:http}") String queueMode) {
         this.meetings = meetings;
+        this.scope = scope;
         this.questions = questions;
         this.ai = ai;
         this.drafts = drafts;
@@ -76,14 +80,15 @@ public class QuestionService {
         }
 
         // Synchronous HTTP path (queue.mode=http): call the AI service and get the assignment now.
-        IngestResult result = ai.ingest(q.getId().toString(), req.text(), req.attendeeId(), req.weight());
+        IngestResult result = ai.ingest(q.getId().toString(), req.text(), req.attendeeId(),
+                                        req.weight(), q.getMeetingId());
         // Resolved through any merges a moderator has made. The AI service still holds a centroid
         // for a cluster that was merged away and will keep assigning new questions to it, so without
         // this the merge would quietly undo itself the next time somebody asked the same thing.
         q.setClusterId(curation.resolve(UUID.fromString(result.cluster_id())));
         questions.save(q);
 
-        queueDraft(result, req.text());
+        queueDraft(result, req.text(), q.getMeetingId());
         broadcastBoard();
         return result;
     }
@@ -114,14 +119,14 @@ public class QuestionService {
      * is already saved by this point; a clusterer or model problem is the board's concern, not
      * theirs, and returning an error here would invite them to submit the same question again.
      */
-    private void queueDraft(IngestResult result, String questionText) {
+    private void queueDraft(IngestResult result, String questionText, UUID meetingId) {
         try {
             // Same resolution as above: a draft must be recorded against the surviving cluster, not
             // the one that was merged away — otherwise recordAndNeedsDraft would recreate the row
             // for the merged-away cluster and it would reappear on the board.
             UUID clusterId = curation.resolve(UUID.fromString(result.cluster_id()));
             boolean needsDraft = drafts.recordAndNeedsDraft(
-                    clusterId, questionText, result.cluster_size(), 0);
+                    clusterId, questionText, result.cluster_size(), 0, meetingId);
             if (needsDraft) {
                 draftWorker.draftInBackground(clusterId, questionText);
             }
@@ -147,12 +152,13 @@ public class QuestionService {
                 if (kafkaMode) {
                     kafkaProducer.getObject().publish(q.getId().toString(), clean, "question-bank", weight);
                 } else {
-                    IngestResult result = ai.ingest(q.getId().toString(), clean, "question-bank", weight);
+                    IngestResult result = ai.ingest(q.getId().toString(), clean, "question-bank",
+                                                    weight, q.getMeetingId());
                     // Resolved through merges, exactly as in submit(). An uploaded question bank
                     // must not be the way a merged-away cluster comes back to life.
                     q.setClusterId(curation.resolve(UUID.fromString(result.cluster_id())));
                     questions.save(q);
-                    queueDraft(result, clean);
+                    queueDraft(result, clean, q.getMeetingId());
                 }
                 ingested++;
             } catch (Exception ignored) {
@@ -178,7 +184,10 @@ public class QuestionService {
     public DraftResult draftFor(String clusterId, String representativeQuestion) {
         UUID id = UUID.fromString(clusterId);
         drafts.resetForRetry(id);
-        DraftResult draft = ai.draft(clusterId, representativeQuestion);
+        // Grounded only in what this meeting may cite. Unscoped deployments pass null and
+        // search everything, exactly as before.
+        DraftResult draft = ai.draft(clusterId, representativeQuestion,
+                                     scope.activeMeetingId().orElse(null));
         drafts.applyDraft(id, draft);
         broadcastBoard();
         return draft;
