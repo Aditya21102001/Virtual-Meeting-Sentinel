@@ -1,5 +1,6 @@
 import { Component, OnDestroy, OnInit, computed, signal } from '@angular/core';
 import { concatMap, from, timeout } from 'rxjs';
+import { FeatureService } from '../services/feature.service';
 import { MeetingService, MeetingView } from '../services/meeting.service';
 import {
   AnnualReportResult,
@@ -48,13 +49,34 @@ import {
               <option [value]="m.id">Only “{{ m.title }}”</option>
             }
           </select>
-          <p class="muted" style="margin:6px 0 10px; font-size:12px">
-            @if (uploadMeetingId()) {
-              Only answers for this meeting will cite these documents.
-            } @else {
-              Every meeting will be able to cite these documents — including meetings created later.
-            }
-          </p>
+          <!--
+            Scoping only takes effect when the MEETINGS feature is on. Tagging a document happens
+            unconditionally — that is deliberate, so switching the feature on later works
+            immediately — but FILTERING is conditional, so a document scoped while the feature is
+            off is still cited by everything.
+
+            Saying so here is the whole point. Offering a choice the configuration will silently
+            ignore is worse than not offering it: the operator does the right thing, sees the
+            confirmation, and gets the opposite behaviour with nothing to explain why.
+          -->
+          @if (uploadMeetingId() && !features.enabled('MEETINGS')) {
+            <p class="scope-warning" role="status">
+              <strong>This will be recorded but not enforced.</strong>
+              Per-meeting scoping only applies when the Meetings feature is switched on — until
+              then every meeting can cite every document, whatever it is tagged with. An admin can
+              enable it under Administration → Features. The tag is saved either way, so turning it
+              on later takes effect immediately.
+            </p>
+          } @else {
+            <p class="muted" style="margin:6px 0 10px; font-size:12px">
+              @if (uploadMeetingId()) {
+                Only answers for this meeting will cite these documents.
+              } @else {
+                Every meeting will be able to cite these documents — including meetings created
+                later.
+              }
+            </p>
+          }
 
           <label class="sr-only" for="report-file">Annual report PDFs to index</label>
           <input #reportInput id="report-file" type="file" accept="application/pdf" multiple
@@ -112,7 +134,19 @@ import {
             <ul class="sources">
               @for (src of s.sources; track src) {
                 <li class="source-row">
-                  <span>{{ src }}</span>
+                  <span class="source-name">
+                    {{ src }}
+                    <!--
+                      Which meeting can cite this. Shown on every row rather than filtering the
+                      list, because an administrator managing the knowledge base needs to see
+                      everything in it — including documents belonging to a meeting that is not
+                      currently live, which are exactly the ones they would otherwise think had
+                      vanished.
+                    -->
+                    <span class="scope" [class.shared]="!scopeOf(src)">
+                      {{ scopeOf(src) ?? 'all meetings' }}
+                    </span>
+                  </span>
                   @if (isRemovable(src)) {
                     <button
                       class="danger"
@@ -198,7 +232,7 @@ import {
                     </p>
                   } @else {
                     <p class="muted small">
-                      Reading and splitting the document — the chunk count is not known yet.
+                      Reading the document — the chunk count is not known yet.
                     </p>
                   }
                 } @else {
@@ -293,6 +327,40 @@ import {
   styles: [
     `
       button.danger { background: none; border: 1px solid #7f1d1d; color: #fca5a5; }
+
+      /* Amber: the upload will work exactly as asked, but one consequence will not. That is a
+         caveat to read, not an error to fear. */
+      .scope-warning {
+        margin: 6px 0 10px;
+        padding: 9px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        color: #fcd34d;
+        background: #3b2f17;
+        border: 1px solid #7c5e10;
+      }
+
+      .source-name {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        min-width: 0;
+      }
+      .scope {
+        font-size: 11px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        border: 1px solid var(--accent);
+        color: var(--accent);
+        white-space: nowrap;
+      }
+      /* Shared is the default and by far the common case, so it is stated quietly — a loud badge
+         on almost every row would drown out the ones that are actually scoped. */
+      .scope.shared {
+        border-color: #33415588;
+        color: var(--muted);
+      }
 
       .label {
         display: block;
@@ -473,6 +541,21 @@ export class AdminComponent implements OnInit, OnDestroy {
    */
   readonly indexRun = computed<IndexRun | null>(() => this.status()?.last_index_run ?? null);
 
+  /**
+   * Which meeting may cite this document, or null when it is shared with all of them.
+   *
+   * <p>Resolved to the meeting's title rather than shown as a raw id — an operator deciding whether
+   * to remove a document cannot do anything useful with a UUID.
+   */
+  scopeOf(filename: string): string | null {
+    const meetingId = this.status()?.scoped_documents?.[filename];
+    if (!meetingId) return null;
+    const meeting = this.meetings().find((m) => m.id === meetingId);
+    // Falls back to the id when the meeting has been deleted: "a meeting that no longer exists" is
+    // still more informative than showing it as shared, which would be wrong.
+    return meeting ? meeting.title : 'a deleted meeting';
+  }
+
   /** "12s" / "2m 05s" — a duration is easier to judge at a glance than a millisecond count. */
   etaText(ms: number): string {
     const seconds = Math.max(1, Math.round(ms / 1000));
@@ -488,6 +571,7 @@ export class AdminComponent implements OnInit, OnDestroy {
   constructor(
     private api: ApiService,
     private meetingService: MeetingService,
+    protected features: FeatureService,
   ) {}
 
   ngOnInit(): void {
@@ -662,9 +746,28 @@ export class AdminComponent implements OnInit, OnDestroy {
           this.statusErr.set('');
         },
         error: (err) => {
+          this.reportBusy.set(false);
+
+          // THE REQUEST FAILING DOES NOT MEAN THE INDEXING STOPPED.
+          //
+          // The AI service never learns that the caller gave up: it carries on reading, splitting
+          // and embedding to completion. So if a run is still in progress, keep watching it and
+          // keep the progress panel up — tearing the view down here was why the percentage and
+          // steps vanished mid-run on a large document, which looks far more like data loss than
+          // like a timeout.
+          const stillRunning = this.indexRun()?.running === true;
+          if (stillRunning) {
+            this.reportMsg.set(
+              'The upload request timed out, but the AI service is still indexing — progress ' +
+                'below is live. It will finish on its own.',
+            );
+            this.uploadPhase.set('indexing');
+            this.startPipelinePolling();
+            return;
+          }
+
           this.stopPipelinePolling();
           this.reportMsg.set('✗ ' + (err?.error?.error ?? 'Upload failed. Is the server running?'));
-          this.reportBusy.set(false);
           this.uploadPhase.set('idle');
           // Earlier files in the sequence may already be indexed, so re-read rather than assume.
           this.refreshStatus();
@@ -795,7 +898,19 @@ export class AdminComponent implements OnInit, OnDestroy {
       .knowledgeStatus()
       .pipe(timeout(8000))
       .subscribe({
-        next: (s) => this.status.set(s),
+        next: (s) => {
+          this.status.set(s);
+          // The poll owns the end of the run as well as its middle: when the upload request has
+          // already timed out, this is the ONLY thing that will ever notice it finished.
+          if (this.uploadPhase() === 'indexing' && s.last_index_run?.running === false) {
+            this.stopPipelinePolling();
+            this.uploadPhase.set('idle');
+            this.reportMsg.set(
+              `✓ Indexing finished — ${s.chunks_indexed} chunk(s) across ${s.sources.length} ` +
+                'document(s).',
+            );
+          }
+        },
         // Silent, and still re-arms: a dropped or slow poll during indexing is not worth an error
         // banner, and the upload's own error path still reports a genuine failure.
         error: () => this.rearmPipelinePoll(),

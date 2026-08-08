@@ -151,7 +151,13 @@ public class AiClient {
                 .body(BodyInserters.fromMultipartData(builder.build()))
                 .retrieve()
                 .bodyToMono(Map.class)
-                .timeout(Duration.ofSeconds(120))   // embedding a full report takes a moment
+                // Sized for a genuinely large document, not a typical one. A 1,000-page PDF
+                // splits into tens of thousands of chunks and every one is embedded; two minutes
+                // is not close. When this expires the AI service KEEPS WORKING — it never learns
+                // the caller left — so a short timeout does not stop the indexing, it only stops
+                // anyone watching it. The UI polls the run's own progress and no longer depends on
+                // this response arriving.
+                .timeout(Duration.ofMinutes(10))
                 .block();
     }
 

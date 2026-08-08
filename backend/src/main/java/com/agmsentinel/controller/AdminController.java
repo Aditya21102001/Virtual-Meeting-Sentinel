@@ -139,8 +139,30 @@ public class AdminController {
         if (file.getSize() > MAX_PDF_BYTES) {
             return ResponseEntity.badRequest().body(Map.of("error", "PDF is larger than the 25 MB limit."));
         }
-        Map<String, Object> result = ai.uploadKnowledge(name, file.getBytes(), meetingId);
-        return ResponseEntity.ok(result);
+        try {
+            Map<String, Object> result = ai.uploadKnowledge(name, file.getBytes(), meetingId);
+            return ResponseEntity.ok(result);
+        } catch (WebClientResponseException ex) {
+            // The AI service answered, and said no. Pass its own reason through — it knows things
+            // this layer does not, such as a PDF with no extractable text.
+            log.warn("Indexing {} failed: AI service returned {} — {}",
+                     name, ex.getStatusCode(), ex.getResponseBodyAsString());
+            return ResponseEntity.status(502).body(Map.of("error",
+                    "The AI service could not index that document: " + ex.getStatusText()));
+        } catch (RuntimeException ex) {
+            // It did not answer at all: asleep, restarting, or still blocked by earlier work.
+            //
+            // Previously this escaped uncaught and became a bare 500 with no message — the same
+            // response for a sleeping service, a timeout and a dropped connection, and nothing in
+            // the logs to tell them apart. Indexing a large report legitimately takes minutes, so
+            // this is the failure most likely to be a timeout rather than a fault.
+            log.warn("Indexing {} failed ({}): {}", name, ex.getClass().getSimpleName(),
+                     ex.getMessage());
+            return ResponseEntity.status(503).body(Map.of("error",
+                    "The AI service did not respond while indexing that document. It sleeps when "
+                    + "idle and a large report can take a few minutes — check its logs, then try "
+                    + "again."));
+        }
     }
 
     /**

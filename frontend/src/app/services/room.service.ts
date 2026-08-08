@@ -1,8 +1,9 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpContext } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { AuthService } from './auth.service';
+import { SILENT } from './loading.service';
 
 /**
  * One topic, as the room or the chair sees it.
@@ -60,7 +61,9 @@ export class RoomService {
     return this.http.post<TopicView[]>(
       `${this.base}/attendee-board`,
       { limit },
-      { headers: this.headers() },
+      // SILENT: polled on a timer, so counting it would hold the global loading bar up
+      // permanently. A user action on this page still raises the bar normally.
+      { headers: this.headers(), context: new HttpContext().set(SILENT, true) },
     );
   }
 
@@ -77,7 +80,10 @@ export class RoomService {
 
   /** Every topic with position, timings and unpublished answers. */
   runOfShow(): Observable<TopicView[]> {
-    return this.http.post<TopicView[]>(`${this.base}/run-of-show`, {}, { headers: this.headers() });
+    return this.http.post<TopicView[]>(`${this.base}/run-of-show`, {}, {
+      headers: this.headers(),
+      context: new HttpContext().set(SILENT, true),   // polled alongside the board
+    });
   }
 
   /** Set the whole order at once. Anything left out has its position cleared. */

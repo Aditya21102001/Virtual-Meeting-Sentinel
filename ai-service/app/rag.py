@@ -315,14 +315,27 @@ class KnowledgeBase:
         return docs
 
     def _docs_from_reader(self, reader: PdfReader, source_name: str,
-                          meeting_id: str | None = None) -> list[Document]:
+                          meeting_id: str | None = None,
+                          trace: "IndexTrace | None" = None) -> list[Document]:
         """Split every page of a PDF into embeddable, source-tagged chunks.
 
         `meeting_id` None means the document is shared with every meeting.
+
+        Reports progress by PAGE when given a trace. For a normal report this stage is over before
+        anyone looks, but a thousand-page document spends minutes here — and a step that says
+        "running" for minutes with no number is indistinguishable from one that has hung.
         """
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
         docs: list[Document] = []
+        total_pages = len(reader.pages)
+        if trace is not None:
+            trace.progress(0, total_pages, unit="pages")
+
         for page_no, page in enumerate(reader.pages, start=1):
+            if trace is not None and page_no % 10 == 0:
+                # Every tenth page: often enough to look alive, rarely enough that the bookkeeping
+                # does not become a measurable share of the work.
+                trace.progress(page_no, total_pages, unit="pages")
             text = (page.extract_text() or "").strip()
             if not text:
                 continue
@@ -517,7 +530,7 @@ class KnowledgeBase:
 
         with trace.step("Split text into chunks",
                         "RecursiveCharacterTextSplitter (1000 chars, 150 overlap)") as s:
-            docs = self._docs_from_reader(reader, name, meeting_id)
+            docs = self._docs_from_reader(reader, name, meeting_id, trace)
             s["detail"] = f"{len(docs)} chunk(s)" + (
                 "" if meeting_id is None else " — scoped to one meeting")
 

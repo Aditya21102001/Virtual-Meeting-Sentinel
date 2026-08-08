@@ -1,8 +1,9 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpContext } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { AuthService } from './auth.service';
+import { SILENT } from './loading.service';
 
 /**
  * How a member voted.
@@ -104,7 +105,9 @@ export class VotingService {
     return this.http.post<ResolutionView[]>(
       `${this.base}/list-resolutions`,
       { meetingId },
-      { headers: this.headers() },
+      // SILENT: the ballot re-reads every few seconds so tallies stay live. Casting a vote is a
+      // user action and still raises the bar.
+      { headers: this.headers(), context: new HttpContext().set(SILENT, true) },
     );
   }
 

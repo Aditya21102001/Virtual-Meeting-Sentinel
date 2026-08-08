@@ -1,7 +1,14 @@
-import { HttpClient, HttpEvent, HttpEventType, HttpResponse } from '@angular/common/http';
+import {
+  HttpClient,
+  HttpContext,
+  HttpEvent,
+  HttpEventType,
+  HttpResponse,
+} from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { Observable, filter, map } from 'rxjs';
 import { environment } from '../../environments/environment';
+import { SILENT } from './loading.service';
 
 export interface IngestResult {
   question_id: string;
@@ -64,6 +71,14 @@ export interface ClusterQuestionsView {
 
 export interface KnowledgeStatus {
   sources: string[];
+  /**
+   * filename -> meeting id, for documents that belong to ONE meeting.
+   *
+   * A document absent from this map is shared with every meeting, which is the default. The
+   * listing shows every document regardless — an administrator managing the knowledge base needs
+   * to see everything in order to remove it — so each row carries its scope instead.
+   */
+  scoped_documents?: Record<string, string | null>;
   chunks_indexed: number;
   ready: boolean;
   /** The most recent indexing or removal run, so the UI can show what the pipeline actually did. */
@@ -318,11 +333,18 @@ export class ApiService {
 
   // ---- Setup / admin (moderator) ------------------------------------------
 
+  /**
+   * Knowledge-base status.
+   *
+   * SILENT: polled every second or two while indexing runs, so counting it would pin the global
+   * loading bar on for the whole operation. The Setup page shows its own, far more informative
+   * progress for that.
+   */
   knowledgeStatus(): Observable<KnowledgeStatus> {
     return this.http.post<KnowledgeStatus>(
       `${environment.apiBase}/api/admin/knowledge-status`,
       {},
-      { headers: this.authHeaders() },
+      { headers: this.authHeaders(), context: new HttpContext().set(SILENT, true) },
     );
   }
 

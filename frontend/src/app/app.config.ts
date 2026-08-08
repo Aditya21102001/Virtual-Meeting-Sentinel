@@ -3,6 +3,7 @@ import { provideRouter } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { routes } from './app.routes';
 import { authInterceptor } from './services/auth.interceptor';
+import { loadingInterceptor } from './services/loading.interceptor';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -25,6 +26,9 @@ export const appConfig: ApplicationConfig = {
     provideRouter(routes),
     // authInterceptor: on a dead session (401/403 with a stored token) it clears the
     // session and redirects to /login instead of failing silently.
-    provideHttpClient(withInterceptors([authInterceptor])),
+    // loadingInterceptor drives the bar at the top of the page. Ordered first so it counts a
+    // request even when authInterceptor ends up redirecting on a dead session — otherwise a 401
+    // during sign-out would leave the counter permanently above zero.
+    provideHttpClient(withInterceptors([loadingInterceptor, authInterceptor])),
   ],
 };
