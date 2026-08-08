@@ -3,6 +3,8 @@ package com.agmsentinel.controller;
 import com.agmsentinel.dto.VideoDtos.VideoCard;
 import com.agmsentinel.model.Video;
 import com.agmsentinel.dto.VideoDtos.VideoStorageStatus;
+import com.agmsentinel.security.Feature;
+import com.agmsentinel.security.RequiresFeature;
 import com.agmsentinel.service.AiClient;
 import com.agmsentinel.service.SubtitleConverter;
 import com.agmsentinel.service.VideoLibraryService;
@@ -45,6 +47,7 @@ import java.util.UUID;
  *
  * <p>Media delivery is the deliberate exception and stays {@code GET} — see {@link VideoController}.
  */
+@RequiresFeature(Feature.VIDEO_LIBRARY)
 @RestController
 @RequestMapping("/api/admin/videos")
 public class VideoAdminController {

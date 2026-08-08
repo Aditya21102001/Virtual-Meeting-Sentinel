@@ -57,6 +57,35 @@ export class AuthService {
     () => this.hasValidToken(this.token()) && this.role() === "SHAREHOLDER",
   );
 
+  /**
+   * Every role in the current token — the primary one plus any additional duties.
+   *
+   * <p>Read from the token's `roles` claim, falling back to the single `role` for tokens issued
+   * before additional roles existed. That fallback is what stops a deploy signing everyone out or
+   * silently stripping their menu.
+   */
+  readonly roles = computed<string[]>(() => {
+    const token = this.token();
+    if (!token || !this.hasValidToken(token)) return [];
+    const claim = this.claim(token, "roles");
+    if (Array.isArray(claim) && claim.length) return claim.map(String);
+    const single = this.role();
+    return single ? [single] : [];
+  });
+
+  /** ADMIN is deliberately a superset: it can do anything either manager can. */
+  hasRole(role: string): boolean {
+    const held = this.roles();
+    return held.includes(role) || held.includes("ADMIN");
+  }
+
+  readonly isMeetingManager = computed(() => this.hasRole("MEETING_MANAGER"));
+  readonly isUserManager = computed(() => this.hasRole("USER_MANAGER"));
+  /** Either duty gets the Meetings screen; what they can do there differs. */
+  readonly managesMeetings = computed(
+    () => this.isMeetingManager() || this.isUserManager(),
+  );
+
   private readonly router = inject(Router);
 
   /** Fires when the current token's `exp` passes. Null when there is no live session. */

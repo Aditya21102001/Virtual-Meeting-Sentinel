@@ -41,6 +41,27 @@ export interface ClusterView {
   answered_by: string | null;
 }
 
+/** One question inside a cluster, for the curation panel. */
+export interface QuestionInCluster {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
+/** A cluster that was folded into this one — kept so an unexpectedly large group is explainable. */
+export interface MergedAway {
+  clusterId: string;
+  question: string | null;
+  mergedBy: string | null;
+  mergedAt: string;
+}
+
+export interface ClusterQuestionsView {
+  clusterId: string;
+  questions: QuestionInCluster[];
+  mergedIn: MergedAway[];
+}
+
 export interface KnowledgeStatus {
   sources: string[];
   chunks_indexed: number;
@@ -178,6 +199,54 @@ export class ApiService {
     return this.http.post<ClusterView>(
       `${environment.apiBase}/api/clusters/save-answer`,
       { clusterId, answer },
+      { headers: this.authHeaders() },
+    );
+  }
+
+  // ---- Curation: fixing the grouping when it is wrong ----------------------
+
+  /** The questions actually inside a cluster — what you read before deciding to split it. */
+  clusterQuestions(clusterId: string): Observable<ClusterQuestionsView> {
+    return this.http.post<ClusterQuestionsView>(
+      `${environment.apiBase}/api/clusters/cluster-questions`,
+      { clusterId },
+      { headers: this.authHeaders() },
+    );
+  }
+
+  /**
+   * Fold one cluster into another — the fix for one topic split across two groups.
+   *
+   * Durable: questions the clusterer would later have filed under the merged-away group are
+   * redirected too, so the merge does not quietly undo itself. Returns the rebuilt board.
+   */
+  mergeClusters(sourceClusterId: string, targetClusterId: string): Observable<ClusterView[]> {
+    return this.http.post<ClusterView[]>(
+      `${environment.apiBase}/api/clusters/merge-clusters`,
+      { sourceClusterId, targetClusterId },
+      { headers: this.authHeaders() },
+    );
+  }
+
+  /**
+   * Separate chosen questions into a cluster of their own.
+   *
+   * Applies only to questions already asked — the clusterer has no centroid for the new group, so
+   * similar questions arriving later will land wherever it puts them.
+   */
+  splitCluster(clusterId: string, questionIds: string[]): Observable<ClusterView[]> {
+    return this.http.post<ClusterView[]>(
+      `${environment.apiBase}/api/clusters/split-cluster`,
+      { clusterId, questionIds },
+      { headers: this.authHeaders() },
+    );
+  }
+
+  /** Move one misfiled question to another cluster. */
+  moveQuestion(questionId: string, targetClusterId: string): Observable<ClusterView[]> {
+    return this.http.post<ClusterView[]>(
+      `${environment.apiBase}/api/clusters/move-question`,
+      { questionId, targetClusterId },
       { headers: this.authHeaders() },
     );
   }

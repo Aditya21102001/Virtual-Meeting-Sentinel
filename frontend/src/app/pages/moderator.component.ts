@@ -5,10 +5,14 @@ import {
   Citation,
   CitationTarget,
   ClusterView,
+  MergedAway,
+  QuestionInCluster,
   citationTarget,
   parseCitation,
 } from "../services/api.service";
 import { BoardService } from "../services/board.service";
+import { FeatureService } from "../services/feature.service";
+import { RoomService, TopicView } from "../services/room.service";
 
 @Component({
   selector: "app-moderator",
@@ -66,7 +70,56 @@ import { BoardService } from "../services/board.service";
               }
             }
 
+            <!--
+              Run of show. The timer and the start/finish pair are how a chair keeps to time; the
+              position number is what the attendee board orders by.
+            -->
+            @if (features.enabled("RUN_OF_SHOW")) {
+              @if (runState(c); as r) {
+                @if (r.runOrder !== null) {
+                  <span class="badge" title="Position in the running order">#{{ r.runOrder }}</span>
+                }
+                @if (r.underDiscussion) {
+                  <span class="badge hot" role="status">on now</span>
+                } @else if (r.secondsSpent !== null) {
+                  <span class="muted-inline">took {{ minutes(r.secondsSpent) }}</span>
+                }
+              }
+            }
+
             <span style="flex:1"></span>
+
+            @if (features.enabled("ATTENDEE_BOARD")) {
+              <!--
+                Publishing is opt-in and stays that way: nearly every answer here was written by a
+                model and read by nobody, and showing one to the room states it as the company's.
+              -->
+              <button
+                class="ghost"
+                [disabled]="roomBusy() === c.cluster_id || !c.draft"
+                [attr.aria-pressed]="isPublished(c)"
+                [title]="c.draft ? '' : 'There is no answer to publish yet'"
+                (click)="togglePublished(c)"
+              >
+                {{ isPublished(c) ? "👁 Published to room" : "Publish to room" }}
+              </button>
+            }
+            @if (features.enabled("RUN_OF_SHOW")) {
+              @if (runState(c)?.underDiscussion) {
+                <button class="ghost" (click)="endTopic(c)" [disabled]="roomBusy() === c.cluster_id">
+                  Finish topic
+                </button>
+              } @else {
+                <button class="ghost" (click)="startTopic(c)" [disabled]="roomBusy() === c.cluster_id">
+                  Take this next
+                </button>
+              }
+            }
+            @if (features.enabled("CLUSTER_CURATION") && editing() !== c.cluster_id) {
+              <button class="ghost" (click)="toggleCuration(c)">
+                {{ curating() === c.cluster_id ? "▾" : "▸" }} Grouping
+              </button>
+            }
             @if (editing() !== c.cluster_id) {
               <button class="ghost" (click)="startWriting(c)">
                 {{ c.draft ? "Edit answer" : "Write answer" }}
@@ -109,6 +162,82 @@ import { BoardService } from "../services/board.service";
                 {{ saving() ? "Saving…" : "Save answer" }}
               </button>
               <button class="ghost" (click)="cancelWriting()">Cancel</button>
+            </div>
+          }
+
+          <!--
+            Curation. Open on demand rather than always visible: most clusters are grouped
+            correctly, and putting a merge control on every card invites fiddling with groupings
+            that were fine.
+          -->
+          @if (curating() === c.cluster_id) {
+            <div class="curation">
+              @if (curationLoading()) {
+                <p class="muted note">Loading the questions in this group…</p>
+              } @else {
+                <p class="muted note">
+                  These are the questions grouped together here. Tick any that do not belong and
+                  separate them out, or fold this whole group into another one.
+                </p>
+
+                <fieldset class="q-list">
+                  <legend class="sr-only">Questions in this group</legend>
+                  @for (q of curationQuestions(); track q.id) {
+                    <label class="q-row">
+                      <input
+                        type="checkbox"
+                        [checked]="selected().has(q.id)"
+                        (change)="toggleSelected(q.id)"
+                      />
+                      <span>{{ q.text }}</span>
+                    </label>
+                  }
+                </fieldset>
+
+                @if (curationMerged().length) {
+                  <p class="muted note">
+                    Already folded in:
+                    @for (m of curationMerged(); track m.clusterId) {
+                      <em>“{{ m.question }}”</em>
+                      @if (m.mergedBy) { (by {{ m.mergedBy }}) }
+                    }
+                  </p>
+                }
+
+                <div class="row curation-actions">
+                  <button
+                    class="ghost"
+                    (click)="split(c)"
+                    [disabled]="!selected().size || curationBusy()"
+                  >
+                    Separate {{ selected().size || "" }} out
+                  </button>
+
+                  <label class="merge-into">
+                    <span class="sr-only">Fold this group into</span>
+                    <select
+                      [value]="mergeTarget()"
+                      (change)="mergeTarget.set($any($event.target).value)"
+                    >
+                      <option value="">Fold this group into…</option>
+                      @for (other of otherClusters(c); track other.cluster_id) {
+                        <option [value]="other.cluster_id">
+                          {{ other.representative_question }}
+                        </option>
+                      }
+                    </select>
+                  </label>
+                  <button (click)="merge(c)" [disabled]="!mergeTarget() || curationBusy()">
+                    Fold in
+                  </button>
+                </div>
+
+                <p class="muted note">
+                  Folding also applies to questions nobody has asked yet — later ones that would
+                  have landed here go to the other group instead. Separating out only moves the
+                  questions above; similar ones asked later will be grouped as normal.
+                </p>
+              }
             </div>
           }
 
@@ -159,6 +288,53 @@ import { BoardService } from "../services/board.service";
       .note {
         margin: 8px 0 0;
         font-size: 13px;
+      }
+
+      /* Screen-reader-only: the fieldset needs a name, but the paragraph above it already says
+         the same thing to anyone who can see it. */
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      .curation {
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px dashed #334155;
+      }
+      .q-list {
+        border: 0;
+        margin: 8px 0;
+        padding: 0;
+      }
+      .q-row {
+        display: flex;
+        gap: 9px;
+        align-items: flex-start;
+        padding: 6px 0;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      .q-row + .q-row {
+        border-top: 1px solid rgba(128, 128, 128, 0.15);
+      }
+      .q-row input {
+        margin-top: 3px;
+        flex: 0 0 auto;
+      }
+      .curation-actions {
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .merge-into select {
+        max-width: 320px;
       }
     `,
   ],
@@ -211,14 +387,213 @@ export class ModeratorComponent implements OnInit, OnDestroy {
     });
   }
 
+  // ---- curation: fixing the grouping ----------------------------------------
+  //
+  // Grouping is done automatically by meaning, and automatic grouping is wrong in both directions —
+  // it splits one topic phrased two ways, and lumps two topics that share vocabulary. Until this
+  // existed a moderator could see that and do nothing about it.
+
+  /** Cluster id whose grouping panel is open, or null. */
+  readonly curating = signal<string | null>(null);
+  readonly curationLoading = signal(false);
+  readonly curationBusy = signal(false);
+  readonly curationQuestions = signal<QuestionInCluster[]>([]);
+  readonly curationMerged = signal<MergedAway[]>([]);
+  /** Question ids ticked for separating out. */
+  readonly selected = signal<Set<string>>(new Set());
+  readonly mergeTarget = signal('');
+
+  toggleCuration(c: ClusterView): void {
+    if (this.curating() === c.cluster_id) {
+      this.closeCuration();
+      return;
+    }
+    this.curating.set(c.cluster_id);
+    this.selected.set(new Set());
+    this.mergeTarget.set('');
+    this.curationQuestions.set([]);
+    this.curationMerged.set([]);
+    this.curationLoading.set(true);
+
+    this.api.clusterQuestions(c.cluster_id).subscribe({
+      next: (view) => {
+        this.curationQuestions.set(view.questions);
+        this.curationMerged.set(view.mergedIn);
+        this.curationLoading.set(false);
+      },
+      error: () => {
+        this.curationLoading.set(false);
+        this.error.set('Could not load the questions in that group.');
+        this.closeCuration();
+      },
+    });
+  }
+
+  private closeCuration(): void {
+    this.curating.set(null);
+    this.curationQuestions.set([]);
+    this.curationMerged.set([]);
+    this.selected.set(new Set());
+    this.mergeTarget.set('');
+  }
+
+  toggleSelected(questionId: string): void {
+    // A new Set each time: signals compare by reference, and mutating in place would not notify.
+    this.selected.update((current) => {
+      const next = new Set(current);
+      if (!next.delete(questionId)) next.add(questionId);
+      return next;
+    });
+  }
+
+  /** Everything except this cluster — the candidates to fold it into. */
+  otherClusters(c: ClusterView): ClusterView[] {
+    return this.board.board().filter((row) => row.cluster_id !== c.cluster_id);
+  }
+
+  split(c: ClusterView): void {
+    const ids = [...this.selected()];
+    if (!ids.length) return;
+    this.curationBusy.set(true);
+    this.error.set(null);
+    this.api.splitCluster(c.cluster_id, ids).subscribe({
+      next: (rebuilt) => {
+        this.curationBusy.set(false);
+        this.board.board.set(rebuilt);
+        this.closeCuration();
+      },
+      error: (err) => {
+        this.curationBusy.set(false);
+        // The server's message is the specific one — "that would move every question out" — and it
+        // tells the moderator what to do differently.
+        this.error.set(err?.error?.message ?? 'Could not separate those questions out.');
+      },
+    });
+  }
+
+  merge(c: ClusterView): void {
+    const target = this.mergeTarget();
+    if (!target) return;
+    this.curationBusy.set(true);
+    this.error.set(null);
+    this.api.mergeClusters(c.cluster_id, target).subscribe({
+      next: (rebuilt) => {
+        this.curationBusy.set(false);
+        this.board.board.set(rebuilt);
+        this.closeCuration();
+      },
+      error: (err) => {
+        this.curationBusy.set(false);
+        this.error.set(err?.error?.message ?? 'Could not fold those groups together.');
+      },
+    });
+  }
+
+  // ---- run of show, and releasing an answer to the room ---------------------
+  //
+  // The board itself is the AI service's ranking. This is the layer over it: which topic is being
+  // taken now, how long each took, and which answers the room may see.
+
+  /**
+   * Run-of-show state per cluster, from a separate endpoint.
+   *
+   * <p>Kept beside the board rather than folded into it: the board's shape is the AI service's, and
+   * widening it to carry meeting-running state would tie two things together that fail
+   * independently — the run of show should still work when the clusterer is asleep.
+   */
+  readonly roomTopics = signal<Map<string, TopicView>>(new Map());
+  /** Cluster id currently being changed, so only that card's buttons disable. */
+  readonly roomBusy = signal<string | null>(null);
+
+  runState(c: ClusterView): TopicView | undefined {
+    return this.roomTopics().get(c.cluster_id);
+  }
+
+  /**
+   * Whether the room can see this answer.
+   *
+   * <p>Read from the server's flag, not from whether an answer exists. This view returns every
+   * answer including unpublished drafts, so inferring it would mark everything as published — and
+   * a moderator trusting that button would believe the room had seen answers it never did.
+   */
+  isPublished(c: ClusterView): boolean {
+    return this.runState(c)?.published === true;
+  }
+
+  /** "4m 12s" — seconds alone are hard to read at a glance while chairing. */
+  minutes(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return m ? `${m}m ${s}s` : `${s}s`;
+  }
+
+  private loadRoom(): void {
+    if (!this.features.enabled('RUN_OF_SHOW') && !this.features.enabled('ATTENDEE_BOARD')) return;
+    this.room.runOfShow().subscribe({
+      next: (topics) => this.applyRoom(topics),
+      // Silent: this is an overlay on a board that is useful without it.
+      error: () => {},
+    });
+  }
+
+  private applyRoom(topics: TopicView[]): void {
+    this.roomTopics.set(new Map(topics.map((t) => [t.clusterId, t])));
+  }
+
+  startTopic(c: ClusterView): void {
+    this.roomBusy.set(c.cluster_id);
+    this.room.startTopic(c.cluster_id).subscribe({
+      next: (topics) => {
+        this.roomBusy.set(null);
+        this.applyRoom(topics);
+      },
+      error: (err) => {
+        this.roomBusy.set(null);
+        this.error.set(err?.error?.message ?? 'Could not start that topic.');
+      },
+    });
+  }
+
+  endTopic(c: ClusterView): void {
+    this.roomBusy.set(c.cluster_id);
+    this.room.endTopic(c.cluster_id).subscribe({
+      next: (topics) => {
+        this.roomBusy.set(null);
+        this.applyRoom(topics);
+      },
+      error: (err) => {
+        this.roomBusy.set(null);
+        this.error.set(err?.error?.message ?? 'Could not finish that topic.');
+      },
+    });
+  }
+
+  togglePublished(c: ClusterView): void {
+    const next = !this.isPublished(c);
+    this.roomBusy.set(c.cluster_id);
+    this.room.publishAnswer(c.cluster_id, next).subscribe({
+      next: () => {
+        this.roomBusy.set(null);
+        this.loadRoom();
+      },
+      error: (err) => {
+        this.roomBusy.set(null);
+        this.error.set(err?.error?.message ?? 'Could not change what the room can see.');
+      },
+    });
+  }
+
   constructor(
     private api: ApiService,
     protected board: BoardService,
+    protected features: FeatureService,
+    private room: RoomService,
   ) {}
 
   ngOnInit(): void {
     // Token is already set by AuthService — the route guard ensures a logged-in moderator.
     this.loadSnapshot(); // initial snapshot
+    this.loadRoom();     // the run-of-show layer over it
     this.board.connect(); // then live pushes over STOMP
 
     // Fallback poll: live WebSocket pushes can drop (esp. behind free-tier proxies), and a
@@ -227,6 +602,8 @@ export class ModeratorComponent implements OnInit, OnDestroy {
     this.pollHandle = setInterval(() => {
       if (this.destroyed) return;
       this.loadSnapshot();
+      // Refreshed alongside, so a topic another moderator started shows as running here too.
+      this.loadRoom();
     }, 45000);
   }
 

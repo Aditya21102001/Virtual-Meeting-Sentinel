@@ -87,6 +87,36 @@ public class ClusterDraft {
     @Column(name = "answered_by")
     private String answeredBy;
 
+    /**
+     * When a moderator released this answer to attendees. Null means attendees cannot see it.
+     *
+     * <p><b>Opt-in, and this is the important part.</b> Most answers here are drafted by a model and
+     * have not been read by anyone. Showing those to a room full of shareholders as "the answer"
+     * would publish something the company never said — which at an AGM is not a UI problem, it is a
+     * statement attributed to the board. So publishing is always a deliberate act, and the attendee
+     * board shows only what has been through it.
+     */
+    @Column(name = "published_at")
+    private Instant publishedAt;
+
+    /**
+     * Position in the run of show, or null if it has not been scheduled.
+     *
+     * <p>Lives here rather than in a separate agenda table because a cluster <em>is</em> the topic —
+     * a second table would only hold a pointer back to this row and an integer, and would then have
+     * to be kept in step through every merge and split.
+     */
+    @Column(name = "run_order")
+    private Integer runOrder;
+
+    /** When the chair began taking this topic. Null until they do. */
+    @Column(name = "discussion_started_at")
+    private Instant discussionStartedAt;
+
+    /** When the chair finished with it. Together with the start, this is how long it took. */
+    @Column(name = "discussion_ended_at")
+    private Instant discussionEndedAt;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
 
@@ -136,6 +166,29 @@ public class ClusterDraft {
     public void setAttempts(int attempts) { this.attempts = attempts; }
     public String getAnsweredBy() { return answeredBy; }
     public void setAnsweredBy(String answeredBy) { this.answeredBy = answeredBy; }
+
+    /** True when attendees may see this answer. See {@link #publishedAt}. */
+    public boolean isPublished() { return publishedAt != null; }
+    public Instant getPublishedAt() { return publishedAt; }
+    public void setPublishedAt(Instant publishedAt) { this.publishedAt = publishedAt; }
+
+    public Integer getRunOrder() { return runOrder; }
+    public void setRunOrder(Integer runOrder) { this.runOrder = runOrder; }
+    public Instant getDiscussionStartedAt() { return discussionStartedAt; }
+    public void setDiscussionStartedAt(Instant at) { this.discussionStartedAt = at; }
+    public Instant getDiscussionEndedAt() { return discussionEndedAt; }
+    public void setDiscussionEndedAt(Instant at) { this.discussionEndedAt = at; }
+
+    /** Being taken right now — started and not yet finished. */
+    public boolean isUnderDiscussion() {
+        return discussionStartedAt != null && discussionEndedAt == null;
+    }
+
+    /** How long the topic took, in seconds, or null while it is still running or not yet started. */
+    public Long discussionSeconds() {
+        if (discussionStartedAt == null || discussionEndedAt == null) return null;
+        return discussionEndedAt.getEpochSecond() - discussionStartedAt.getEpochSecond();
+    }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 }

@@ -29,6 +29,17 @@ public class Question {
     @Column(name = "cluster_id")
     private UUID clusterId;
 
+    /**
+     * Which meeting this question was asked at.
+     *
+     * <p><b>Nullable, and nothing filters on it yet.</b> Phase one only records it, so every
+     * existing query behaves exactly as before and questions asked before meetings existed remain
+     * valid rather than becoming orphans. Turning on scoping — the board showing only the active
+     * meeting — is a separate, deliberate change once meetings are in use.
+     */
+    @Column(name = "meeting_id")
+    private UUID meetingId;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
 
@@ -46,5 +57,7 @@ public class Question {
     public float getWeight() { return weight; }
     public UUID getClusterId() { return clusterId; }
     public void setClusterId(UUID clusterId) { this.clusterId = clusterId; }
+    public UUID getMeetingId() { return meetingId; }
+    public void setMeetingId(UUID meetingId) { this.meetingId = meetingId; }
     public Instant getCreatedAt() { return createdAt; }
 }

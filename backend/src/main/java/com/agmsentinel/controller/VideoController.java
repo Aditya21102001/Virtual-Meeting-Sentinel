@@ -8,6 +8,8 @@ import com.agmsentinel.dto.VideoDtos.SegmentView;
 import com.agmsentinel.dto.VideoDtos.VideoCard;
 import com.agmsentinel.dto.VideoDtos.VideoEngagement;
 import com.agmsentinel.model.Video;
+import com.agmsentinel.security.Feature;
+import com.agmsentinel.security.RequiresFeature;
 import com.agmsentinel.model.VideoRendition;
 import com.agmsentinel.model.VideoSegment;
 import com.agmsentinel.security.PlaybackTicketService;
@@ -147,16 +149,19 @@ public class VideoController {
      * Like, or un-like if already liked. Returns the resulting counts so the button can settle on
      * the server's answer rather than guessing from an optimistic increment.
      */
+    @RequiresFeature(Feature.VIDEO_ENGAGEMENT)
     @PostMapping("/toggle-like")
     public VideoEngagement toggleLike(@RequestBody VideoRef req) {
         return engagement.toggleLike(req.id(), currentSubject());
     }
 
+    @RequiresFeature(Feature.VIDEO_ENGAGEMENT)
     @PostMapping("/list-comments")
     public List<CommentView> listComments(@RequestBody VideoRef req) {
         return engagement.listComments(req.id(), currentSubject(), viewerModerates());
     }
 
+    @RequiresFeature(Feature.VIDEO_ENGAGEMENT)
     @PostMapping("/add-comment")
     public CommentView addComment(@RequestBody CommentRequest req) {
         // getPlayable, so a comment cannot be attached to a video that is still processing or failed.
@@ -164,6 +169,7 @@ public class VideoController {
         return engagement.addComment(req.id(), currentSubject(), req.body(), req.atSeconds());
     }
 
+    @RequiresFeature(Feature.VIDEO_ENGAGEMENT)
     @PostMapping("/delete-comment")
     public DeletedComment deleteComment(@RequestBody CommentRef req) {
         engagement.deleteComment(req.commentId(), currentSubject(), viewerModerates());
@@ -226,6 +232,7 @@ public class VideoController {
      * out on its own, since whether the original survived depends on the storage mode it was
      * uploaded under.
      */
+    @RequiresFeature(Feature.VIDEO_DOWNLOAD)
     @PostMapping("/download-options")
     public DownloadOptions downloadOptions(@RequestBody VideoRef req) {
         Video video = library.getPlayable(req.id());
@@ -295,6 +302,7 @@ public class VideoController {
      * <p>Written straight to the response a piece at a time, so serving a download costs a chunk of
      * memory rather than a copy of the recording — the same reason the transcode drains as it goes.
      */
+    @RequiresFeature(Feature.VIDEO_DOWNLOAD)
     @GetMapping("/{id}/download")
     public ResponseEntity<StreamingResponseBody> download(
             @PathVariable UUID id,

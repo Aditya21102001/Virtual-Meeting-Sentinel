@@ -148,6 +148,25 @@ public class AiClient {
     }
 
     /**
+     * Semantic search over the knowledge base — retrieval with no generation.
+     *
+     * <p>Short timeout on purpose: this is a vector lookup, not a model call. It needs no API key
+     * and costs nothing per query, which is what makes it usable as you type rather than as a
+     * deliberate, expensive action.
+     */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> search(String query, int k) {
+        return web.post().uri("/search")
+                .bodyValue(Map.of("query", query == null ? "" : query, "k", k))
+                .retrieve()
+                .bodyToFlux(Map.class)
+                .collectList()
+                .map(list -> (List<Map<String, Object>>) (List<?>) list)
+                .timeout(Duration.ofSeconds(20))
+                .block();
+    }
+
+    /**
      * Read the knowledge-base status.
      *
      * <p>The timeout is sized for a <em>sleeping</em> AI service, not a warm one. Warm, this call

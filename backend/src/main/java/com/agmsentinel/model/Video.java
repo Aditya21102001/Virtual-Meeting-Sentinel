@@ -65,6 +65,16 @@ public class Video {
     @Column(name = "poster_rel")
     private String posterRel;
 
+    /**
+     * Which meeting this recording belongs to.
+     *
+     * <p>Nullable, and nothing filters on it yet — see {@code Question.meetingId}. Recorded now so
+     * the column exists before anything depends on it, which is what lets scoping be switched on as
+     * its own change rather than as part of a migration.
+     */
+    @Column(name = "meeting_id")
+    private UUID meetingId;
+
     /** Seek-preview sprite sheet relative to {@link #storageDir}. */
     @Column(name = "sprite_rel")
     private String spriteRel;
@@ -204,6 +214,8 @@ public class Video {
     public void setPosterRel(String posterRel) { this.posterRel = posterRel; }
     public String getSpriteRel() { return spriteRel; }
     public void setSpriteRel(String spriteRel) { this.spriteRel = spriteRel; }
+    public UUID getMeetingId() { return meetingId; }
+    public void setMeetingId(UUID meetingId) { this.meetingId = meetingId; }
     public String getTranscriptRel() { return transcriptRel; }
     public void setTranscriptRel(String transcriptRel) { this.transcriptRel = transcriptRel; }
     public Integer getSpriteIntervalSeconds() { return spriteIntervalSeconds; }

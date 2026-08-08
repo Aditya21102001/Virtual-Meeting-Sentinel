@@ -25,7 +25,7 @@ from pypdf import PdfReader
 
 from .embeddings import get_embeddings
 from .llm import get_llm
-from .schemas import ChatResponse, Citation, DraftResponse
+from .schemas import ChatResponse, Citation, DraftResponse, SearchHit
 
 log = logging.getLogger(__name__)
 
@@ -463,6 +463,46 @@ class KnowledgeBase:
             # Additive: existing callers that only read the three fields above are unaffected.
             "last_index_run": self._last_trace.snapshot() if self._last_trace else None,
         }
+
+    def search(self, query: str, k: int = 8) -> list[SearchHit]:
+        """Semantic search over everything indexed — retrieval with no generation.
+
+        <p>The same vector search that feeds {@code draft}, stopping before the LLM. That makes it
+        materially different to use: no API key, no token cost, and an answer in milliseconds rather
+        than seconds. "Where was the dividend discussed?" returns the report pages and the moments in
+        the recordings, each already carrying the seek target that opens the player there.
+
+        <p>Different from keyword search in the way that matters here: "payout timing" finds a
+        passage about "when the dividend will be distributed" because they mean the same thing, which
+        is the entire reason this system embeds text in the first place.
+        """
+        assert self._store is not None, "KB not loaded"
+        clean = (query or "").strip()
+        if not clean:
+            return []
+        if self._placeholder_only:
+            return []
+
+        k = max(1, min(k, 25))
+        try:
+            scored = self._store.similarity_search_with_relevance_scores(clean, k=k)
+        except Exception:
+            # Relevance scoring depends on the store's distance strategy having a known mapping.
+            # Falling back to raw distance keeps search working rather than failing over a number
+            # that only decorates the result.
+            scored = [(doc, None) for doc, _ in self._store.similarity_search_with_score(clean, k=k)]
+
+        hits: list[SearchHit] = []
+        for doc, score in scored:
+            citation = _citation(doc)
+            hits.append(SearchHit(
+                source=citation.source,
+                snippet=doc.page_content[:400],
+                video_id=citation.video_id,
+                at_seconds=citation.at_seconds,
+                score=round(float(score), 4) if score is not None else None,
+            ))
+        return hits
 
     def draft(self, cluster_id: str, question: str, k: int = 4) -> DraftResponse:
         """The RAG step: retrieve → augment → generate a grounded, cited answer.

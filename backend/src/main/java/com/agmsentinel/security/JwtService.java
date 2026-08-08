@@ -11,6 +11,7 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 
@@ -87,7 +88,11 @@ public class JwtService {
             throw new JwtException("This session has reached its maximum length and must be renewed "
                                   + "by signing in again.");
         }
-        return build(claims.getSubject(), claims.get("role", String.class), now, sessionStart);
+        // Carry the FULL role set forward. Renewal happens on activity, so building from the single
+        // primary role here would quietly strip every additional duty within minutes of signing in —
+        // a MEETING_MANAGER would lose the menu they just used.
+        return build(claims.getSubject(), claims.get("role", String.class), rolesOf(claims),
+                     now, sessionStart);
     }
 
     /** When the session began — falling back to this token's own issue time for older tokens. */
@@ -101,16 +106,56 @@ public class JwtService {
                 : claims.getIssuedAt().toInstant().getEpochSecond();
     }
 
+    /**
+     * Issue a token carrying every role the holder has.
+     *
+     * <p>{@code role} (singular, the primary) is still written, and is what
+     * {@link #issue(String, String)} sets on its own. {@code roles} is the full set. Both are
+     * present so the change is safe in either direction: a token minted before this existed has only
+     * {@code role} and still authenticates, and a token minted now still satisfies anything reading
+     * {@code role}.
+     */
+    public String issue(String subject, String primaryRole, Collection<String> allRoles) {
+        Instant now = Instant.now();
+        return build(subject, primaryRole, allRoles, now, now.getEpochSecond());
+    }
+
     private String build(String subject, String role, Instant now, long sessionStart) {
+        return build(subject, role, List.of(role), now, sessionStart);
+    }
+
+    private String build(String subject, String role, Collection<String> allRoles,
+                         Instant now, long sessionStart) {
+        List<String> roles = allRoles == null || allRoles.isEmpty()
+                ? List.of(role)
+                : allRoles.stream().filter(r -> r != null && !r.isBlank()).distinct().toList();
         return Jwts.builder()
                 .subject(subject)
                 .claim("role", role)
+                .claim("roles", roles)
                 .claim("typ", "access")
                 .claim(SESSION_START, sessionStart)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(ttlSeconds)))
                 .signWith(currentKey())
                 .compact();
+    }
+
+    /**
+     * Every role in a token: the {@code roles} list when present, otherwise the single {@code role}.
+     *
+     * <p>The fallback is what lets tokens issued before this change keep working until they expire,
+     * rather than signing everyone out on deploy.
+     */
+    @SuppressWarnings("unchecked")
+    public static List<String> rolesOf(Claims claims) {
+        Object raw = claims.get("roles");
+        if (raw instanceof Collection<?> collection && !collection.isEmpty()) {
+            return collection.stream().map(String::valueOf)
+                    .filter(r -> !r.isBlank()).distinct().toList();
+        }
+        String single = claims.get("role", String.class);
+        return single == null || single.isBlank() ? List.of() : List.of(single);
     }
 
     /**

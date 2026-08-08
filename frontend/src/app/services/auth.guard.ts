@@ -21,6 +21,25 @@ export const moderatorGuard: CanActivateFn = (_route, state) => {
   return auth.isModerator() ? true : toLogin(router, state);
 };
 
+/** ADMIN only — changing what a deployment can do is administration, not moderation. */
+export const adminGuard: CanActivateFn = (_route, state) => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  return auth.hasRole("ADMIN") ? true : toLogin(router, state);
+};
+
+/**
+ * Protects the meetings screen: either duty gets in, and what they can do there differs.
+ *
+ * <p>ADMIN passes because it is a superset of both — see AuthService.hasRole. The server enforces
+ * the same split per endpoint; this only avoids showing a page whose every action would 403.
+ */
+export const meetingManagerGuard: CanActivateFn = (_route, state) => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  return auth.managesMeetings() ? true : toLogin(router, state);
+};
+
 /** Protects routes that only need a signed-in member (e.g. the Shareholder Lounge). */
 export const authGuard: CanActivateFn = (_route, state) => {
   const auth = inject(AuthService);

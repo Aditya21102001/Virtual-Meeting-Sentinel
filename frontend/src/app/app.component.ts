@@ -1,16 +1,18 @@
-import { Component, signal } from "@angular/core";
+import { Component, effect, signal } from "@angular/core";
 import {
   RouterLink,
   RouterLinkActive,
   RouterOutlet,
   Router,
 } from "@angular/router";
+import { HelpWidgetComponent } from "./components/help-widget.component";
 import { AuthService } from "./services/auth.service";
+import { FeatureService } from "./services/feature.service";
 
 @Component({
   selector: "app-root",
   standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, HelpWidgetComponent],
   template: `
     <nav class="nav">
       <div class="nav-bar">
@@ -33,15 +35,30 @@ import { AuthService } from "./services/auth.service";
           >Ask a question</a
         >
         @if (auth.isAuthenticated()) {
-          <a routerLink="/chat" routerLinkActive="active" (click)="close()"
-            >💬 Lounge</a
-          >
-          <a
-            routerLink="/recordings"
-            routerLinkActive="active"
-            (click)="close()"
-            >🎬 Recordings</a
-          >
+          @if (features.enabled("LOUNGE_CHAT")) {
+            <a routerLink="/chat" routerLinkActive="active" (click)="close()"
+              >💬 Lounge</a
+            >
+          }
+          @if (features.enabled("VIDEO_LIBRARY")) {
+            <a
+              routerLink="/recordings"
+              routerLinkActive="active"
+              (click)="close()"
+              >🎬 Recordings</a
+            >
+          }
+          <!--
+            Voting is every signed-in member's, not just the chair's — the same page is the ballot
+            and the controls. Whether this particular user may actually cast a vote depends on the
+            meeting's member list, which only the server knows, so the link is shown to everyone and
+            the page explains it if they are not entitled.
+          -->
+          @if (features.enabled("VOTING")) {
+            <a routerLink="/voting" routerLinkActive="active" (click)="close()"
+              >🗳️ Voting</a
+            >
+          }
         }
         @if (auth.isModerator()) {
           <a routerLink="/board" routerLinkActive="active" (click)="close()"
@@ -50,14 +67,38 @@ import { AuthService } from "./services/auth.service";
           <a routerLink="/setup" routerLinkActive="active" (click)="close()"
             >Setup</a
           >
-          <a routerLink="/videos" routerLinkActive="active" (click)="close()"
-            >Video library</a
-          >
+          @if (features.enabled("VIDEO_LIBRARY")) {
+            <a routerLink="/videos" routerLinkActive="active" (click)="close()"
+              >Video library</a
+            >
+          }
           <a routerLink="/members" routerLinkActive="active" (click)="close()"
             >Members</a
           >
+          @if (features.enabled("MEETING_REPORTS")) {
+            <a routerLink="/reports" routerLinkActive="active" (click)="close()"
+              >Reports</a
+            >
+          }
+        }
+        <!--
+          Its own duty, not part of being a moderator: a MEETING_MANAGER schedules meetings, a
+          USER_MANAGER maps people into them, and either may be someone who never touches the board.
+        -->
+        @if (auth.hasRole("ADMIN")) {
+          <a routerLink="/features" routerLinkActive="active" (click)="close()"
+            >Features</a
+          >
+        }
+        @if (auth.managesMeetings() && features.enabled("MEETINGS")) {
+          <a routerLink="/meetings" routerLinkActive="active" (click)="close()"
+            >Meetings</a
+          >
         }
         <span class="nav-spacer"></span>
+        <!-- Always shown, signed in or not: the questions people most need answered are the ones
+             they have when something is not working, and that includes signing in. -->
+        <a routerLink="/help" routerLinkActive="active" (click)="close()">Help</a>
         @if (auth.isAuthenticated()) {
           <a routerLink="/security" routerLinkActive="active" (click)="close()"
             >Security</a
@@ -72,6 +113,15 @@ import { AuthService } from "./services/auth.service";
       </div>
     </nav>
     <router-outlet></router-outlet>
+
+    <!--
+      Outside the outlet on purpose: it is available on every page, and mounting it per route would
+      reset its state on each navigation. Renders nothing when signed out — the endpoints it calls
+      require a session.
+    -->
+    @if (features.enabled("HELP_WIDGET")) {
+      <app-help-widget></app-help-widget>
+    }
     <footer class="site-footer">Copyright © 2026 Aditya Yadav</footer>
   `,
   styles: [
@@ -170,8 +220,19 @@ export class AppComponent {
 
   constructor(
     public auth: AuthService,
+    public features: FeatureService,
     private router: Router,
-  ) {}
+  ) {
+    // Which features this user may see depends on who they are, so re-read whenever the session
+    // changes — on sign-in, on sign-out, and when a renewed token brings different roles.
+    effect(() => {
+      if (this.auth.isAuthenticated()) {
+        this.features.refresh().subscribe({ error: () => {} });
+      } else {
+        this.features.clear();
+      }
+    });
+  }
 
   toggle(): void {
     this.menuOpen.update((v) => !v);

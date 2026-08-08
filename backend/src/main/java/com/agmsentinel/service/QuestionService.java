@@ -35,23 +35,36 @@ public class QuestionService {
     private final AiClient ai;
     private final ClusterDraftService drafts;
     private final ClusterDraftWorker draftWorker;
+    /** Applies a moderator's merges to every cluster id the AI service hands back. */
+    private final ClusterCurationService curation;
+    /** Only used to stamp the live meeting onto an incoming question — see stampActiveMeeting. */
+    private final MeetingService meetings;
     private final ObjectProvider<KafkaQuestionProducer> kafkaProducer;  // present only in kafka mode
     private final boolean kafkaMode;
 
     public QuestionService(QuestionRepository questions, AiClient ai,
                            ClusterDraftService drafts, ClusterDraftWorker draftWorker,
+                           ClusterCurationService curation, MeetingService meetings,
                            ObjectProvider<KafkaQuestionProducer> kafkaProducer,
                            @Value("${queue.mode:http}") String queueMode) {
+        this.meetings = meetings;
         this.questions = questions;
         this.ai = ai;
         this.drafts = drafts;
         this.draftWorker = draftWorker;
+        this.curation = curation;
         this.kafkaProducer = kafkaProducer;
         this.kafkaMode = "kafka".equalsIgnoreCase(queueMode);
     }
 
     public IngestResult submit(SubmitQuestionRequest req) {
-        Question q = questions.save(new Question(req.text(), req.attendeeId(), req.weight()));
+        Question q = new Question(req.text(), req.attendeeId(), req.weight());
+        // Stamp the meeting this was asked at. Still nothing filters on it — the board is unchanged
+        // — but without recording it, a per-meeting report has no way to tell one meeting's
+        // questions from another's, and by the time anyone wants that report the information is
+        // gone for good. Null when no meeting is live, exactly as before.
+        stampActiveMeeting(q);
+        questions.save(q);
 
         if (kafkaMode) {
             // Async ingest: append to the durable log and return immediately. The AI service
@@ -64,12 +77,34 @@ public class QuestionService {
 
         // Synchronous HTTP path (queue.mode=http): call the AI service and get the assignment now.
         IngestResult result = ai.ingest(q.getId().toString(), req.text(), req.attendeeId(), req.weight());
-        q.setClusterId(UUID.fromString(result.cluster_id()));
+        // Resolved through any merges a moderator has made. The AI service still holds a centroid
+        // for a cluster that was merged away and will keep assigning new questions to it, so without
+        // this the merge would quietly undo itself the next time somebody asked the same thing.
+        q.setClusterId(curation.resolve(UUID.fromString(result.cluster_id())));
         questions.save(q);
 
         queueDraft(result, req.text());
         broadcastBoard();
         return result;
+    }
+
+    /**
+     * Tag a question with whichever meeting is live.
+     *
+     * <p>Deliberately not a hard requirement: questions can be asked when no meeting has been
+     * activated, and refusing them would break the way the application worked before meetings
+     * existed. A null meeting simply means "we do not know", which is honest and is what every
+     * question asked before this line existed will carry.
+     *
+     * <p>Swallows failures for the same reason {@code queueDraft} does — an attendee's question must
+     * not be rejected because the meetings table was briefly unreachable.
+     */
+    private void stampActiveMeeting(Question q) {
+        try {
+            meetings.active().ifPresent(m -> q.setMeetingId(m.getId()));
+        } catch (Exception ex) {
+            log.warn("Could not determine the active meeting for a question: {}", ex.getMessage());
+        }
     }
 
     /**
@@ -81,7 +116,10 @@ public class QuestionService {
      */
     private void queueDraft(IngestResult result, String questionText) {
         try {
-            UUID clusterId = UUID.fromString(result.cluster_id());
+            // Same resolution as above: a draft must be recorded against the surviving cluster, not
+            // the one that was merged away — otherwise recordAndNeedsDraft would recreate the row
+            // for the merged-away cluster and it would reappear on the board.
+            UUID clusterId = curation.resolve(UUID.fromString(result.cluster_id()));
             boolean needsDraft = drafts.recordAndNeedsDraft(
                     clusterId, questionText, result.cluster_size(), 0);
             if (needsDraft) {
@@ -102,13 +140,17 @@ public class QuestionService {
         for (String text : texts) {
             String clean = text.trim();
             if (clean.isEmpty()) continue;
-            Question q = questions.save(new Question(clean, "question-bank", weight));
+            Question q = new Question(clean, "question-bank", weight);
+            stampActiveMeeting(q);
+            questions.save(q);
             try {
                 if (kafkaMode) {
                     kafkaProducer.getObject().publish(q.getId().toString(), clean, "question-bank", weight);
                 } else {
                     IngestResult result = ai.ingest(q.getId().toString(), clean, "question-bank", weight);
-                    q.setClusterId(UUID.fromString(result.cluster_id()));
+                    // Resolved through merges, exactly as in submit(). An uploaded question bank
+                    // must not be the way a merged-away cluster comes back to life.
+                    q.setClusterId(curation.resolve(UUID.fromString(result.cluster_id())));
                     questions.save(q);
                     queueDraft(result, clean);
                 }

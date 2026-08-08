@@ -24,7 +24,8 @@ from .rag import get_kb, knowledge_file_path
 from .transcribe import TranscriptionUnavailable, transcribe_to_vtt
 from .schemas import (
     ChatRequest, ChatResponse, ClusterView, DraftRequest, DraftResponse,
-    IngestRequest, IngestResponse, KnowledgeRemoveRequest, TranscriptIndexRequest,
+    IngestRequest, IngestResponse, KnowledgeRemoveRequest, SearchHit, SearchRequest,
+    TranscriptIndexRequest,
 )
 
 
@@ -217,6 +218,17 @@ async def transcribe(file: UploadFile = File(...)) -> dict:
     except Exception as ex:
         raise HTTPException(status_code=502, detail=f"Transcription failed: {ex}") from ex
     return {"vtt": vtt, "characters": len(vtt)}
+
+
+@app.post("/search", response_model=list[SearchHit])
+def search(req: SearchRequest) -> list[SearchHit]:
+    """Semantic search across the annual report and every indexed recording transcript.
+
+    Retrieval only — no LLM, so this needs no API key, costs nothing per call and answers in
+    milliseconds. It is the cheap half of what /draft does, exposed on its own because "show me where
+    this was discussed" is a different question from "write me an answer".
+    """
+    return get_kb().search(req.query, req.k)
 
 
 @app.get("/clusters", response_model=list[ClusterView])

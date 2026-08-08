@@ -2,6 +2,9 @@ package com.agmsentinel.model;
 
 import jakarta.persistence.*;
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -33,8 +36,30 @@ public class AppUser {
     @Column(name = "password_hash")
     private String passwordHash;
 
+    /**
+     * The <b>primary</b> role: what kind of participant this is. Exactly one, and every existing
+     * check in the application still reads it.
+     */
     @Column(nullable = false)
-    private String role = "MODERATOR";   // MODERATOR or ADMIN
+    private String role = "MODERATOR";   // ADMIN | MODERATOR | SHAREHOLDER
+
+    /**
+     * Additional duties granted on top of the primary role — MEETING_MANAGER, USER_MANAGER.
+     *
+     * <p>A separate table rather than more values of {@link #role}, because these are orthogonal:
+     * running the board and scheduling the meeting it belongs to are routinely the same person, and
+     * a single-valued role column would have forced a choice between them.
+     *
+     * <p>Eagerly fetched — it is a handful of short strings, it is needed on every login to build
+     * the token, and lazily loading it would mean either an open session at token time or a
+     * LazyInitializationException the first time somebody signed in.
+     */
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "user_roles",
+                     joinColumns = @JoinColumn(name = "user_id"),
+                     uniqueConstraints = @UniqueConstraint(columnNames = {"user_id", "role"}))
+    @Column(name = "role", nullable = false)
+    private Set<String> extraRoles = new HashSet<>();
 
     // ---- second factors (all optional; enrolled after signup) ----------------
     @Column(name = "pin_hash")
@@ -73,6 +98,28 @@ public class AppUser {
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
     public String getRole() { return role; }
     public void setRole(String role) { this.role = role; }
+
+    public Set<String> getExtraRoles() { return extraRoles; }
+    public void setExtraRoles(Set<String> extraRoles) {
+        this.extraRoles = extraRoles == null ? new HashSet<>() : new HashSet<>(extraRoles);
+    }
+
+    /**
+     * Every role this user holds: the primary one plus any additional duties.
+     *
+     * <p>This is what goes into the token and becomes granted authorities. Ordered with the primary
+     * first so anything that still wants "the" role reads the same value it always did.
+     */
+    public Set<String> allRoles() {
+        Set<String> all = new LinkedHashSet<>();
+        all.add(role);
+        all.addAll(extraRoles);
+        return all;
+    }
+
+    public boolean hasRole(String candidate) {
+        return role.equals(candidate) || extraRoles.contains(candidate);
+    }
     public String getPinHash() { return pinHash; }
     public void setPinHash(String pinHash) { this.pinHash = pinHash; }
     public String getTotpSecret() { return totpSecret; }

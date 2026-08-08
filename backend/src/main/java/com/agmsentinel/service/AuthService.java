@@ -62,7 +62,7 @@ public class AuthService {
 
     public TokenResponse otpVerify(String channel, String destination, String code) {
         AppUser user = otp.verify(channel, destination, code);
-        return new TokenResponse(jwt.issue(user.getUsername(), user.getRole()));
+        return new TokenResponse(jwt.issue(user.getUsername(), user.getRole(), user.allRoles()));
     }
 
     /** Find-or-create a user from a verified Google (OAuth2) identity and issue a token. */
@@ -72,7 +72,7 @@ public class AuthService {
             AppUser u = new AppUser(uniqueUsername(base), email, null, "MODERATOR");
             return users.save(u);
         });
-        return jwt.issue(user.getUsername(), user.getRole());
+        return jwt.issue(user.getUsername(), user.getRole(), user.allRoles());
     }
 
     private String uniqueUsername(String base) {
@@ -100,7 +100,7 @@ public class AuthService {
         user.setPhone(phone);
         users.save(user);
         // Fresh account has no second factor yet → straight to a full token.
-        return new LoginResult("AUTHENTICATED", jwt.issue(user.getUsername(), user.getRole()), null, null);
+        return new LoginResult("AUTHENTICATED", jwt.issue(user.getUsername(), user.getRole(), user.allRoles()), null, null);
     }
 
     /**
@@ -119,7 +119,7 @@ public class AuthService {
 
         // No PIN/TOTP and no passkey enrolled → single-factor is all they set up → full token.
         if (!user.isMfaEnabled() && !webAuthn.hasCredentials(user)) {
-            return new LoginResult("AUTHENTICATED", jwt.issue(user.getUsername(), user.getRole()), null, null);
+            return new LoginResult("AUTHENTICATED", jwt.issue(user.getUsername(), user.getRole(), user.allRoles()), null, null);
         }
         // MFA enrolled → hand back a challenge token (typ=mfa, no role) + the available methods.
         List<String> methods = enrolledMethods(user);
@@ -144,7 +144,7 @@ public class AuthService {
         if (!ok) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Incorrect " + req.method() + ".");
         }
-        return new TokenResponse(jwt.issue(user.getUsername(), user.getRole()));
+        return new TokenResponse(jwt.issue(user.getUsername(), user.getRole(), user.allRoles()));
     }
 
     // ---- enrollment (requires a full access token; called by the logged-in user) --------
@@ -211,7 +211,7 @@ public class AuthService {
         if (!webAuthn.finishAssertion(user.getUsername(), credentialJson)) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Passkey verification failed.");
         }
-        return new TokenResponse(jwt.issue(user.getUsername(), user.getRole()));
+        return new TokenResponse(jwt.issue(user.getUsername(), user.getRole(), user.allRoles()));
     }
 
     // ---- helpers ------------------------------------------------------------

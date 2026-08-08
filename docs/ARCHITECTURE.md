@@ -28,6 +28,12 @@ every major action. Read this to understand the system end to end.
 
 ---
 
+> **Meetings, feature flags, voting, curation, the room and reports** are documented separately in
+> [MEETING_OPERATIONS.md](MEETING_OPERATIONS.md). This document covers the question pipeline,
+> the RAG flow and the services.
+
+---
+
 ## 1. What the app does (in one minute)
 
 During a virtual **Annual General Meeting (VIRTUAL MEETING)**, thousands of shareholders type questions at
@@ -374,15 +380,32 @@ storage mode puts them in `video_assets` instead, for hosts with no persistent v
 The backend stores the durable _record_ of each question; the ai-service holds the _vector math_
 and live cluster state. They're linked by `cluster_id`.
 
+**Meetings, voting, curation and flags** add a further set of tables — `meetings`,
+`meeting_members`, `resolutions`, `votes`, `cluster_merges`, `cluster_upvotes`, `feature_flags` and
+`user_roles`, plus `questions.meeting_id`. Three of them carry constraints that do real work rather
+than documenting intent: one active meeting, one vote per member per resolution, one upvote per
+person per topic. Full model in
+[MEETING_OPERATIONS.md §9](MEETING_OPERATIONS.md#9-data-model).
+
 ---
 
 ## 8. Security model
 
-- **JWT** (stateless) with a `role` claim: `ATTENDEE` or `MODERATOR`.
+- **JWT** (stateless) carrying `role` (the primary role) and `roles` (that plus any additional
+  duties). Primary: `ADMIN`, `MODERATOR`, `SHAREHOLDER`, `ATTENDEE`. Additional, any number:
+  `MEETING_MANAGER`, `USER_MANAGER` — see
+  [MEETING_OPERATIONS.md §3](MEETING_OPERATIONS.md#3-roles).
+- **Feature flags narrow access further.** `@RequiresFeature` is enforced by an interceptor that runs
+  _after_ Spring Security, so it can only ever narrow — and a disabled feature answers **404**, not
+  403, since "you may not" confirms it exists.
 - Route rules (`SecurityConfig`):
   - `/api/auth/**`, `/api/source/**`, `/ws/**`, health → **public**
   - `/api/questions/**` → attendee or moderator
-  - `/api/clusters/**`, `/api/admin/**` → **moderator only**
+  - `/api/clusters/**`, `/api/admin/**`, `/api/reports/**` → **moderator only**
+  - `/api/voting/**` → **never `ATTENDEE`** (see below); the chair's routes are moderator only
+  - `/api/room/attendee-board`, `/api/room/support-topic` → attendee upwards; the rest moderator only
+  - `/api/meetings/**` → split between MEETING_MANAGER and USER_MANAGER
+  - `/api/features/my-features` → any signed-in user; the rest **ADMIN only**
   - `/api/videos/**` → any signed-in member; the **media** sub-routes (GET only) are permitted at the
     filter chain and authorised in code by a **playback ticket** (see below)
 - `/api/source/**` is intentionally public (PDF opens in a new tab without a token).
@@ -392,6 +415,13 @@ and live cluster state. They're linked by `cluster_id`.
 - **Path traversal** for media is contained in one place: `VideoStorageService.resolveWithin`
   normalises the client-supplied relative path and rejects anything escaping the video's own folder.
   Segment and rendition names are additionally regex-validated in the controller.
+- **Anonymous attendee passes cannot vote.** `/api/auth/attendee` is public and mints a token whose
+  subject is whatever username the caller sends. Harmless for asking a question, fatal for a ballot —
+  anyone could request a token as `alice` and cast alice's vote. Voting routes therefore require a
+  role only a real account can hold, _and_ `VotingController` rejects `ATTENDEE` independently. Two
+  layers, because the cost of them disagreeing is a forged vote in a legal record.
+- **Voting weight never comes from the client.** A vote request carries the resolution and the
+  choice; entitlement is read from the meeting's member list server-side.
 - Input validation on submissions; RAG prompt forbids inventing figures.
 
 ---
@@ -413,6 +443,18 @@ and live cluster state. They're linked by `cluster_id`.
 | POST   | `/api/admin/upload-question-bank` | moderator    | Upload question bank               |
 | GET    | `/api/source/{filename}`   | public       | Serve a source PDF (citation link) |
 | WS     | `/ws` → `/topic/board`     | —            | Live board push                    |
+
+**Meetings, voting, curation, the room and reports** — full tables in
+[MEETING_OPERATIONS.md §10](MEETING_OPERATIONS.md#10-api-surface):
+
+| Family | Base path | Flag |
+| ------ | --------- | ---- |
+| Feature switches | `/api/features/**` | — (always on) |
+| Meetings & membership | `/api/meetings/**` | `MEETINGS` |
+| Resolutions & votes | `/api/voting/**` | `VOTING` (+ `QUORUM`) |
+| Merge / split topics | `/api/clusters/{cluster-questions,merge-clusters,split-cluster,move-question}` | `CLUSTER_CURATION` |
+| Attendee board & run of show | `/api/room/**` | `ATTENDEE_BOARD`, `CLUSTER_UPVOTE`, `RUN_OF_SHOW` |
+| Reports & minutes | `/api/reports/**` | `MEETING_REPORTS` |
 
 **Video library** (full table in [VIDEO_LIBRARY.md](VIDEO_LIBRARY.md#8-api-surface)):
 

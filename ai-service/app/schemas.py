@@ -29,6 +29,26 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class SearchRequest(BaseModel):
+    query: str
+    k: int = 8
+
+
+class SearchHit(BaseModel):
+    """One retrieved passage, with where it came from and how to get there.
+
+    Deliberately the same shape as a Citation plus a score: a search result and a citation are the
+    same thing seen from different ends, so the UI can render both with one component.
+    """
+    source: str
+    snippet: str
+    video_id: str | None = None
+    at_seconds: float | None = None
+    # 0-1 where the store can supply it, else null. Ordering, not a probability — a low score does
+    # not mean "wrong", only "less close than the others in this result set".
+    score: float | None = None
+
+
 class TranscriptIndexRequest(BaseModel):
     """Ask for a recording's captions to be indexed into the knowledge base.
 

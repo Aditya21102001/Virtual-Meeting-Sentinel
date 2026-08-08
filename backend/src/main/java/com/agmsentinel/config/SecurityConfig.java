@@ -82,6 +82,54 @@ public class SecurityConfig {
                                  "/api/videos/*/download").permitAll()
                 // The catalogue + segment index need a real session (any signed-in member).
                 .requestMatchers("/api/videos/**").authenticated()
+                // Meetings. Two duties, two roles — and the order below is load-bearing, because
+                // the catch-all at the end would otherwise swallow the more permissive rules.
+                //
+                // Any signed-in user may ask which meeting is live: the board, the question form
+                // and the library all need to know, and it is not privileged information.
+                // Feature flags. Every signed-in user may ask what THEY can use, so the SPA can
+                // avoid rendering a menu entry for something switched off. Changing what a
+                // deployment can do is administration, so the rest is ADMIN's alone.
+                .requestMatchers("/api/features/my-features").authenticated()
+                .requestMatchers("/api/features/**").hasRole("ADMIN")
+                .requestMatchers("/api/meetings/active-meeting").authenticated()
+                // Both managers may read the schedule and see who is mapped to a meeting.
+                .requestMatchers("/api/meetings/list-meetings", "/api/meetings/list-members")
+                        .hasAnyRole("MEETING_MANAGER", "USER_MANAGER", "ADMIN")
+                // Mapping users to meetings is the USER_MANAGER's job.
+                .requestMatchers("/api/meetings/add-member", "/api/meetings/remove-member")
+                        .hasAnyRole("USER_MANAGER", "ADMIN")
+                // Everything else — create, update, activate, close, delete — is the
+                // MEETING_MANAGER's.
+                .requestMatchers("/api/meetings/**").hasAnyRole("MEETING_MANAGER", "ADMIN")
+                // Voting. NOT `authenticated()` — and this is the most important rule in this file.
+                //
+                // ATTENDEE tokens are anonymous and self-asserted: /api/auth/attendee is public and
+                // issues a token whose subject is whatever username the caller typed. That is
+                // harmless for asking a question, where the name is just a label. It is fatal for a
+                // ballot: anyone could request a token as "alice" and cast alice's vote. So voting
+                // is restricted to roles that require a real, verified account, and ATTENDEE is
+                // excluded here rather than filtered later.
+                //
+                // Being allowed to *ask* is still not the same as being entitled to vote —
+                // entitlement comes from the meeting's member list and is checked in VotingService,
+                // which is the only place that knows what a member's holding is.
+                .requestMatchers("/api/voting/list-resolutions", "/api/voting/resolution-details",
+                                 "/api/voting/cast-vote", "/api/voting/my-vote",
+                                 "/api/voting/meeting-quorum")
+                        .hasAnyRole("SHAREHOLDER", "MODERATOR", "ADMIN")
+                // Putting a motion, opening the floor and closing it are the chair's acts.
+                .requestMatchers("/api/voting/**").hasAnyRole("MODERATOR", "ADMIN")
+                // Reports gather a whole meeting into one document, including the questions nobody
+                // answered. That is a moderator's working record before it is anything else.
+                .requestMatchers("/api/reports/**").hasAnyRole("MODERATOR", "ADMIN")
+                // The room. Attendees may see the ranked topics and add their support — both are
+                // open to an anonymous pass, because an upvote ranks a discussion topic and decides
+                // nothing. (Contrast /api/voting, which refuses that same token.) Ordering the
+                // agenda and publishing an answer to the room are the chair's, so they come after.
+                .requestMatchers("/api/room/attendee-board", "/api/room/support-topic")
+                        .hasAnyRole("ATTENDEE", "SHAREHOLDER", "MODERATOR", "ADMIN")
+                .requestMatchers("/api/room/**").hasAnyRole("MODERATOR", "ADMIN")
                 .requestMatchers("/api/questions/**").hasAnyRole("ATTENDEE", "SHAREHOLDER", "MODERATOR", "ADMIN")
                 .requestMatchers("/api/clusters/**").hasAnyRole("MODERATOR", "ADMIN")
                 .requestMatchers("/api/admin/**").hasAnyRole("MODERATOR", "ADMIN")
@@ -93,6 +141,10 @@ public class SecurityConfig {
                 // by path rather than by method — list-members first, since the /** rule below
                 // would otherwise swallow it.
                 .requestMatchers("/api/users/list-members").authenticated()
+                // Granting MEETING_MANAGER or USER_MANAGER is granting authority, so it is ADMIN's
+                // alone — a moderator promoting themselves to meeting manager would make the
+                // separation of duties decorative.
+                .requestMatchers("/api/users/set-member-extra-roles").hasRole("ADMIN")
                 .requestMatchers("/api/users/**").hasAnyRole("MODERATOR", "ADMIN")
                 .anyRequest().authenticated())
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

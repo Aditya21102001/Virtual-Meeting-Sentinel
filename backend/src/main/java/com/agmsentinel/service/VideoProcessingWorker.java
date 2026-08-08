@@ -5,6 +5,7 @@ import com.agmsentinel.config.VideoProperties;
 import com.agmsentinel.model.Video;
 import com.agmsentinel.model.VideoStorageMode;
 import com.agmsentinel.repository.VideoRepository;
+import com.agmsentinel.security.Feature;
 import com.agmsentinel.service.VideoLibraryService.VideoQueuedEvent;
 import com.agmsentinel.service.VideoTranscodeService.MediaInfo;
 import com.agmsentinel.service.VideoTranscodeService.SpriteInfo;
@@ -58,6 +59,8 @@ public class VideoProcessingWorker {
     private final VideoSegmentDrainer drainer;
     private final VideoProperties props;
     private final AiClient ai;
+    /** Consulted for AUTO_TRANSCRIPTION — the switch an administrator can reach without a deploy. */
+    private final FeatureService features;
 
     public VideoProcessingWorker(VideoRepository videos,
                                  VideoLibraryService library,
@@ -66,7 +69,8 @@ public class VideoProcessingWorker {
                                  VideoTranscodeService transcoder,
                                  VideoSegmentDrainer drainer,
                                  VideoProperties props,
-                                 AiClient ai) {
+                                 AiClient ai,
+                                 FeatureService features) {
         this.videos = videos;
         this.library = library;
         this.storage = storage;
@@ -75,6 +79,7 @@ public class VideoProcessingWorker {
         this.drainer = drainer;
         this.props = props;
         this.ai = ai;
+        this.features = features;
     }
 
     /** fallbackExecution: also process when queued outside a transaction (e.g. from a test). */
@@ -266,6 +271,14 @@ public class VideoProcessingWorker {
      */
     private void maybeGenerateTranscript(Video video, Path videoDir, Path source,
                                          MediaInfo info) {
+        // Two switches, and both must be on. The property is the deployment's ("is a key
+        // configured, is this host able to run it"); the feature flag is the administrator's, and is
+        // the one they can reach without a redeploy. Neither implies the other, so neither is
+        // redundant.
+        if (!features.isEnabled(Feature.AUTO_TRANSCRIPTION)) {
+            log.debug("Automatic transcription is switched off — skipping video {}.", video.getId());
+            return;
+        }
         VideoProperties.Transcript config = props.getTranscript();
         if (!config.isAutoGenerate()) return;
         if (video.getTranscriptRel() != null) {
