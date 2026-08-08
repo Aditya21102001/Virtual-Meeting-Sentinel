@@ -72,5 +72,8 @@ export const routes: Routes = [
     canActivate: [moderatorGuard],
     loadComponent: () => import('./pages/reports.component').then((m) => m.ReportsComponent),
   },
-  { path: 'security', component: SecurityComponent, canActivate: [moderatorGuard] },
+  // Security is every signed-in member's own page — passwords, two-factor, their sessions. It was
+  // behind moderatorGuard while the account menu offered it to everyone, so a shareholder clicking
+  // their own security settings was bounced to the login screen.
+  { path: 'security', component: SecurityComponent, canActivate: [authGuard] },
 ];

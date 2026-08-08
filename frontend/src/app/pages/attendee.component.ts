@@ -55,7 +55,12 @@ import { RoomService, TopicView } from '../services/room.service';
         somebody is already looking, and seeing their question listed is the moment they would
         otherwise retype it.
       -->
-      @if (features.enabled('ATTENDEE_BOARD') && topics().length) {
+      <!--
+        Gated on there being topics, not on the feature flag: an anonymous attendee never receives
+        the per-user feature list, so a flag check here could never be true for them. The server
+        already refuses when the feature is off, so an empty list means the same thing.
+      -->
+      @if (topics().length) {
         <section class="topics" aria-labelledby="topics-heading">
           <h2 id="topics-heading">What the room is asking</h2>
           <p class="muted">
@@ -147,6 +152,8 @@ export class AttendeeComponent implements OnInit, OnDestroy {
   readonly supporting = signal<string | null>(null);
 
   private topicsTimer: ReturnType<typeof setInterval> | null = null;
+  /** Set when the server says the feature is off, so the poll stops asking. */
+  private disabledByServer = false;
 
   constructor(
     private api: ApiService,
@@ -166,10 +173,23 @@ export class AttendeeComponent implements OnInit, OnDestroy {
    * question, and an error banner over it would suggest the thing they came to do had failed.
    */
   private loadTopics(): void {
-    if (!this.features.enabled('ATTENDEE_BOARD')) return;
+    // Deliberately NOT gated on features.enabled('ATTENDEE_BOARD') here.
+    //
+    // That check reads the per-user feature list, which is fetched only for a signed-in session —
+    // so for an anonymous attendee it is never populated, ATTENDEE_BOARD (which ships off) reads
+    // false, and the board could never appear for the very people it exists for.
+    //
+    // The server is the authority anyway: the endpoint is gated on the same feature and answers
+    // 404 when it is off. Asking and getting nothing is the correct behaviour for a page that
+    // renders the section only when there is something in it.
+    if (this.disabledByServer) return;
     this.room.attendeeBoard(20).subscribe({
       next: (list) => this.topics.set(list),
-      error: () => {},
+      error: (err) => {
+        // 404 = the feature is off for this deployment. Stop asking; every later poll would get
+        // the same answer, and a timer that keeps calling a switched-off endpoint is just noise.
+        if (err?.status === 404) this.disabledByServer = true;
+      },
     });
   }
 

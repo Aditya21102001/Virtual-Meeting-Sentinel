@@ -92,6 +92,13 @@ export class LoadingService {
             'Something did not settle — the app stays usable, but this is worth investigating.',
         );
         this.visible.set(false);
+        // Reset the counter too, not just the overlay.
+        //
+        // Hiding the overlay while leaving the count poisoned only postpones the problem: the very
+        // next request pushes the count above zero again and the overlay returns immediately, so
+        // the failsafe appears to work once and then never again. A stuck count is unrecoverable
+        // state, and this is the only place that can clear it.
+        this.inFlight.set(0);
       }
     }, LoadingService.MAX_BLOCK_MS);
   }

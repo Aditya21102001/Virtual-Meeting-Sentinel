@@ -1,0 +1,59 @@
+# Configuration for tests that build the whole Spring context.
+#
+# WHY THIS FILE EXISTS
+#
+# Until now no test loaded the bean graph — the suite was unit tests plus one @DataJpaTest slice.
+# That meant a missing bean, a constructor that gained a collaborator, a circular dependency or a
+# broken @Configuration passed the entire suite and failed only when the application started. A
+# whole evening's worth of wiring changes went in green and broke on boot.
+#
+# ApplicationContextLoadsTest closes that gap, and it needs somewhere to point Hibernate. Without
+# this it tried the real Postgres URL and failed on "password authentication failed for user
+# sentinel" — a failure about the test's own configuration, which says nothing about the code.
+
+spring:
+  datasource:
+    # In-memory, created per run and discarded with the JVM. Nothing here touches a real database.
+    url: jdbc:h2:mem:contexttest;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      # The point of the test is that the entities and the bean graph are consistent, so the schema
+      # is built from the mappings rather than from init.sql.
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+    show-sql: false
+
+  # The OAuth2 client is optional in this application (SecurityConfig only wires it when a
+  # registration exists). Leaving it unset keeps the test independent of any Google credentials.
+  security:
+    oauth2:
+      client:
+        registration: {}
+
+# Point at a URL nothing listens on. The context must BUILD without the AI service running — every
+# call to it is made lazily from a request, never during startup, and this makes that a property the
+# test actually enforces rather than an assumption.
+ai:
+  service:
+    url: http://localhost:9
+  connect-timeout-ms: 200
+  response-timeout-ms: 1000
+
+# In-process queue: Kafka must not be required to start.
+queue:
+  mode: http
+
+# Off during the test — the scheduler would otherwise start calling the AI service on a timer while
+# the context is being torn down, producing noisy failures unrelated to what is being tested.
+board:
+  refresh-ms: 3600000
+
+logging:
+  level:
+    org.hibernate.SQL: warn
+    org.springframework.web: warn

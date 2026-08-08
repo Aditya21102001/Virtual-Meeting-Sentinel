@@ -273,7 +273,14 @@ export class AuthService {
     const wasHere = this.router.url;
     this.logout();
 
-    const publicPage = wasHere.startsWith("/login") || wasHere.startsWith("/ask");
+    // Pages that need no session. Being signed out on one of these changes nothing about what the
+    // reader can see, so redirecting them is pure interruption — and on /help it is worse than
+    // that: "why can I not sign in" is a help question, so throwing somebody off the help page at
+    // the moment their session dies takes away the answer exactly when they need it.
+    const publicPage =
+      wasHere.startsWith("/login") ||
+      wasHere.startsWith("/ask") ||
+      wasHere.startsWith("/help");
     if (publicPage) return;
     this.router.navigate(["/login"], {
       queryParams: { expired: "1", returnUrl: wasHere },

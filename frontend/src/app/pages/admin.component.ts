@@ -14,7 +14,10 @@ import {
   standalone: true,
   template: `
     <div class="container">
-      <h1>Setup</h1>
+      <!-- Titled to match the navigation entry. They disagreed — the nav said "Knowledge base"
+           and the page said "Setup" — which is why clicking that link looked like landing on the
+           wrong page entirely. -->
+      <h1>Knowledge base</h1>
       <p class="muted">
         Configure the meeting: index the company's source documents (used to draft grounded
         answers) and, optionally, a bank of expected questions to pre-populate the board.
@@ -138,6 +141,69 @@ import {
           </p>
         }
 
+          @if (uploadPhase() !== 'idle') {
+            <div class="progress-panel" role="status" aria-live="polite">
+              <div class="progress-head">
+                <strong>
+                  @if (uploadTotal() > 1) {
+                    File {{ uploadIndex() }} of {{ uploadTotal() }} —
+                  }
+                  {{ uploadName() }}
+                </strong>
+                <span class="muted-inline">
+                  {{ uploadPhase() === 'uploading' ? 'Uploading' : 'Indexing' }}
+                </span>
+              </div>
+
+              @if (uploadPhase() === 'uploading') {
+                <div
+                  class="bar"
+                  role="progressbar"
+                  [attr.aria-valuenow]="uploadPercent()"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  [attr.aria-valuetext]="'Uploading, ' + uploadPercent() + ' percent sent'"
+                >
+                  <span class="fill" [style.width.%]="uploadPercent()"></span>
+                </div>
+                <p class="muted small">
+                  {{ uploadPercent() }}% sent · {{ 100 - uploadPercent() }}% remaining
+                </p>
+              } @else {
+                <!-- The server's own measured progress, polled while it works. -->
+                @if (indexRun(); as run) {
+                  @if (run.percent !== null) {
+                    <div
+                      class="bar"
+                      role="progressbar"
+                      [attr.aria-valuenow]="run.percent"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      [attr.aria-valuetext]="
+                        'Indexing, ' + run.done + ' of ' + run.total + ' ' + run.unit + ' embedded'
+                      "
+                    >
+                      <span class="fill indexing" [style.width.%]="run.percent"></span>
+                    </div>
+                    <p class="muted small">
+                      {{ run.percent }}% · {{ run.done }} of {{ run.total }} {{ run.unit }} ·
+                      {{ run.total - run.done }} remaining
+                      @if (run.eta_ms) {
+                        · about {{ etaText(run.eta_ms) }} left
+                      }
+                    </p>
+                  } @else {
+                    <p class="muted small">
+                      Reading the document — the chunk count is not known yet.
+                    </p>
+                  }
+                } @else {
+                  <p class="muted small">Handed to the AI service…</p>
+                }
+              }
+            </div>
+          }
+
         @if (status(); as s) {
           <div class="draft" style="margin-top:10px">
             <strong>Knowledge base:</strong>
@@ -249,69 +315,6 @@ import {
             One combined bar would reach 100% the moment the bytes landed and then sit there for
             the whole embed, which is exactly when somebody most wants to know it is still alive.
           -->
-          @if (uploadPhase() !== 'idle') {
-            <div class="progress-panel" role="status" aria-live="polite">
-              <div class="progress-head">
-                <strong>
-                  @if (uploadTotal() > 1) {
-                    File {{ uploadIndex() }} of {{ uploadTotal() }} —
-                  }
-                  {{ uploadName() }}
-                </strong>
-                <span class="muted-inline">
-                  {{ uploadPhase() === 'uploading' ? 'Uploading' : 'Indexing' }}
-                </span>
-              </div>
-
-              @if (uploadPhase() === 'uploading') {
-                <div
-                  class="bar"
-                  role="progressbar"
-                  [attr.aria-valuenow]="uploadPercent()"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                  [attr.aria-valuetext]="'Uploading, ' + uploadPercent() + ' percent sent'"
-                >
-                  <span class="fill" [style.width.%]="uploadPercent()"></span>
-                </div>
-                <p class="muted small">
-                  {{ uploadPercent() }}% sent · {{ 100 - uploadPercent() }}% remaining
-                </p>
-              } @else {
-                <!-- The server's own measured progress, polled while it works. -->
-                @if (indexRun(); as run) {
-                  @if (run.percent !== null) {
-                    <div
-                      class="bar"
-                      role="progressbar"
-                      [attr.aria-valuenow]="run.percent"
-                      aria-valuemin="0"
-                      aria-valuemax="100"
-                      [attr.aria-valuetext]="
-                        'Indexing, ' + run.done + ' of ' + run.total + ' ' + run.unit + ' embedded'
-                      "
-                    >
-                      <span class="fill indexing" [style.width.%]="run.percent"></span>
-                    </div>
-                    <p class="muted small">
-                      {{ run.percent }}% · {{ run.done }} of {{ run.total }} {{ run.unit }} ·
-                      {{ run.total - run.done }} remaining
-                      @if (run.eta_ms) {
-                        · about {{ etaText(run.eta_ms) }} left
-                      }
-                    </p>
-                  } @else {
-                    <p class="muted small">
-                      Reading the document — the chunk count is not known yet.
-                    </p>
-                  }
-                } @else {
-                  <p class="muted small">Handed to the AI service…</p>
-                }
-              }
-            </div>
-          }
-
           <!-- What the pipeline actually did, rather than a spinner that explains nothing. -->
           @if (s.last_index_run; as run) {
             <div class="trace">

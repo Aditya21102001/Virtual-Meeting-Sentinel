@@ -48,9 +48,23 @@ public enum Feature {
 
     // ---- new: default OFF ------------------------------------------------------
 
+    /**
+     * Roles here include everyone, and that is deliberate.
+     *
+     * <p>The controller is gated at class level, so this list also governs
+     * {@code active-meeting} — which the board, the ballot and the question form all need, because
+     * every screen has to know which meeting is live. Restricting it to the two manager duties
+     * meant the Voting page 403'd for SHAREHOLDER: the people the ballot exists for could not load
+     * it.
+     *
+     * <p>Widening this grants nothing. {@code SecurityConfig} is checked first and independently,
+     * and it still limits creating, activating and closing a meeting to a MEETING_MANAGER and
+     * membership to a USER_MANAGER. Feature roles are a ceiling, never a grant.
+     */
     MEETINGS("Meeting management",
             "Schedule meetings, activate one at a time, and map users to them.",
-            false, Set.of(Roles.ADMIN, Roles.MEETING_MANAGER, Roles.USER_MANAGER)),
+            false, Set.of(Roles.ADMIN, Roles.MODERATOR, Roles.SHAREHOLDER, Roles.ATTENDEE,
+                          Roles.MEETING_MANAGER, Roles.USER_MANAGER)),
 
     SEMANTIC_SEARCH("Semantic search",
             "Search the annual report and recording transcripts by meaning. Needs no LLM.",

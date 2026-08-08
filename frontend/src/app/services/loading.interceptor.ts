@@ -1,6 +1,6 @@
 import { HttpInterceptorFn } from '@angular/common/http';
 import { inject } from '@angular/core';
-import { finalize } from 'rxjs';
+import { finalize, timeout } from 'rxjs';
 import { LoadingService, SILENT } from './loading.service';
 
 /**
@@ -23,5 +23,18 @@ export const loadingInterceptor: HttpInterceptorFn = (req, next) => {
 
   const loading = inject(LoadingService);
   loading.start();
-  return next(req).pipe(finalize(() => loading.stop()));
+  return next(req).pipe(
+    // A hard ceiling on every counted request.
+    //
+    // finalize() covers success, failure and cancellation — but NOT a request that simply never
+    // settles, which is exactly what a sleeping server behind a proxy produces. Without this the
+    // counter stays poisoned for the rest of the session: the overlay's own failsafe hides it once,
+    // then it reappears on the next request and never clears.
+    //
+    // Two minutes is generous by design. Everything genuinely long — uploads, indexing, transcodes
+    // — is marked SILENT and never reaches this line, so anything still here after two minutes is
+    // not working, it is stuck.
+    timeout(120000),
+    finalize(() => loading.stop()),
+  );
 };

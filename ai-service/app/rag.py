@@ -300,9 +300,24 @@ class KnowledgeBase:
         # meeting-specific document to shared.
         manifest = self._load_manifest()
         for pdf in _KB_DIR.glob("*.pdf"):
-            reader = PdfReader(str(pdf))
+            # One unreadable file must not take the whole knowledge base down with it.
+            #
+            # This runs on every startup and after every removal, so a single corrupt or truncated
+            # PDF — an upload that died halfway, a file copied in by hand — would otherwise raise
+            # here and leave the index EMPTY. Every answer would lose its citations at once, and
+            # nothing on screen would say which file caused it.
+            #
+            # Note the source is registered only AFTER the read succeeds: listing a document that
+            # contributed no chunks would offer a Remove button for something not in the index.
+            try:
+                reader = PdfReader(str(pdf))
+                page_docs = self._docs_from_reader(reader, pdf.name, manifest.get(pdf.name))
+            except Exception as exc:  # noqa: BLE001 - any unreadable file, however it fails
+                log.error("Skipping %s — it could not be read (%s). The rest of the knowledge base "
+                          "is unaffected; remove or re-upload this document.", pdf.name, exc)
+                continue
             self._sources.add(pdf.name)
-            docs.extend(self._docs_from_reader(reader, pdf.name, manifest.get(pdf.name)))
+            docs.extend(page_docs)
         # Transcripts persisted by add_transcript. Without this an indexed recording would drop out
         # of the knowledge base on the next restart — the same class of bug as an unsaved draft.
         for vtt_path in _KB_DIR.glob("recording-*.vtt"):
@@ -488,6 +503,23 @@ class KnowledgeBase:
             self._index(batch)
             if trace is not None:
                 trace.progress(min(start + len(batch), total), total)
+
+    def _search_store(self):
+        """The store to search, taken under the lock.
+
+        <p>THE RACE THIS CLOSES. The lock only ever serialised writers, so a search could run while
+        `_index` was mutating the FAISS index in place — adding vectors and rewriting the docstore
+        mapping. That was largely theoretical while indexing ran on the event loop and nothing else
+        could run at the same time. It stopped being theoretical when indexing moved to a
+        threadpool: uploads and searches now genuinely overlap.
+
+        <p>Taking the reference under the lock is enough because every writer REBINDS `_store`
+        rather than only mutating it, and rebinding is atomic under the GIL. A reader therefore ends
+        up with a store that is either the old one or the new one, and never one being rewritten
+        underneath it — the same reasoning `_reload_from_disk` already relies on.
+        """
+        with self._lock:
+            return self._store
 
     def _index(self, docs: list[Document]) -> None:
         """Add documents to the live index, replacing the empty placeholder if that is all there is."""
@@ -709,7 +741,8 @@ class KnowledgeBase:
         passage about "when the dividend will be distributed" because they mean the same thing, which
         is the entire reason this system embeds text in the first place.
         """
-        assert self._store is not None, "KB not loaded"
+        store = self._search_store()
+        assert store is not None, "KB not loaded"
         clean = (query or "").strip()
         if not clean:
             return []
@@ -719,13 +752,13 @@ class KnowledgeBase:
         k = max(1, min(k, 25))
         kwargs = self._retrieval_kwargs(k, meeting_id)
         try:
-            scored = self._store.similarity_search_with_relevance_scores(clean, **kwargs)
+            scored = store.similarity_search_with_relevance_scores(clean, **kwargs)
         except Exception:
             # Relevance scoring depends on the store's distance strategy having a known mapping.
             # Falling back to raw distance keeps search working rather than failing over a number
             # that only decorates the result.
             scored = [(doc, None)
-                      for doc, _ in self._store.similarity_search_with_score(clean, **kwargs)]
+                      for doc, _ in store.similarity_search_with_score(clean, **kwargs)]
 
         hits: list[SearchHit] = []
         for doc, score in scored:
@@ -748,10 +781,11 @@ class KnowledgeBase:
         3. GENERATE: the LLM chain answers strictly from that context (see the prompt).
         4. Attach the retrieved chunks as citations so the moderator can verify the source.
         """
-        assert self._store is not None, "KB not loaded"
+        store = self._search_store()
+        assert store is not None, "KB not loaded"
         # Retrieval is confined to this meeting's documents plus the shared ones, so an answer
         # cannot be grounded in a document belonging to a different meeting.
-        hits = self._store.similarity_search(
+        hits = store.similarity_search(
             question, **self._retrieval_kwargs(k, meeting_id))       # 1) top-k nearest chunks
         context = "\n\n".join(f"[{d.metadata.get('source')}] {d.page_content}" for d in hits)  # 2)
         answer = self._get_chain().invoke({"question": question, "context": context})          # 3)
@@ -761,8 +795,9 @@ class KnowledgeBase:
     def chat(self, message: str, k: int = 4, meeting_id: str | None = None) -> ChatResponse:
         """Shareholder-facing GenAI chat: same RAG retrieve→augment→generate as draft(), but with
         a conversational prompt. Grounded on the annual report, returns answer + citations."""
-        assert self._store is not None, "KB not loaded"
-        hits = self._store.similarity_search(message, **self._retrieval_kwargs(k, meeting_id))
+        store = self._search_store()
+        assert store is not None, "KB not loaded"
+        hits = store.similarity_search(message, **self._retrieval_kwargs(k, meeting_id))
         context = "\n\n".join(f"[{d.metadata.get('source')}] {d.page_content}" for d in hits)
         answer = self._get_chat_chain().invoke({"question": message, "context": context})
         citations = [_citation(d) for d in hits]
