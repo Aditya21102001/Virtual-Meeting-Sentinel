@@ -97,7 +97,7 @@ public class ChatController {
         int k = req.k() == null ? 8 : Math.max(1, Math.min(req.k(), 25));
         // Scoped to the live meeting's documents plus the shared ones, so the help widget
         // cannot surface a document belonging to a different meeting.
-        return ai.search(req.query(), k, scope.activeMeetingId().orElse(null));
+        return ai.search(req.query(), k, scope.knowledgeMeetingId().orElse(null));
     }
 
     /** Ask the GenAI assistant (RAG-grounded on the annual report). */

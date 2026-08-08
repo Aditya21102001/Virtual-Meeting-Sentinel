@@ -79,7 +79,7 @@ public class ClusterDraftWorker {
                     // a document belonging to a different meeting just because it was drafted
                     // in the background.
                     DraftResult result = ai.draft(clusterId.toString(), representativeQuestion,
-                                                  scope.activeMeetingId().orElse(null));
+                                                  scope.knowledgeMeetingId().orElse(null));
                     if (result == null || result.answer() == null || result.answer().isBlank()) {
                         throw new IllegalStateException("The model returned an empty answer.");
                     }

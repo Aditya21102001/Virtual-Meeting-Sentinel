@@ -187,7 +187,7 @@ public class QuestionService {
         // Grounded only in what this meeting may cite. Unscoped deployments pass null and
         // search everything, exactly as before.
         DraftResult draft = ai.draft(clusterId, representativeQuestion,
-                                     scope.activeMeetingId().orElse(null));
+                                     scope.knowledgeMeetingId().orElse(null));
         drafts.applyDraft(id, draft);
         broadcastBoard();
         return draft;

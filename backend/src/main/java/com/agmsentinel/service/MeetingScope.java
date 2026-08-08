@@ -58,6 +58,27 @@ public class MeetingScope {
         return meetings.active().map(Meeting::getId);
     }
 
+    /**
+     * The meeting to filter KNOWLEDGE DOCUMENTS by — deliberately not gated on the feature flag.
+     *
+     * <h3>Why this differs from {@link #activeMeetingId()}</h3>
+     * Board scoping is a deployment-wide behaviour change, so it belongs behind the MEETINGS flag:
+     * turning it on alters what every moderator sees.
+     *
+     * <p>A document's scope is not like that. Somebody chose "Applies to: this meeting" on a
+     * specific upload, per document, deliberately. Making that choice conditional on a separate
+     * switch means the application accepts an explicit instruction and then quietly ignores it —
+     * which is exactly what happened: a document tagged to one meeting was cited by every meeting,
+     * with the confirmation on screen saying it had been scoped.
+     *
+     * <p>So this honours the tag whenever a meeting is live. With no meeting active there is
+     * nothing to filter by and everything is searched, which is the only possible answer.
+     */
+    @Transactional(readOnly = true)
+    public Optional<UUID> knowledgeMeetingId() {
+        return meetings.active().map(Meeting::getId);
+    }
+
     /** True when the board and its lists should be filtered. */
     public boolean isScoped() {
         return activeMeetingId().isPresent();

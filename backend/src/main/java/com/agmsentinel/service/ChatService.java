@@ -105,7 +105,7 @@ public class ChatService {
     public AiChatResult askAi(String me, String body) {
         messages.save(new DirectMessage(me, AI_PEER, body, DirectMessage.Kind.USER));
         // Answered from the live meeting's documents plus the shared ones.
-        AiChatResult result = ai.chat(body, scope.activeMeetingId().orElse(null));
+        AiChatResult result = ai.chat(body, scope.knowledgeMeetingId().orElse(null));
         messages.save(new DirectMessage(AI_PEER, me, result.answer(), DirectMessage.Kind.AI));
         return result;
     }
