@@ -430,10 +430,19 @@ export class VideoService {
     );
   }
 
-  /** All videos including PROCESSING/FAILED, so the manage table can show them. */
-  listAll(): Observable<VideoCard[]> {
+  /**
+   * All videos including PROCESSING/FAILED, so the manage table can show them.
+   *
+   * @param silent true for the background poll that watches a transcode. The same call serves a
+   *   user pressing refresh, which SHOULD show the loading bar — so the caller decides rather than
+   *   the method, because only the caller knows whether a human is waiting on it.
+   */
+  listAll(silent = false): Observable<VideoCard[]> {
     return this.http
-      .post<VideoCard[]>(`${this.admin}/list-all-videos`, {}, { headers: this.headers() })
+      .post<VideoCard[]>(`${this.admin}/list-all-videos`, {}, {
+        headers: this.headers(),
+        context: new HttpContext().set(SILENT, silent),
+      })
       .pipe(map((cards) => cards.map((card) => this.normalizeMediaUrls(card))));
   }
 

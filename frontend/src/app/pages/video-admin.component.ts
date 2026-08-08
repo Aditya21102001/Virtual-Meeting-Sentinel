@@ -653,7 +653,7 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
       if (document.hidden) return;
       if (this.serverError()) return;        // the server is known to be down; stop knocking
       if (this.videos.uploading()) return;   // the upload's own progress events already drive the UI
-      if (this.cards().some((card) => card.video.status === 'PROCESSING')) this.refreshList();
+      if (this.cards().some((card) => card.video.status === 'PROCESSING')) this.refreshList(true);
     }, VideoAdminComponent.POLL_MS);
   }
 
@@ -688,8 +688,12 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
    * nobody anything. A transport-level failure (status 0) or a gateway error is conclusive on the
    * first try, so it trips the outage immediately; anything else still gets the three attempts.
    */
-  private refreshList(): void {
-    this.videos.listAll().subscribe({
+  /**
+   * @param silent true when this is the background poll watching a transcode, so it does not raise
+   *   the global loading bar every twelve seconds for something nobody asked for.
+   */
+  private refreshList(silent = false): void {
+    this.videos.listAll(silent).subscribe({
       next: (cards) => {
         this.cards.set(cards);
         this.consecutiveFailures = 0;

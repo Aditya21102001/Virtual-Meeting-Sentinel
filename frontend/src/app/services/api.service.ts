@@ -255,11 +255,18 @@ export class ApiService {
     );
   }
 
+  /**
+   * The moderator board.
+   *
+   * SILENT: polled every 45 seconds as a fallback for dropped websocket pushes. A background
+   * refresh nobody asked for must not raise the loading bar — an indicator that appears on its own
+   * timer is indistinguishable from the application doing something unexpected.
+   */
   getBoard(): Observable<ClusterView[]> {
     return this.http.post<ClusterView[]>(
       `${environment.apiBase}/api/clusters/question-board`,
       {},
-      { headers: this.authHeaders() },
+      { headers: this.authHeaders(), context: new HttpContext().set(SILENT, true) },
     );
   }
 

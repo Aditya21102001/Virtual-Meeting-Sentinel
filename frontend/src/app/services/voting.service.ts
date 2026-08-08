@@ -123,7 +123,8 @@ export class VotingService {
     return this.http.post<QuorumView>(
       `${this.base}/meeting-quorum`,
       { meetingId },
-      { headers: this.headers() },
+      // SILENT: polled on the same timer as the ballot, so it has the same reason to stay quiet.
+      { headers: this.headers(), context: new HttpContext().set(SILENT, true) },
     );
   }
 

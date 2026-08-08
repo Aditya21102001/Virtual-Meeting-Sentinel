@@ -179,7 +179,10 @@ export class AuthService {
       .post<{ token: string }>(
         `${this.base}/api/auth/refresh-session`,
         {},
-        { headers: this.authHeaders() },
+        // SILENT, and this one matters most: session renewal runs on a timer regardless of what
+        // the user is doing, so counting it would make the loading bar appear on its own with no
+        // interaction at all — which reads as the application doing something unexplained.
+        { headers: this.authHeaders(), context: new HttpContext().set(SILENT, true) },
       )
       .subscribe({
         next: (r) => {
