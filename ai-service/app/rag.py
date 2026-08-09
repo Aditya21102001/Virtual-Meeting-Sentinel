@@ -613,33 +613,98 @@ class KnowledgeBase:
 
         replacing = persist and (_KB_DIR / name).exists()
 
-        if persist:
-            with trace.step("Store the document", "filesystem") as s:
-                _KB_DIR.mkdir(parents=True, exist_ok=True)
-                (_KB_DIR / name).write_bytes(data)
-                # Recorded BEFORE any rebuild below, so replacing a document re-reads the tag from
-                # the manifest instead of silently promoting it to shared.
-                self._tag_document(name, meeting_id)
-                s["detail"] = f"saved as {name}" + (" (replacing the previous version)" if replacing else "")
+        # ---- everything below this line is undone together, or not at all ----
+        #
+        # The write and the embedding are two separate operations on two separate stores (the
+        # filesystem and the FAISS index), and there is no shared transaction to enlist them in.
+        # So the state needed to undo the first is captured before either runs, and applied if the
+        # second does not finish.
+        #
+        # Captured, specifically: the bytes of the version being replaced (so a failed re-upload
+        # does not destroy the working document it was meant to update), and the manifest as it
+        # stood (so a failed upload cannot leave a tag pointing at a document that is not there).
+        previous_bytes = (_KB_DIR / name).read_bytes() if replacing else None
+        manifest_before = dict(self._load_manifest())
 
-        if replacing:
-            # Rebuild so the superseded version's vectors go away instead of competing.
-            with trace.step("Re-embed the knowledge base",
-                            "all-MiniLM-L6-v2 on ONNX Runtime → FAISS") as s:
-                self._reload_from_disk()
-                s["detail"] = f"{self._chunk_count} chunk(s) from {len(self._sources)} source(s)"
-        else:
-            with trace.step("Embed and index the chunks",
-                            "all-MiniLM-L6-v2 on ONNX Runtime → FAISS") as s:
-                # Batched so the percentage is measured rather than guessed — see
-                # _index_in_batches. This is the stage that takes the time, and the only one worth
-                # putting a bar against.
-                self._index_in_batches(docs, trace)
-                self._sources.add(name)
-                s["detail"] = f"{len(docs)} vector(s), 384 dimensions each"
+        try:
+            if persist:
+                with trace.step("Store the document", "filesystem") as s:
+                    _KB_DIR.mkdir(parents=True, exist_ok=True)
+                    (_KB_DIR / name).write_bytes(data)
+                    # Recorded BEFORE any rebuild below, so replacing a document re-reads the tag
+                    # from the manifest instead of silently promoting it to shared.
+                    self._tag_document(name, meeting_id)
+                    s["detail"] = f"saved as {name}" + (
+                        " (replacing the previous version)" if replacing else "")
+
+            if replacing:
+                # Rebuild so the superseded version's vectors go away instead of competing.
+                with trace.step("Re-embed the knowledge base",
+                                "all-MiniLM-L6-v2 on ONNX Runtime → FAISS") as s:
+                    self._reload_from_disk()
+                    s["detail"] = f"{self._chunk_count} chunk(s) from {len(self._sources)} source(s)"
+            else:
+                with trace.step("Embed and index the chunks",
+                                "all-MiniLM-L6-v2 on ONNX Runtime → FAISS") as s:
+                    # Batched so the percentage is measured rather than guessed — see
+                    # _index_in_batches. This is the stage that takes the time, and the only one
+                    # worth putting a bar against.
+                    self._index_in_batches(docs, trace)
+                    self._sources.add(name)
+                    s["detail"] = f"{len(docs)} vector(s), 384 dimensions each"
+
+        except BaseException as failure:
+            # BaseException, not Exception, deliberately. A MemoryError is exactly the failure this
+            # guards against, and a large document being killed part-way through embedding is the
+            # single most likely way to get here.
+            log.warning("Indexing %s failed (%s) — undoing it.", name, failure)
+            self._undo_add(name, previous_bytes, manifest_before, persisted=persist)
+            raise
 
         trace.finish()
         return len(docs)
+
+    def _undo_add(self, name: str, previous_bytes: bytes | None,
+                  manifest_before: dict, persisted: bool) -> None:
+        """Return the knowledge base to the state it was in before an upload that failed.
+
+        Best effort by definition: this runs while something has already gone wrong, and an
+        exception raised here would replace the real cause with a rollback error, hiding the very
+        thing the operator needs to read. Each part is therefore attempted independently and logged
+        rather than propagated.
+        """
+        if persisted:
+            target = _KB_DIR / name
+            try:
+                if previous_bytes is not None:
+                    # A re-upload that failed must not cost the operator the version they already
+                    # had. Restoring it is the difference between "that did not work" and "that
+                    # did not work and your annual report is gone".
+                    target.write_bytes(previous_bytes)
+                    log.info("Restored the previous version of %s.", name)
+                elif target.exists():
+                    target.unlink()
+                    log.info("Removed %s, which was written but never indexed.", name)
+            except OSError as exc:
+                log.error("Could not undo the stored file for %s: %s", name, exc)
+
+            try:
+                self._save_manifest(manifest_before)
+            except Exception as exc:  # noqa: BLE001
+                log.error("Could not restore the knowledge manifest after %s failed: %s", name, exc)
+
+        # Rebuild from whatever is now on disk. This is what removes any PARTIAL vectors — batched
+        # indexing may have committed several batches before failing, and those chunks would
+        # otherwise stay in a live index, citing a document that is no longer there.
+        try:
+            self._reload_from_disk()
+            log.info("Knowledge base rebuilt after the failed upload: %d chunk(s) from %d source(s).",
+                     self._chunk_count, len(self._sources))
+        except BaseException as exc:  # noqa: BLE001
+            # If even the rebuild fails the index is left as it stands. Logged loudly: it is the
+            # one outcome where a restart is genuinely the right next step.
+            log.error("Could not rebuild the knowledge base after undoing %s: %s. A restart will "
+                      "rebuild it from disk.", name, exc)
 
     def remove_source(self, filename: str, active_meeting_id: str | None = None) -> dict:
         """Delete one document and everything derived from it. Returns the resulting status.
