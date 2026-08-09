@@ -125,7 +125,35 @@ import { AuthService } from '../services/auth.service';
         </div>
       }
 
-      @if (mode() !== 'login' && mode() !== 'register') {
+      <!-- ===== set a password, after signing in with a code ===== -->
+      @if (mode() === 'setpwd') {
+        <div class="card">
+          <p class="muted" style="margin-top:0">
+            You are signed in. Most people arrive here because they forgot their password — set a
+            new one now and you can use it next time.
+          </p>
+          <label class="muted" style="display:block">New password
+            <input type="password" autocomplete="new-password"
+                   [ngModel]="newPassword()" (ngModelChange)="newPassword.set($event)"
+                   (keyup.enter)="savePassword()" />
+          </label>
+          <div class="hint">At least 8 characters</div>
+          <div class="row" style="margin-top:14px">
+            <button (click)="savePassword()" [disabled]="newPassword().length < 8 || busy()">
+              {{ busy() ? 'Saving…' : 'Set password & continue' }}
+            </button>
+            <span style="flex:1"></span>
+            <!--
+              Skippable on purpose. Somebody may have used a code for convenience rather than
+              because they forgot anything, and blocking their way into a live meeting to insist on
+              a password would be the application serving itself. The prompt is the useful part.
+            -->
+            <a class="muted" style="cursor:pointer" (click)="skipPassword()">Not now</a>
+          </div>
+        </div>
+      }
+
+      @if (mode() !== 'login' && mode() !== 'register' && mode() !== 'setpwd') {
         <a class="muted" style="cursor:pointer" (click)="backToLogin()">← Back to sign in</a>
       }
       @if (error()) { <p class="error-box">⚠️ {{ error() }}</p> }
@@ -133,7 +161,8 @@ import { AuthService } from '../services/auth.service';
   `,
 })
 export class LoginComponent implements OnInit {
-  readonly mode = signal<'login' | 'register' | 'mfa' | 'otp'>('login');
+  readonly mode = signal<'login' | 'register' | 'mfa' | 'otp' | 'setpwd'>('login');
+  readonly newPassword = signal('');
   readonly username = signal('');
   readonly email = signal('');
   readonly phone = signal('');
@@ -173,6 +202,7 @@ export class LoginComponent implements OnInit {
       case 'register': return 'Create moderator account';
       case 'mfa': return 'Verify it\'s you';
       case 'otp': return 'One-time code sign-in';
+      case 'setpwd': return 'Set a new password';
       default: return 'Moderator sign in';
     }
   }
@@ -236,9 +266,40 @@ export class LoginComponent implements OnInit {
   verifyOtp(): void {
     this.busy.set(true); this.error.set('');
     this.auth.otpVerify(this.otpChannel(), this.otpDest(), this.code()).subscribe({
-      next: (r) => { this.auth.completeLogin(r.token); this.router.navigateByUrl(this.dest()); },
+      next: (r) => {
+        this.auth.completeLogin(r.token);
+        this.busy.set(false);
+        // Signed in — but offer a password before going on. Without this, somebody who forgot
+        // their password signs in by code every time and never gets it back, which makes the code
+        // a permanent workaround rather than a recovery.
+        //
+        // The token from this exchange is marked as verified-by-code, so setting a password needs
+        // no old password and no second code. That window is short and the server enforces it.
+        this.newPassword.set('');
+        this.mode.set('setpwd');
+      },
       error: (e) => { this.busy.set(false); this.error.set(this.msg(e)); },
     });
+  }
+
+  /** Set the new password, then go where the user was originally headed. */
+  savePassword(): void {
+    if (this.newPassword().length < 8) return;
+    this.busy.set(true); this.error.set('');
+    this.auth.changePassword({ newPassword: this.newPassword() }).subscribe({
+      next: () => {
+        this.busy.set(false);
+        this.newPassword.set('');
+        this.router.navigateByUrl(this.dest());
+      },
+      error: (e) => { this.busy.set(false); this.error.set(this.msg(e)); },
+    });
+  }
+
+  /** Continue without setting one. They are already signed in; this only skips the offer. */
+  skipPassword(): void {
+    this.newPassword.set('');
+    this.router.navigateByUrl(this.dest());
   }
 
   /** Where to land after login: shareholders → Lounge, moderators/admins → board. */

@@ -4,6 +4,10 @@ import com.agmsentinel.dto.AuthDtos.*;
 import com.agmsentinel.model.AppUser;
 import com.agmsentinel.repository.AppUserRepository;
 import com.agmsentinel.security.JwtService;
+import java.time.Instant;
+import java.time.Duration;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.Authentication;
 import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,7 +71,10 @@ public class AuthService {
 
     public TokenResponse otpVerify(String channel, String destination, String code) {
         AppUser user = otp.verify(channel, destination, code);
-        return new TokenResponse(jwt.issue(user.getUsername(), user.getRole(), user.allRoles()));
+        // Marked as verified-by-code so the next screen can offer to set a password without asking
+        // for the old one — which somebody recovering an account does not have.
+        return new TokenResponse(jwt.issueAfterCodeVerification(
+                user.getUsername(), user.getRole(), user.allRoles()));
     }
 
     /**
@@ -129,7 +136,19 @@ public class AuthService {
 
         boolean proved = false;
 
-        if (otpChannel != null && !otpChannel.isBlank() && otpCode != null && !otpCode.isBlank()) {
+        // A session that began minutes ago by verifying a one-time code counts as proof.
+        //
+        // Somebody recovering an account has no old password to supply, and the code was consumed
+        // signing them in — asking them to request a second code purely to set a password is a
+        // hoop with no security value, since they have already demonstrated exactly the thing a
+        // second code would demonstrate.
+        //
+        // BOUNDED, and that bound is the whole safety of it: honoured only within
+        // PASSWORD_GRACE of the token being issued, so a session left open on a shared machine
+        // cannot still rewrite the password hours later. Renewing a session drops the claim too.
+        if (justVerifiedByCode()) {
+            proved = true;
+        } else if (otpChannel != null && !otpChannel.isBlank() && otpCode != null && !otpCode.isBlank()) {
             // The code is verified against the destination registered to THIS account, never one
             // supplied by the caller. Taking a destination from the request would let anyone with a
             // session reset any account whose email they could type.
@@ -158,6 +177,22 @@ public class AuthService {
         user.setPasswordHash(encoder.encode(newPassword));
         users.save(user);
         log.info("Password changed for {} (verified by {}).", username, otpCode != null ? "one-time code" : "current password");
+    }
+
+    /** How long after a code-verified sign-in a password may be set without other proof. */
+    private static final Duration PASSWORD_GRACE = Duration.ofMinutes(15);
+
+    /**
+     * True when the caller's token says this session began with a one-time code, recently.
+     *
+     * <p>Read from the verified token's claims — the same claims the filter validated — not from
+     * anything in the request. A caller cannot assert this about itself.
+     */
+    private boolean justVerifiedByCode() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !(auth.getCredentials() instanceof Claims claims)) return false;
+        if (!JwtService.verifiedByCode(claims)) return false;
+        return JwtService.issuedAt(claims).isAfter(Instant.now().minus(PASSWORD_GRACE));
     }
 
     /** Find-or-create a user from a verified Google (OAuth2) identity and issue a token. */

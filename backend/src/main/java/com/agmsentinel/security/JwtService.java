@@ -58,6 +58,27 @@ public class JwtService {
     /** {@code ost} claim: when the session originally began, preserved across refreshes. */
     public static final String SESSION_START = "ost";
 
+    /**
+     * {@code vbc} claim: this session was established by verifying a one-time code.
+     *
+     * <p>The only thing it permits is setting a password without the old one, and only briefly
+     * after issue. Somebody recovering an account has no old password to supply and has just spent
+     * the code proving they control the registered address — this records that fact so the password
+     * step can trust it without asking them to prove it twice.
+     */
+    public static final String VERIFIED_BY_CODE = "vbc";
+
+    /** Whether a token carries {@link #VERIFIED_BY_CODE}. */
+    public static boolean verifiedByCode(Claims claims) {
+        return Boolean.TRUE.equals(claims.get(VERIFIED_BY_CODE, Boolean.class));
+    }
+
+    /** When the token was issued, for bounding how long that verification stays good for. */
+    public static Instant issuedAt(Claims claims) {
+        Date issued = claims.getIssuedAt();
+        return issued == null ? Instant.EPOCH : issued.toInstant();
+    }
+
     /** Full access token — granted only after password (+ MFA, if enrolled) succeeds. */
     public String issue(String subject, String role) {
         Instant now = Instant.now();
@@ -117,15 +138,38 @@ public class JwtService {
      */
     public String issue(String subject, String primaryRole, Collection<String> allRoles) {
         Instant now = Instant.now();
-        return build(subject, primaryRole, allRoles, now, now.getEpochSecond());
+        return build(subject, primaryRole, allRoles, now, now.getEpochSecond(), false);
+    }
+
+    /**
+     * Issue a token for a session that began by verifying a one-time code.
+     *
+     * <p>Carries {@link #VERIFIED_BY_CODE}, which lets the holder set a new password without
+     * supplying the old one — necessary, because somebody who has just recovered an account by
+     * email has no old password to give, and the code was consumed proving who they are.
+     *
+     * <p>The claim is <b>not</b> a lasting privilege. It is only honoured for a few minutes after
+     * issue (see {@code AuthService.changePassword}), so a token left in a browser overnight cannot
+     * still rewrite the password tomorrow. It also does not survive {@link #refresh}: a renewed
+     * session is no longer "just verified".
+     */
+    public String issueAfterCodeVerification(String subject, String primaryRole,
+                                             Collection<String> allRoles) {
+        Instant now = Instant.now();
+        return build(subject, primaryRole, allRoles, now, now.getEpochSecond(), true);
     }
 
     private String build(String subject, String role, Instant now, long sessionStart) {
-        return build(subject, role, List.of(role), now, sessionStart);
+        return build(subject, role, List.of(role), now, sessionStart, false);
     }
 
     private String build(String subject, String role, Collection<String> allRoles,
                          Instant now, long sessionStart) {
+        return build(subject, role, allRoles, now, sessionStart, false);
+    }
+
+    private String build(String subject, String role, Collection<String> allRoles,
+                         Instant now, long sessionStart, boolean verifiedByCode) {
         List<String> roles = allRoles == null || allRoles.isEmpty()
                 ? List.of(role)
                 : allRoles.stream().filter(r -> r != null && !r.isBlank()).distinct().toList();
@@ -135,6 +179,9 @@ public class JwtService {
                 .claim("roles", roles)
                 .claim("typ", "access")
                 .claim(SESSION_START, sessionStart)
+                // Present only on a session that began with a one-time code, and deliberately
+                // absent from refreshed tokens — see issueAfterCodeVerification.
+                .claim(VERIFIED_BY_CODE, verifiedByCode ? Boolean.TRUE : null)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(ttlSeconds)))
                 .signWith(currentKey())
