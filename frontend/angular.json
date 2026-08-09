@@ -30,7 +30,13 @@
                 }
               ],
               "optimization": true,
-              "outputHashing": "all"
+              "outputHashing": "all",
+              "sourceMap": {
+                "scripts": true,
+                "styles": true,
+                "hidden": false,
+                "vendor": false
+              }
             },
             "development": {
               "optimization": false,

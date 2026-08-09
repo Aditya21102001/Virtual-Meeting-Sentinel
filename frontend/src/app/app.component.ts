@@ -11,6 +11,7 @@ import {
   RouterLinkActive,
   RouterOutlet,
   Router,
+  NavigationError,
 } from "@angular/router";
 import { HelpWidgetComponent } from "./components/help-widget.component";
 import { AuthService } from "./services/auth.service";
@@ -141,10 +142,14 @@ import { MeetingService } from "./services/meeting.service";
             </button>
             <div class="menu-items" [class.open]="openMenu() === 'run'">
               <a routerLink="/board" routerLinkActive="active" (click)="close()">Moderator board</a>
-              @if (features.enabled("RUN_OF_SHOW") || features.enabled("MEETING_REPORTS")) {
-                @if (features.enabled("MEETING_REPORTS")) {
-                  <a routerLink="/reports" routerLinkActive="active" (click)="close()">Reports</a>
-                }
+              <!--
+                One condition, not two nested ones. This used to be wrapped in a check for
+                RUN_OF_SHOW as well, left over from when a separate run-of-show page was planned;
+                run-of-show now lives on the moderator board, so the outer test only had the effect
+                of hiding Reports whenever RUN_OF_SHOW happened to be off.
+              -->
+              @if (features.enabled("MEETING_REPORTS")) {
+                <a routerLink="/reports" routerLinkActive="active" (click)="close()">Reports</a>
               }
               @if (features.enabled("VIDEO_LIBRARY")) {
                 <a routerLink="/videos" routerLinkActive="active" (click)="close()">Video library</a>
@@ -155,8 +160,15 @@ import { MeetingService } from "./services/meeting.service";
           </div>
         }
 
-        <!-- Administering the deployment — admins and the two manager duties. -->
-        @if (auth.hasRole("ADMIN") || auth.managesMeetings()) {
+        <!--
+          Administering the deployment — admins and the two manager duties.
+
+          Gated on the menu HAVING something in it, not merely on the role. A meeting manager whose
+          deployment has MEETINGS switched off, and who is not an admin, previously saw an
+          "Administration" button that opened an empty box: an affordance for nothing, which reads
+          as broken rather than as unavailable.
+        -->
+        @if (showAdminMenu()) {
           <div class="menu" [class.flat]="menuOpen()">
             <button
               type="button"
@@ -588,7 +600,33 @@ export class AppComponent {
    * <p>A plain field, not a signal, on purpose: writing a signal inside the effect that reads it
    * is how loops start, and nothing renders this.
    */
+  /**
+   * Whether the Administration menu would contain anything.
+   *
+   * <p>Mirrors the conditions on the entries inside it. A menu is a promise that something is
+   * behind it; opening one to find nothing is worse than not being offered it, because the reader
+   * cannot tell "not for you" from "broken".
+   *
+   * <p>Kept next to the template it serves rather than inlined into it: the two entry conditions
+   * appear in both places, and having them side by side is what stops one being updated without
+   * the other.
+   */
+  protected readonly showAdminMenu = computed(
+    () =>
+      this.auth.hasRole("ADMIN") ||
+      (this.auth.managesMeetings() && this.features.enabled("MEETINGS")),
+  );
+
   private sessionLoadedFor: boolean | null = null;
+
+  /**
+   * Records the URL we last reloaded for, so a stale-chunk recovery cannot loop.
+   *
+   * <p>sessionStorage rather than a field: the recovery is a full page load, which throws away
+   * every field on this class. Something that survives the reload is the only thing that can tell
+   * "we just tried this" from "first attempt".
+   */
+  private static readonly RELOAD_MARKER = 'agm_chunk_reload_for';
 
   /** First letter of the username, for the account button. */
   readonly initial = computed(() => (this.auth.username() ?? '?').charAt(0).toUpperCase());
@@ -637,6 +675,39 @@ export class AppComponent {
     public meetings: MeetingService,
     private router: Router,
   ) {
+    // Recover from a lazy chunk that no longer exists.
+    //
+    // Every page here is loaded on demand (`loadComponent`), and each build gives those files new
+    // hashed names. A browser that still has the PREVIOUS index.html open — a tab left open across
+    // a deploy, or a cached one — asks for filenames the server no longer has. The dynamic import
+    // rejects, the router abandons the navigation, and the page simply stays where it is.
+    //
+    // From the user's side nothing happens at all: they click Voting, or Recordings, and the
+    // application ignores them. No error, no spinner, nothing to report beyond "the menu is
+    // broken" — which is why this is worth handling rather than leaving to a support conversation.
+    //
+    // Reloading fetches the current index.html and, with it, the filenames that actually exist.
+    // location.assign rather than router.navigate on purpose: the router would reuse the same dead
+    // module map and fail again in exactly the same way.
+    this.router.events.subscribe((event) => {
+      if (!(event instanceof NavigationError)) return;
+
+      const reason = String(event.error?.message ?? event.error ?? '');
+      const isStaleChunk =
+        event.error?.name === 'ChunkLoadError' ||
+        /failed to fetch dynamically imported module|error loading dynamically imported module|loading chunk .* failed|importing a module script failed/i.test(
+          reason,
+        );
+      if (!isStaleChunk) return;
+
+      // Reload ONCE per target. If the file is missing for any other reason — a genuinely broken
+      // deploy — reloading again would spin forever, and an endless refresh is a worse failure
+      // than the dead click it was meant to fix.
+      const alreadyTried = sessionStorage.getItem(AppComponent.RELOAD_MARKER);
+      if (alreadyTried === event.url) return;
+      sessionStorage.setItem(AppComponent.RELOAD_MARKER, event.url);
+      location.assign(event.url);
+    });
     // Which features this user may see depends on who they are, so re-read whenever the session
     // changes — on sign-in and on sign-out.
     //

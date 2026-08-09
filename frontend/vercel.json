@@ -3,6 +3,59 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist/agm-sentinel-frontend/browser",
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "_comment": [
+        "Send SPA ROUTES to index.html, and nothing else.",
+        "",
+        "This used to be /(.*), which matched everything — including requests for JavaScript.",
+        "Vercel applies a rewrite only when no static file matches, so a request for a chunk that",
+        "no longer exists (a browser holding the previous build, asking for the previous",
+        "filenames) fell through to index.html and was answered with HTML, 200 OK.",
+        "",
+        "The browser then refused it: 'Expected a JavaScript-or-Wasm module script but the server",
+        "responded with a MIME type of text/html'. Angular abandoned the navigation and the click",
+        "did nothing at all — no error on screen, no redirect, just a dead menu item.",
+        "",
+        "The negative lookahead excludes any path whose last segment carries a file extension, so",
+        "a missing .js or .css now returns an honest 404 instead of a page pretending to be a",
+        "script. Route paths (/voting, /recordings) have no extension and still reach index.html."
+      ],
+      "source": "/((?!.*\\.[a-zA-Z0-9]+$).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "_comment": [
+        "index.html must NEVER be served from cache. It is the file that names every other file,",
+        "and each build gives those files new hashed names.",
+        "",
+        "This is what made a plain refresh useless after a deploy: the browser reused its cached",
+        "index.html, which still pointed at the previous build's chunks, so it asked for the same",
+        "missing files and failed the same way. Only Ctrl+Shift+R — which bypasses the cache —",
+        "recovered it. Expecting users to know that is not a plan.",
+        "",
+        "no-cache does not mean 'do not store'. It means 'revalidate before use', so the browser",
+        "still gets a cheap 304 when nothing has changed, and the current file the moment it has."
+      ],
+      "source": "/index.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    },
+    {
+      "_comment": [
+        "The opposite rule for everything the build hashes. outputHashing is set to 'all', so a",
+        "given filename's contents can never change — a new build produces a new name. Content",
+        "that cannot change is safe to cache permanently, and caching it permanently is what keeps",
+        "the uncached index.html above cheap.",
+        "",
+        "Source maps are covered too. They are only fetched when devtools are open."
+      ],
+      "source": "/(.*)\\.(js|css|map|woff2|woff|ttf|png|jpg|jpeg|svg|webp|ico)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    }
   ]
 }
