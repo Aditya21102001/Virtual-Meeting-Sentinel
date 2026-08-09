@@ -55,12 +55,34 @@ public class OtpService {
         String code = String.format("%06d", random.nextInt(1_000_000));
         store.put(key(channel, destination), new Otp(code, Instant.now().plusSeconds(ttlSeconds)));
 
-        // Try real delivery (e.g. SMS via TextBelt/Fast2SMS) unless demo mode is forced. If the
-        // message really goes out, the code is hidden. Otherwise (no provider, send failed, or
-        // demo mode) fall back to showing the code in the API response.
-        if (!demoMode && delivery.send(channel, destination, code)) {
-            return null;
+        // DEMO MODE IS THE ONLY THING THAT MAY REVEAL A CODE.
+        //
+        // This used to read `if (!demoMode && delivery.send(...)) return null;` — so the code was
+        // hidden only when delivery SUCCEEDED, and every other path fell through to returning it.
+        // With demo mode switched off but no provider configured, `send` returned false and the
+        // endpoint went on handing the code back: an operator who had deliberately turned demo mode
+        // off still had a public endpoint that would surrender any registered account's sign-in
+        // code. The setting appeared to do something and did not.
+        //
+        // Now the two cases are separate and neither can leak into the other. Out of demo mode,
+        // either it was delivered or the request fails — the code is never returned.
+        if (!demoMode) {
+            if (delivery.send(channel, destination, code)) {
+                return null;
+            }
+            // Delivery failed and revealing the code is not an option. Drop it so a later guess
+            // cannot match a code that was generated but never sent.
+            store.remove(key(channel, destination));
+            log.error("Could not deliver a {} OTP and demo mode is off, so no code was issued. "
+                      + "Configure a provider (otp.email.provider / otp.sms.provider) or sign-in "
+                      + "by code will not work.", channel);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "We could not send your code right now. Sign in with your password, or try "
+                    + "again shortly.");
         }
+
+        // Demo mode: the code is returned to the caller and logged. Usable without a provider, and
+        // not safe for production — which is what otp.demo-mode is for.
         log.info("[OTP demo] {} code for {} = {}", channel, destination, code);
         return code;
     }
