@@ -4,6 +4,7 @@ import { RouterLink } from '@angular/router';
 import { environment } from '../../environments/environment';
 import { AuthService } from '../services/auth.service';
 import { SILENT } from '../services/loading.service';
+import { FaqEntry, HELP_SECTIONS } from './help-content';
 
 /** One retrieved passage — the same shape a citation has, plus how close it was. */
 export interface SearchHit {
@@ -59,6 +60,30 @@ export interface SearchHit {
 
             @if (error()) {
               <p class="small error">{{ error() }}</p>
+            }
+
+            <!--
+              How-to guidance, matched locally against the help catalogue.
+
+              Shown FIRST and separately from the document passages below, because they answer
+              different questions. "How do I open the ballot?" is answered here; "what dividend was
+              declared?" is answered by the passages. Previously only the passages existed, so any
+              question about using the application was answered with extracts from the annual
+              report — which is why it appeared to not work.
+
+              Rendered from local content, so this half of the widget keeps working when the AI
+              service is asleep or down. That is exactly when somebody opens help.
+            -->
+            @if (guides().length) {
+              <p class="muted small">Using the application</p>
+              @for (guide of guides(); track guide.q) {
+                <div class="guide">
+                  <div class="guide-q">{{ guide.q }}</div>
+                  @for (para of guide.a; track para) {
+                    <p class="guide-a">{{ para }}</p>
+                  }
+                </div>
+              }
             }
 
             @if (hits().length) {
@@ -219,6 +244,21 @@ export interface SearchHit {
       .chip:hover {
         border-color: #2563eb;
       }
+      .guide {
+        border-left: 3px solid var(--accent, #6366f1);
+        padding: 6px 0 6px 10px;
+        margin: 8px 0;
+      }
+      .guide-q {
+        font-weight: 600;
+        font-size: 13px;
+        margin-bottom: 4px;
+      }
+      .guide-a {
+        font-size: 13px;
+        line-height: 1.45;
+        margin: 0 0 6px;
+      }
       .hit {
         padding: 8px 0;
         border-bottom: 1px solid #16202f;
@@ -248,6 +288,22 @@ export class HelpWidgetComponent {
   readonly open = signal(false);
   readonly query = signal('');
   readonly hits = signal<SearchHit[]>([]);
+  /**
+   * Words that carry no subject. Dropped before scoring — see matchGuides.
+   *
+   * <p>Kept deliberately small: only words that are pure question scaffolding. Anything that could
+   * name a topic ("vote", "meeting", "report") must stay, or the entry about it becomes unfindable.
+   */
+  private static readonly FILLER = new Set([
+    'how', 'what', 'why', 'when', 'who', 'where', 'does', 'did', 'the', 'and', 'for', 'you',
+    'your', 'can', 'cannot', 'was', 'are', 'with', 'from', 'this', 'that', 'have', 'has',
+    'should', 'would', 'could', 'there', 'their', 'will', 'not', 'but', 'any', 'get', 'got',
+    'use', 'using', 'about', 'into', 'out', 'its', 'were', 'been', 'being', 'than',
+    'then', 'them', 'they', 'she', 'her', 'his', 'him', 'our', 'ours',
+  ]);
+
+  /** Help-catalogue entries matching the query. Local, so they need no backend. */
+  readonly guides = signal<FaqEntry[]>([]);
   readonly answer = signal('');
   readonly searching = signal(false);
   readonly asking = signal(false);
@@ -294,6 +350,10 @@ export class HelpWidgetComponent {
     this.searching.set(true);
     this.error.set('');
     this.answer.set('');
+    // Matched before the request goes out, and deliberately never cleared by its failure: a
+    // question about how the application works is answerable whether or not the AI service is
+    // reachable, and pretending otherwise would be a worse answer than the one we already have.
+    this.guides.set(this.matchGuides(query));
 
     this.http
       .post<SearchHit[]>(
@@ -313,7 +373,9 @@ export class HelpWidgetComponent {
         next: (results) => {
           this.searching.set(false);
           this.hits.set(results ?? []);
-          if (!results?.length) {
+          // Only when the LOCAL catalogue came up empty too — otherwise the widget would tell
+          // somebody nothing matched while displaying the answer directly above it.
+          if (!results?.length && !this.guides().length) {
             this.error.set(
               'Nothing indexed matches that yet. A moderator can upload the annual report or a ' +
                 'recording transcript under Setup.',
@@ -323,6 +385,12 @@ export class HelpWidgetComponent {
         error: (err) => {
           this.searching.set(false);
           this.hits.set([]);
+          // guides() is left alone on purpose — see matchGuides. If the catalogue answered the
+          // question, an unreachable document index does not make that answer wrong.
+          if (this.guides().length) {
+            this.error.set('');
+            return;
+          }
           // Prefer the server's own sentence when it sent one. It is more specific than
           // anything guessable from the status alone — it names what failed and whether waiting
           // is likely to help. The status-based text remains the fallback for a request that
@@ -337,6 +405,51 @@ export class HelpWidgetComponent {
           );
         },
       });
+  }
+
+  /**
+   * Find help entries that answer this question, ranked.
+   *
+   * <p>Deliberately a plain keyword score rather than anything cleverer. The catalogue is a couple
+   * of dozen entries written in the same vocabulary the interface uses, so a term appearing in the
+   * question is already a strong signal — and unlike a vector search this costs nothing, returns
+   * instantly as the user types, and cannot be taken away by an outage.
+   *
+   * <p>A hit in the entry's QUESTION outweighs one in its body, because the question is what the
+   * entry is about; a body mention is often incidental.
+   */
+  private matchGuides(query: string): FaqEntry[] {
+    const terms = query
+      .toLowerCase()
+      .split(/[^a-z0-9]+/i)
+      // Short words ("do", "in", "my") and question filler ("how", "does", "work") appear in
+      // almost every entry, so scoring them ranked nothing and surfaced three arbitrary answers
+      // for any question at all. Only the words that carry the subject are allowed to score.
+      .filter((t) => t.length > 2 && !HelpWidgetComponent.FILLER.has(t));
+    if (!terms.length) return [];
+
+    return HELP_SECTIONS.flatMap((section) => section.entries)
+      .map((entry) => {
+        // keywords carries the words somebody would actually type that do not appear in the
+        // question as written — "flow", "steps", "how it works". Weighted like the question,
+        // because it exists precisely to catch phrasings the question misses.
+        const question = (entry.q + ' ' + (entry.keywords ?? '')).toLowerCase();
+        const answer = entry.a.join(' ').toLowerCase();
+        let score = 0;
+        for (const term of terms) {
+          if (question.includes(term)) score += 3;
+          else if (answer.includes(term)) score += 1;
+        }
+        return { entry, score };
+      })
+      // A body-text mention alone (score 1) is usually coincidence — "dividend" appears in the
+      // resolution entry, but "what dividend was declared" is a question for the ANNUAL REPORT,
+      // not for help. Requiring a question or keyword hit lets those fall through to document
+      // search, which is where they are actually answered.
+      .filter((scored) => scored.score >= 3)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)   // enough to answer; more turns a bubble into a wall of text
+      .map((scored) => scored.entry);
   }
 
   /** Generate prose. Costs a model call, hence a separate, deliberate action. */
