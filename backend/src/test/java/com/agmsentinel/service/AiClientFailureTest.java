@@ -13,6 +13,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 /**
  * What the backend does when the AI service is not there.
@@ -51,10 +52,10 @@ class AiClientFailureTest {
 
     @Test
     void semanticSearchReportsTheOutageInsteadOfFailingBlankly() {
-        ResponseStatusException thrown = (ResponseStatusException)
-                assertThatThrownBy(() -> client().search("dividend", 5, null))
-                        .isInstanceOf(ResponseStatusException.class)
-                        .actual();
+        ResponseStatusException thrown =
+                catchThrowableOfType(ResponseStatusException.class,
+                                     () -> client().search("dividend", 5, null));
+        assertThat(thrown).as("a failed AI call must raise a status, not a raw exception").isNotNull();
 
         // 503, not 500: the request was fine, the dependency was not — and 503 tells the caller
         // that trying again is a sensible thing to do, which 500 does not.
