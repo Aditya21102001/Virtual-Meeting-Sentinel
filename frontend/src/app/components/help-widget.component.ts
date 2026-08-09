@@ -1,8 +1,9 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpContext } from '@angular/common/http';
 import { Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { environment } from '../../environments/environment';
 import { AuthService } from '../services/auth.service';
+import { SILENT } from '../services/loading.service';
 
 /** One retrieved passage — the same shape a citation has, plus how close it was. */
 export interface SearchHit {
@@ -298,7 +299,15 @@ export class HelpWidgetComponent {
       .post<SearchHit[]>(
         `${this.base}/api/chat/semantic-search`,
         { query, k: 6 },
-        { headers: this.headers() },
+        {
+          headers: this.headers(),
+          // SILENT: this is a search box. It already reports itself through searching(), which
+          // disables its own button and shows its own spinner inside the widget. Letting it raise
+          // the GLOBAL loader as well would freeze the entire application — every menu, every
+          // page — while somebody types a question into a help panel, which is the opposite of
+          // what a help panel is for.
+          context: new HttpContext().set(SILENT, true),
+        },
       )
       .subscribe({
         next: (results) => {
@@ -314,10 +323,17 @@ export class HelpWidgetComponent {
         error: (err) => {
           this.searching.set(false);
           this.hits.set([]);
+          // Prefer the server's own sentence when it sent one. It is more specific than
+          // anything guessable from the status alone — it names what failed and whether waiting
+          // is likely to help. The status-based text remains the fallback for a request that
+          // never reached the server at all (status 0).
+          const fromServer = err?.error?.message;
           this.error.set(
-            err?.status === 0 || err?.status >= 502
-              ? 'The assistant service is asleep or restarting. Try again in a moment.'
-              : 'Search failed. Try again.',
+            typeof fromServer === 'string' && fromServer.trim()
+              ? fromServer
+              : err?.status === 0 || err?.status >= 502
+                ? 'The assistant service is asleep or restarting. Try again in a moment.'
+                : 'Search failed. Try again.',
           );
         },
       });
@@ -334,7 +350,13 @@ export class HelpWidgetComponent {
       .post<{ answer: string }>(
         `${this.base}/api/chat/ask-assistant`,
         { body },
-        { headers: this.headers() },
+        {
+          headers: this.headers(),
+          // SILENT for the same reason, and more so: a model call runs for tens of seconds. Held
+          // behind the global loader it would look exactly like the application having hung.
+          // asking() already conveys it, in the one place the user is looking.
+          context: new HttpContext().set(SILENT, true),
+        },
       )
       .subscribe({
         next: (result) => {
