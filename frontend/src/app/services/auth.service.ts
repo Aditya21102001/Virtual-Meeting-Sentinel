@@ -349,6 +349,41 @@ export class AuthService {
   }
 
   // ---- passwordless OTP login (email / SMS) ------------------------------
+  /**
+   * Set a new password.
+   *
+   * Prove identity with EITHER the current password OR a fresh one-time code — the second is the
+   * recovery path for somebody who has forgotten it. No destination is sent: the server checks the
+   * code against the contact details already on the account, so a session cannot be used to reset
+   * an account whose email the caller happens to know.
+   */
+  /**
+   * Ask for a reset code to be sent to this account's own registered email.
+   *
+   * No destination is sent. The server resolves it from the signed-in account — letting the page
+   * choose would mean a session could send a code to any account whose address the user knew.
+   */
+  requestResetCode(): Observable<OtpRequestResult> {
+    return this.http.post<OtpRequestResult>(
+      `${this.base}/api/auth/otp/request-mine`,
+      {},
+      { headers: this.authHeaders() },
+    );
+  }
+
+  changePassword(input: {
+    currentPassword?: string;
+    otpChannel?: 'email' | 'sms';
+    otpCode?: string;
+    newPassword: string;
+  }): Observable<{ changed: boolean }> {
+    return this.http.post<{ changed: boolean }>(
+      `${this.base}/api/auth/change-password`,
+      input,
+      { headers: this.authHeaders() },
+    );
+  }
+
   otpRequest(
     channel: "email" | "sms",
     destination: string,

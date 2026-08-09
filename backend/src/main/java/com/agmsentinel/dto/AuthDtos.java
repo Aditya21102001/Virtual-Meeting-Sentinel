@@ -33,6 +33,22 @@ public final class AuthDtos {
     public record LoginRequest(@NotBlank String username, @NotBlank String password) { }
 
     /**
+     * Set a new password, proving identity one of two ways.
+     *
+     * <p>Supply {@code currentPassword} if you know it, or {@code otpChannel} + {@code otpCode}
+     * if you have forgotten it — the second is the recovery path and re-proves control of the
+     * registered email or phone. Note there is no destination field: the code is checked against
+     * the contact details already on the account, never one the caller supplies.
+     */
+    public record ChangePasswordRequest(
+            String currentPassword,
+            String otpChannel,          // "email" | "sms", when resetting with a code
+            String otpCode,
+            @NotBlank(message = "A new password is required")
+            @Size(min = 8, max = 100, message = "Password must be at least 8 characters")
+            String newPassword) { }
+
+    /**
      * Result of a password login.
      *   status = AUTHENTICATED → `token` is a full access JWT (no MFA enrolled)
      *   status = MFA_REQUIRED  → `mfaToken` authorizes the 2nd-factor step; `methods` lists options

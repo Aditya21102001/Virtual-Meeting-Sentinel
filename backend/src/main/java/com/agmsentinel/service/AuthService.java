@@ -4,6 +4,9 @@ import com.agmsentinel.dto.AuthDtos.*;
 import com.agmsentinel.model.AppUser;
 import com.agmsentinel.repository.AppUserRepository;
 import com.agmsentinel.security.JwtService;
+import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import dev.samstevens.totp.code.*;
 import dev.samstevens.totp.exceptions.QrGenerationException;
 import dev.samstevens.totp.qr.QrData;
@@ -32,6 +35,8 @@ import java.util.List;
  */
 @Service
 public class AuthService {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final AppUserRepository users;
     private final PasswordEncoder encoder;
@@ -63,6 +68,96 @@ public class AuthService {
     public TokenResponse otpVerify(String channel, String destination, String code) {
         AppUser user = otp.verify(channel, destination, code);
         return new TokenResponse(jwt.issue(user.getUsername(), user.getRole(), user.allRoles()));
+    }
+
+    /**
+     * Send a one-time code to the signed-in account's OWN registered email.
+     *
+     * <p>Deliberately takes no destination. The ordinary {@code otpRequest} is a sign-in path and
+     * must accept an address, because nobody is signed in yet. This one is for a password reset by
+     * somebody already in a session — and letting that caller name the destination would mean a
+     * session could be used to send a code to any account whose email address the user happened to
+     * know, which is the whole attack this flow has to avoid.
+     *
+     * @return the same result shape as a normal request, so demo mode still surfaces the code
+     */
+    public OtpRequestResult otpRequestForSelf(String username) {
+        AppUser user = users.findByUsername(username).orElseThrow(() ->
+                new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sign in again."));
+        if (user.getEmail() == null || user.getEmail().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "This account has no email address registered, so a code cannot be sent.");
+        }
+        // Same wrapping as otpRequest: demoCode is non-null only while demo mode is on, and the
+        // caller decides whether showing it is acceptable.
+        String demoCode = otp.request("email", user.getEmail());
+        return new OtpRequestResult(true, demoCode);
+    }
+
+    /**
+     * Set a new password, having re-proved who is asking.
+     *
+     * <h2>Why a session alone is not enough</h2>
+     * A signed-in session says somebody authenticated at some point, possibly hours ago on a laptop
+     * now sitting unattended. Changing the password from that is how an opportunist locks the real
+     * owner out of their own account. So the change is always re-proved, one of two ways:
+     *
+     * <ul>
+     *   <li><b>The current password</b> — for somebody who knows it and simply wants a new one.
+     *   <li><b>A fresh one-time code</b> — for somebody who has forgotten it. This is the recovery
+     *       path, and it re-proves control of the registered email or phone at the moment of the
+     *       change rather than trusting a session that might have been opened any other way.
+     * </ul>
+     *
+     * <p>The OTP branch is what makes this a real reset. Without it, a user who has forgotten their
+     * password signs in by code forever and never gets it back — OTP becomes a permanent workaround
+     * instead of a recovery.
+     *
+     * <p>A user with no password at all (signed up through Google) can set one via the OTP branch;
+     * there is no current password for them to supply.
+     */
+    @Transactional
+    public void changePassword(String username, String currentPassword,
+                               String otpChannel, String otpCode, String newPassword) {
+        if (newPassword == null || newPassword.length() < 8) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A new password must be at least 8 characters.");
+        }
+
+        AppUser user = users.findByUsername(username).orElseThrow(() ->
+                new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sign in again."));
+
+        boolean proved = false;
+
+        if (otpChannel != null && !otpChannel.isBlank() && otpCode != null && !otpCode.isBlank()) {
+            // The code is verified against the destination registered to THIS account, never one
+            // supplied by the caller. Taking a destination from the request would let anyone with a
+            // session reset any account whose email they could type.
+            String destination = "sms".equals(otpChannel) ? user.getPhone() : user.getEmail();
+            if (destination == null || destination.isBlank()) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "This account has no " + ("sms".equals(otpChannel) ? "mobile number" : "email address")
+                        + " registered, so a code cannot be sent to it.");
+            }
+            otp.verify(otpChannel, destination, otpCode);   // throws on a wrong or expired code
+            proved = true;
+        } else if (currentPassword != null && !currentPassword.isBlank()
+                && user.getPasswordHash() != null
+                && encoder.matches(currentPassword, user.getPasswordHash())) {
+            proved = true;
+        }
+
+        if (!proved) {
+            // One message for both failures on purpose: distinguishing "wrong current password"
+            // from "wrong code" tells an attacker which half they got right.
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                    "Could not verify it is you. Enter your current password, or use a one-time "
+                    + "code sent to your registered email.");
+        }
+
+        user.setPasswordHash(encoder.encode(newPassword));
+        users.save(user);
+        log.info("Password changed for {} (verified by {}).", username, otpCode != null ? "one-time code" : "current password");
     }
 
     /** Find-or-create a user from a verified Google (OAuth2) identity and issue a token. */

@@ -60,6 +60,12 @@ public class SecurityConfig {
                 // /api/auth/** rule so a missing or lapsed token is answered with 401 here —
                 // an expired session that could still renew itself would not be a timeout.
                 .requestMatchers("/api/auth/refresh-session").authenticated()
+                // Changing a password needs a live session, declared ahead of the public
+                // /api/auth/** rule below. The method re-proves identity as well — with the current
+                // password or a fresh one-time code — because a session on its own only says
+                // somebody signed in at some point, possibly on a laptop now sitting unattended.
+                .requestMatchers("/api/auth/change-password",
+                                 "/api/auth/otp/request-mine").authenticated()
                 // Public auth endpoints + Google OAuth2 handshake.
                 // /health and /health/ai are public so an external uptime monitor can reach them
                 // without a token — and /health/ai doubles as the wake-up call that keeps a

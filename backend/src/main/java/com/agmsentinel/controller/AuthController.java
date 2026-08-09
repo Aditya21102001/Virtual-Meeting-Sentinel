@@ -1,6 +1,8 @@
 package com.agmsentinel.controller;
 
 import com.agmsentinel.dto.AuthDtos.*;
+import java.util.Map;
+import java.security.Principal;
 import com.agmsentinel.security.JwtService;
 import com.agmsentinel.service.AuthService;
 import io.jsonwebtoken.Claims;
@@ -86,6 +88,40 @@ public class AuthController {
      * timeout means. {@code SecurityConfig} matches this path ahead of the public {@code /api/auth/**}
      * rule so an absent or lapsed token is a 401 here rather than reaching the method.
      */
+    /**
+     * Change or reset the password for the signed-in account.
+     *
+     * <p>Under {@code /api/auth/**}, so a session is not enforced by the filter chain — the subject
+     * comes from the authenticated principal and the method refuses without one. Identity is
+     * re-proved inside {@code changePassword} either way; a session alone is never sufficient to
+     * change a password.
+     */
+    /**
+     * Send a reset code to the signed-in account's own email.
+     *
+     * <p>No destination in the request — see {@code otpRequestForSelf}. Requires a session, so it
+     * is declared ahead of the public {@code /api/auth/**} rule in {@code SecurityConfig}.
+     */
+    @PostMapping("/otp/request-mine")
+    public OtpRequestResult otpRequestMine(Principal me) {
+        if (me == null || me.getName() == null || me.getName().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sign in first.");
+        }
+        return auth.otpRequestForSelf(me.getName());
+    }
+
+    @PostMapping("/change-password")
+    public Map<String, Object> changePassword(@Valid @RequestBody ChangePasswordRequest req,
+                                              Principal me) {
+        if (me == null || me.getName() == null || me.getName().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                    "Sign in before changing your password.");
+        }
+        auth.changePassword(me.getName(), req.currentPassword(), req.otpChannel(), req.otpCode(),
+                            req.newPassword());
+        return Map.of("changed", true);
+    }
+
     @PostMapping("/refresh-session")
     public TokenResponse refreshSession(Authentication authn) {
         if (!(authn.getCredentials() instanceof Claims claims)) {
