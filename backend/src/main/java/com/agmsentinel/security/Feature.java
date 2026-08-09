@@ -38,9 +38,13 @@ public enum Feature {
             "Offer a recording for download, in any available quality.",
             true, Set.of(Roles.ADMIN, Roles.MODERATOR, Roles.SHAREHOLDER)),
 
+    // ATTENDEE removed deliberately. The lounge shows the directory of registered users and carries
+    // direct messages between them. An attendee token is SELF-ASSERTED — /api/auth/attendee is
+    // public and issues one for whatever username the caller types — so granting it here handed the
+    // member list, and the ability to message members, to anybody who asked for a token.
     LOUNGE_CHAT("Shareholder lounge",
             "Member-to-member chat and the GenAI assistant.",
-            true, Set.of(Roles.ADMIN, Roles.MODERATOR, Roles.SHAREHOLDER, Roles.ATTENDEE)),
+            true, Set.of(Roles.ADMIN, Roles.MODERATOR, Roles.SHAREHOLDER)),
 
     AI_DRAFTING("AI answer drafting",
             "Draft grounded answers for question clusters, with citations.",
@@ -66,9 +70,13 @@ public enum Feature {
             false, Set.of(Roles.ADMIN, Roles.MODERATOR, Roles.SHAREHOLDER, Roles.ATTENDEE,
                           Roles.MEETING_MANAGER, Roles.USER_MANAGER)),
 
+    // ATTENDEE removed for the same reason. This returns passages from the indexed documents, which
+    // are the annual report AND whatever else a moderator has uploaded — board transcripts, meeting
+    // recordings. Nothing here can tell a published document from a confidential one, so the safe
+    // rule is that reading any of them requires a real account.
     SEMANTIC_SEARCH("Semantic search",
             "Search the annual report and recording transcripts by meaning. Needs no LLM.",
-            false, Set.of(Roles.ADMIN, Roles.MODERATOR, Roles.SHAREHOLDER, Roles.ATTENDEE)),
+            false, Set.of(Roles.ADMIN, Roles.MODERATOR, Roles.SHAREHOLDER)),
 
     /**
      * The floating bubble, and the search behind it.
@@ -81,6 +89,11 @@ public enum Feature {
      * <p>If another surface ever needs semantic search, give it its own route gated on
      * {@link #SEMANTIC_SEARCH} alone rather than loosening that one.
      */
+    // ATTENDEE deliberately KEPT, unlike the two above. The bubble answers questions about USING
+    // the application from a catalogue held in the browser — no backend, no documents, nothing
+    // confidential — and an attendee who cannot find the question box is exactly the person who
+    // needs it. Document search inside the bubble is gated separately on SEMANTIC_SEARCH, so an
+    // attendee gets the help without getting the company's papers.
     HELP_WIDGET("Help bubble",
             "A floating assistant on every page, for quick questions and FAQ.",
             false, Set.of(Roles.ADMIN, Roles.MODERATOR, Roles.SHAREHOLDER, Roles.ATTENDEE)),

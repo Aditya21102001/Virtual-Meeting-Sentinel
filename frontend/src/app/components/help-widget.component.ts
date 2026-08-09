@@ -5,6 +5,7 @@ import { environment } from '../../environments/environment';
 import { AuthService } from '../services/auth.service';
 import { SILENT } from '../services/loading.service';
 import { FaqEntry, HELP_SECTIONS } from './help-content';
+import { FeatureService } from '../services/feature.service';
 
 /** One retrieved passage — the same shape a citation has, plus how close it was. */
 export interface SearchHit {
@@ -74,6 +75,18 @@ export interface SearchHit {
               Rendered from local content, so this half of the widget keeps working when the AI
               service is asleep or down. That is exactly when somebody opens help.
             -->
+            <!--
+              Stated up front rather than after a failed search: somebody who cannot search the
+              documents should learn that before typing a question about them, not after.
+            -->
+            @if (!canSearchDocuments() && !auth.isAuthenticated()) {
+              <p class="muted small">
+                Answers here cover using the application.
+                <a routerLink="/login" (click)="close()">Sign in</a>
+                to also search the annual report and recording transcripts.
+              </p>
+            }
+
             @if (guides().length) {
               <p class="muted small">Using the application</p>
               @for (guide of guides(); track guide.q) {
@@ -283,6 +296,7 @@ export interface SearchHit {
 })
 export class HelpWidgetComponent {
   protected readonly auth = inject(AuthService);
+  private readonly features = inject(FeatureService);
   private readonly http = inject(HttpClient);
 
   readonly open = signal(false);
@@ -301,6 +315,20 @@ export class HelpWidgetComponent {
     'use', 'using', 'about', 'into', 'out', 'its', 'were', 'been', 'being', 'than',
     'then', 'them', 'they', 'she', 'her', 'his', 'him', 'our', 'ours',
   ]);
+
+  /**
+   * Whether this reader may search the indexed documents.
+   *
+   * <p>Attendees may not: the knowledge base holds the annual report alongside board transcripts
+   * and anything else a moderator has uploaded, and an attendee token is self-asserted rather than
+   * verified. Guidance about USING the application stays available to them — that is local content
+   * and gives nothing away.
+   *
+   * <p>Checked here so the request is never sent. Sending it and rendering the 403 would tell
+   * somebody "forbidden" when the sentence they need is "sign in and this will work".
+   */
+  protected readonly canSearchDocuments = computed(() =>
+    this.features.enabled('SEMANTIC_SEARCH'));
 
   /** Help-catalogue entries matching the query. Local, so they need no backend. */
   readonly guides = signal<FaqEntry[]>([]);
@@ -354,6 +382,23 @@ export class HelpWidgetComponent {
     // question about how the application works is answerable whether or not the AI service is
     // reachable, and pretending otherwise would be a worse answer than the one we already have.
     this.guides.set(this.matchGuides(query));
+
+    if (!this.canSearchDocuments()) {
+      // Local guidance is the whole answer available to this reader. Stop here rather than
+      // making a request that is going to be refused.
+      this.searching.set(false);
+      this.hits.set([]);
+      if (!this.guides().length) {
+        this.error.set(
+          this.auth.isAuthenticated()
+            ? 'Nothing in the help topics matches that. Searching the annual report and ' +
+              'transcripts needs a shareholder or moderator account.'
+            : 'Nothing in the help topics matches that. Sign in to search the annual report ' +
+              'and recording transcripts.',
+        );
+      }
+      return;
+    }
 
     this.http
       .post<SearchHit[]>(

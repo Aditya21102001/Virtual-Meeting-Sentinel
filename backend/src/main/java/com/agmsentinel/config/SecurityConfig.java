@@ -143,9 +143,26 @@ public class SecurityConfig {
                 .requestMatchers("/api/questions/**").hasAnyRole("ATTENDEE", "SHAREHOLDER", "MODERATOR", "ADMIN")
                 .requestMatchers("/api/clusters/**").hasAnyRole("MODERATOR", "ADMIN")
                 .requestMatchers("/api/admin/**").hasAnyRole("MODERATOR", "ADMIN")
-                // Shareholder Lounge: open to ANY authenticated member (attendees included) so
-                // everyone can see the directory of registered users and use the chat / AI assistant.
-                .requestMatchers("/api/chat/**").authenticated()
+                // Shareholder Lounge, the knowledge search and the AI assistant. Restricted to
+                // roles that require a REAL account — the same rule, and for the same reason, as
+                // voting above.
+                //
+                // This was `.authenticated()`, which reads as "anyone signed in" but does not mean
+                // that. /api/auth/attendee is public and mints a token for whatever username the
+                // caller types, so `.authenticated()` was satisfied by anybody at all. Two requests
+                // with no credentials returned the full text of the indexed annual report, the
+                // directory of every registered user with their roles, and an answer from the
+                // language model billed to this deployment.
+                //
+                // None of that is what "attendee" was meant to buy. An attendee is someone in the
+                // room who may ask a question and support a topic — both anonymous acts that decide
+                // nothing and reveal nothing. Reading the company's documents, seeing who the
+                // moderators are, and spending model budget are none of those things.
+                //
+                // Attendees keep /api/questions and /api/room (see above), which is the whole of
+                // what the anonymous pass exists for.
+                .requestMatchers("/api/chat/**")
+                        .hasAnyRole("SHAREHOLDER", "MODERATOR", "ADMIN")
                 // Member directory: any authenticated user may READ the roster; only
                 // moderators/admins may CHANGE roles. Both are POST now, so the two are told apart
                 // by path rather than by method — list-members first, since the /** rule below
