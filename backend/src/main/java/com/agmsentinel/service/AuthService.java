@@ -4,6 +4,8 @@ import com.agmsentinel.dto.AuthDtos.*;
 import com.agmsentinel.model.AppUser;
 import com.agmsentinel.repository.AppUserRepository;
 import com.agmsentinel.security.JwtService;
+import com.agmsentinel.security.Roles;
+import org.springframework.beans.factory.annotation.Value;
 import java.time.Instant;
 import java.time.Duration;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -179,6 +181,27 @@ public class AuthService {
         log.info("Password changed for {} (verified by {}).", username, otpCode != null ? "one-time code" : "current password");
     }
 
+    /**
+     * The role a self-registered account gets.
+     *
+     * <p>SHAREHOLDER by default, deliberately. Anything that lets a stranger choose their own
+     * privileges is not an authorisation model, and a public registration endpoint that mints
+     * moderators is exactly that.
+     */
+    @Value("${auth.registration.default-role:SHAREHOLDER}")
+    private String registrationDefaultRole;
+
+    /**
+     * Whether an unknown Google identity may create its own account. OFF by default — see
+     * {@link #oauthLogin}.
+     */
+    @Value("${oauth.auto-provision:false}")
+    private boolean oauthAutoProvision;
+
+    /** The role such an account gets. Never MODERATOR by default, whatever convenience suggests. */
+    @Value("${oauth.default-role:SHAREHOLDER}")
+    private String oauthDefaultRole;
+
     /** How long after a code-verified sign-in a password may be set without other proof. */
     private static final Duration PASSWORD_GRACE = Duration.ofMinutes(15);
 
@@ -195,14 +218,67 @@ public class AuthService {
         return JwtService.issuedAt(claims).isAfter(Instant.now().minus(PASSWORD_GRACE));
     }
 
-    /** Find-or-create a user from a verified Google (OAuth2) identity and issue a token. */
+    /**
+     * Sign in a verified Google identity, and issue a token.
+     *
+     * <h2>What changed, and why it mattered</h2>
+     * This used to create an account for ANY Google identity that reached the callback, with the
+     * role MODERATOR. Anyone on the internet who found the login page could click "Continue with
+     * Google" and become a moderator of somebody's AGM — able to see the board, publish answers and
+     * open the knowledge base. Convenient for a demo, and indefensible for a real meeting.
+     *
+     * <p>Two rules now:
+     *
+     * <ol>
+     *   <li><b>An existing account signs in with the role it already has.</b> Google proves who the
+     *       person is; it does not decide what they may do. The role is never changed here — an
+     *       admin who signs in with Google stays an admin, and a shareholder stays a shareholder.
+     *   <li><b>An unknown identity is refused unless auto-provisioning is switched on</b>
+     *       ({@code oauth.auto-provision}, off by default), and even then it is created with
+     *       {@code oauth.default-role} — SHAREHOLDER, not MODERATOR.
+     * </ol>
+     *
+     * <p>Off by default because the safe failure is "you cannot get in", which somebody can report
+     * and an admin can fix in a minute. The unsafe failure is silent and privileged, and nobody
+     * notices until a stranger is reading the board.
+     *
+     * @throws ResponseStatusException 403 when the identity is unknown and provisioning is off
+     */
+    @Transactional
     public String oauthLogin(String email, String displayName) {
-        AppUser user = users.findByEmail(email).orElseGet(() -> {
-            String base = (displayName != null && !displayName.isBlank() ? displayName : email);
-            AppUser u = new AppUser(uniqueUsername(base), email, null, "MODERATOR");
-            return users.save(u);
-        });
-        return jwt.issue(user.getUsername(), user.getRole(), user.allRoles());
+        if (email == null || email.isBlank()) {
+            // Google can withhold the address if the scope was not granted. Without it there is no
+            // way to match an account, and matching on the display name would be absurd.
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Google did not share an email address, so we cannot match your account.");
+        }
+        String normalised = Contacts.email(email);
+
+        AppUser existing = users.findByEmail(normalised).orElse(null);
+        if (existing != null) {
+            // Existing account: sign in as whoever they already are. Deliberately not touched.
+            log.info("Google sign-in for existing account {} ({}).",
+                     existing.getUsername(), existing.getRole());
+            return jwt.issue(existing.getUsername(), existing.getRole(), existing.allRoles());
+        }
+
+        if (!oauthAutoProvision) {
+            log.warn("Refused Google sign-in for {} — no account exists and auto-provisioning is "
+                     + "off. An admin can register them, or set OAUTH_AUTO_PROVISION=true to let "
+                     + "Google identities create their own accounts.", normalised);
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "No account is registered with this Google address. Ask an organiser to add "
+                    + "you, then sign in again.");
+        }
+
+        String role = Roles.isAssignable(oauthDefaultRole)
+                ? oauthDefaultRole.toUpperCase()
+                : Roles.SHAREHOLDER;   // a misconfigured role must not silently become privileged
+        String base = displayName != null && !displayName.isBlank() ? displayName : normalised;
+        AppUser created = users.save(new AppUser(uniqueUsername(base), normalised, null, role));
+        log.info("Created account {} from a Google identity, role {}.",
+                 created.getUsername(), role);
+        return jwt.issue(created.getUsername(), created.getRole(), created.allRoles());
     }
 
     private String uniqueUsername(String base) {
@@ -226,7 +302,21 @@ public class AuthService {
         if (users.findByPhone(phone).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Mobile number already registered.");
         }
-        AppUser user = new AppUser(req.username(), email, encoder.encode(req.password()), "MODERATOR");
+        // SELF-REGISTRATION DOES NOT GRANT MODERATOR.
+        //
+        // This route is public — /api/auth/** is permitAll, because somebody registering cannot
+        // yet be authenticated — and it used to create a MODERATOR. Anyone who found the sign-up
+        // form could therefore give themselves the board, the knowledge base, cluster curation and
+        // the ability to publish answers to the room. For a demo with one user that reads as
+        // convenience; for an AGM with real members it is the whole authorisation model undone by
+        // its own front door.
+        //
+        // A new registration is a MEMBER. Moderator is something an admin grants afterwards on the
+        // Members screen, which is what that screen is for.
+        String role = Roles.isAssignable(registrationDefaultRole)
+                ? registrationDefaultRole.toUpperCase()
+                : Roles.SHAREHOLDER;   // a misconfigured value must fail toward less privilege
+        AppUser user = new AppUser(req.username(), email, encoder.encode(req.password()), role);
         user.setPhone(phone);
         users.save(user);
         // Fresh account has no second factor yet → straight to a full token.

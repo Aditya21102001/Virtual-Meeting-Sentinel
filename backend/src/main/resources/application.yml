@@ -214,6 +214,19 @@ jwt:
 app:
   frontend-url: ${APP_FRONTEND_URL:http://localhost:4200}
 
+# Google sign-in behaviour for an identity we have never seen.
+#
+# OFF by default, and that default is load-bearing. This used to create an account for ANY Google
+# identity that reached the callback, with the role MODERATOR — so anyone who found the login page
+# could make themselves a moderator of somebody's AGM. An existing account always signs in with the
+# role it already has; Google proves who you are, it does not decide what you may do.
+#
+#   OAUTH_AUTO_PROVISION=true   lets unknown Google identities create their own account
+#   OAUTH_DEFAULT_ROLE=...      the role they get (SHAREHOLDER by default; never MODERATOR)
+oauth:
+  auto-provision: ${OAUTH_AUTO_PROVISION:false}
+  default-role: ${OAUTH_DEFAULT_ROLE:SHAREHOLDER}
+
 # Passwordless email/SMS OTP. demo-mode=true → codes are logged + returned in the API
 # response (free, no email/SMS provider). Set false + wire a real OtpDelivery bean for prod.
 otp:

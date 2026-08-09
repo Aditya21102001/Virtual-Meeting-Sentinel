@@ -185,6 +185,15 @@ export class LoginComponent implements OnInit {
     // Google OAuth redirect lands here with ?token=... — complete the session.
     const token = this.route.snapshot.queryParamMap.get('token');
     if (token) { this.auth.completeLogin(token); this.router.navigateByUrl(this.dest()); return; }
+
+    // ...or with ?error=... when Google authenticated somebody we have no account for. That is an
+    // ordinary outcome, not a fault, and the reason has to be shown here — the alternative is the
+    // user being left on the backend's own error page, off-site, with no way back.
+    const oauthError = this.route.snapshot.queryParamMap.get('error');
+    if (oauthError) {
+      this.error.set(oauthError);
+      return;
+    }
     // The auth interceptor redirects here with ?expired=1 when a stale/expired session is
     // rejected by the server — tell the user why they're back at the sign-in screen.
     if (this.route.snapshot.queryParamMap.get('expired')) {

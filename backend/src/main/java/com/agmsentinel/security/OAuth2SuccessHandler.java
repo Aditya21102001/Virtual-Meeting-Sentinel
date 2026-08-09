@@ -8,6 +8,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.net.URLEncoder;
@@ -37,8 +38,18 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
         String email = (String) user.getAttributes().get("email");
         String name = (String) user.getAttributes().get("name");
 
-        String token = auth.oauthLogin(email, name);
-        String target = frontendUrl + "/login?token=" + URLEncoder.encode(token, StandardCharsets.UTF_8);
+        String target;
+        try {
+            String token = auth.oauthLogin(email, name);
+            target = frontendUrl + "/login?token=" + URLEncoder.encode(token, StandardCharsets.UTF_8);
+        } catch (ResponseStatusException ex) {
+            // A refusal is an ordinary outcome here, not a fault: Google authenticated somebody we
+            // have no account for. Redirect back with the reason so the login page can say it —
+            // letting this propagate would render Spring's error page on the BACKEND domain, which
+            // looks like a crash and strands the user off-site with no way back.
+            String reason = ex.getReason() == null ? "Sign-in was refused." : ex.getReason();
+            target = frontendUrl + "/login?error=" + URLEncoder.encode(reason, StandardCharsets.UTF_8);
+        }
         response.sendRedirect(target);
     }
 }
