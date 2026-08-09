@@ -176,8 +176,11 @@ public class AdminController {
             // this layer does not, such as a PDF with no extractable text.
             log.warn("Indexing {} failed: AI service returned {} — {}",
                      name, ex.getStatusCode(), ex.getResponseBodyAsString());
-            return ResponseEntity.status(502).body(Map.of("error",
-                    "The AI service could not index that document: " + ex.getStatusText()));
+            // The AI service's own sentence, not the HTTP status text. It is the one that says WHY
+            // — "this document has 1167 pages and this instance can index at most 400" — and
+            // "Bad Request" tells the operator nothing they can act on.
+            return ResponseEntity.status(502).body(Map.of("error", detailOf(ex,
+                    "The AI service could not index that document.")));
         } catch (RuntimeException ex) {
             // It did not answer at all: asleep, restarting, or still blocked by earlier work.
             //

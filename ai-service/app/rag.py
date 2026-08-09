@@ -31,6 +31,17 @@ log = logging.getLogger(__name__)
 
 _KB_DIR = Path(__file__).resolve().parent.parent / "knowledge"
 
+# The largest document this service will embed.
+#
+# Not an arbitrary limit. Embedding is the memory-hungry stage and it scales with page count: at
+# roughly 1,000-character chunks a 400-page report is already a few thousand vectors, which a small
+# container handles. An order of magnitude beyond that is what killed it — and because indexing is
+# retried on every boot, one oversized file becomes a permanent outage rather than a failed upload.
+#
+# Deliberately generous: a real annual report is well under this. It exists to stop a book, not to
+# police documents.
+_MAX_PAGES = 400
+
 # Roughly a PDF chunk. A transcript cue is one spoken line — too little to embed usefully — so cues
 # are grouped up to this size before being indexed.
 _TRANSCRIPT_PASSAGE_CHARS = 900
@@ -311,6 +322,25 @@ class KnowledgeBase:
             # contributed no chunks would offer a Remove button for something not in the index.
             try:
                 reader = PdfReader(str(pdf))
+
+                # A document too large to embed inside this container must not be attempted.
+                #
+                # This runs on EVERY BOOT. A 1,000-page PDF splits into tens of thousands of chunks
+                # and every one is embedded — which on a 512 MB instance means the process is killed
+                # partway through, restarts, and tries the same document again. A crash loop from
+                # which the service never recovers, caused by one upload, with the only symptom
+                # being that the whole AI service is dead.
+                #
+                # Skipping is strictly better than dying: every other document stays searchable, and
+                # the log names the file so it can be removed.
+                if len(reader.pages) > _MAX_PAGES:
+                    log.error(
+                        "Skipping %s — %d pages exceeds the %d-page limit this instance can embed. "
+                        "The rest of the knowledge base is unaffected. Split the document or remove "
+                        "it; re-uploading the same file will be refused.",
+                        pdf.name, len(reader.pages), _MAX_PAGES)
+                    continue
+
                 page_docs = self._docs_from_reader(reader, pdf.name, manifest.get(pdf.name))
             except Exception as exc:  # noqa: BLE001 - any unreadable file, however it fails
                 log.error("Skipping %s — it could not be read (%s). The rest of the knowledge base "
@@ -559,6 +589,17 @@ class KnowledgeBase:
         with trace.step("Read the document", "pypdf") as s:
             reader = PdfReader(io.BytesIO(data))
             s["detail"] = f"{len(reader.pages)} page(s), {len(data) / 1024:.0f} kB"
+
+            # Refused here rather than accepted and skipped later. Telling somebody at upload time
+            # that a document is too large is a usable answer; silently indexing nothing and leaving
+            # them to wonder why it is never cited is not.
+            if len(reader.pages) > _MAX_PAGES:
+                raise ValueError(
+                    f"This document has {len(reader.pages)} pages, and this instance can index at "
+                    f"most {_MAX_PAGES}. Embedding one that size exhausts its memory and takes the "
+                    "whole AI service down — including for every other document. Split it into "
+                    "sections, or index only the relevant part."
+                )
 
         with trace.step("Split text into chunks",
                         "RecursiveCharacterTextSplitter (1000 chars, 150 overlap)") as s:

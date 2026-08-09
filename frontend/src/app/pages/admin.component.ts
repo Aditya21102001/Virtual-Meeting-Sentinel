@@ -127,7 +127,8 @@ import {
         @if (waking()) {
           <p class="waking" role="status">
             <span class="spinner" aria-hidden="true"></span>
-            Waking the AI service — it sleeps when idle and takes up to a minute to start.
+            Waking the AI service — it sleeps when idle and can take a few minutes to start on a
+            small instance. This resolves itself; you can leave the page.
             <span class="muted-inline">
               Retrying automatically ({{ wakeSeconds() }}s, attempt {{ wakeAttempt() }}).
             </span>
@@ -694,8 +695,26 @@ export class AdminComponent implements OnInit, OnDestroy {
     return `${m}m ${String(rest).padStart(2, '0')}s`;
   }
 
-  private static readonly WAKE_DELAYS_MS = [3000, 5000, 8000, 13000, 21000];
-  private static readonly MAX_WAKE_ATTEMPTS = 5;
+  /**
+   * Backoff between wake attempts, in milliseconds.
+   *
+   * <p>SIZED FROM WHAT THIS DEPLOYMENT ACTUALLY DOES, not from a guess. The backend on the same
+   * free tier takes ~235 seconds to start from cold; the AI service loads an embedding model and
+   * re-embeds every indexed document on boot, so it is in the same range.
+   *
+   * <p>The first version gave up after ~50 seconds and told the user the service "did not come
+   * back after about a minute". That was wrong: it had not failed, it was still starting.
+   * Declaring failure while something is working is worse than waiting — it sends somebody to read
+   * logs for a problem that does not exist.
+   *
+   * <p>Front-loaded so a warm service is noticed in seconds, then widening to 30s so a genuinely
+   * cold boot is not pestered while it loads a model into a small container.
+   */
+  private static readonly WAKE_DELAYS_MS = [
+    3000, 5000, 8000, 13000, 21000, 30000, 30000, 30000, 30000, 30000, 30000, 30000, 30000,
+  ];
+  /** Thirteen attempts across the delays above ≈ five minutes. */
+  private static readonly MAX_WAKE_ATTEMPTS = 13;
 
   constructor(
     private api: ApiService,
@@ -781,8 +800,8 @@ export class AdminComponent implements OnInit, OnDestroy {
     if (this.wakeAttempt() >= AdminComponent.MAX_WAKE_ATTEMPTS) {
       this.stopWaking();
       this.statusErr.set(
-        'The AI service did not come back after about a minute. It may be down rather than ' +
-          'asleep — check its logs, then use Retry.',
+        'The AI service has not responded in five minutes, so it is likely down rather than ' +
+          'merely asleep. Check its logs, then use Retry.',
       );
       return;
     }
