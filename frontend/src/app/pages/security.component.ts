@@ -191,7 +191,7 @@ export class SecurityComponent implements OnInit {
           : { otpChannel: 'email', otpCode: this.resetCode().trim(), newPassword: this.newPassword() },
       )
       .subscribe({
-        next: () => {
+        next: (r) => {
           this.pwdBusy.set(false);
           // Cleared on success: leaving a password sitting in a field on a shared screen is the
           // kind of small carelessness this page exists to discourage.
@@ -200,7 +200,12 @@ export class SecurityComponent implements OnInit {
           this.resetCode.set('');
           this.codeSent.set(false);
           this.demoCode.set(null);
-          this.pwdMsg.set('Password updated. Use it next time you sign in.');
+          // Name the account explicitly. "Password updated" alone is what let somebody set a
+          // password on a Google-created account (username generated from their display name) and
+          // then be told "invalid username or password" for it — the password was right, the
+          // username was not the one they were typing.
+          this.pwdMsg.set(
+            `Password updated. Sign in with the username "${r.username}".`);
         },
         error: (e) => {
           this.pwdBusy.set(false);

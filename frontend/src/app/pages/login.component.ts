@@ -129,9 +129,23 @@ import { AuthService } from '../services/auth.service';
       @if (mode() === 'setpwd') {
         <div class="card">
           <p class="muted" style="margin-top:0">
-            You are signed in. Most people arrive here because they forgot their password — set a
-            new one now and you can use it next time.
+            You are signed in@if (signedInAs()) { as <strong>{{ signedInAs() }}</strong>}. Most
+            people arrive here because they forgot their password — set a new one now and you can
+            use it next time.
           </p>
+          @if (signedInAs()) {
+            <!--
+              Naming the username is the point of this line, not decoration. A code is sent to an
+              EMAIL address and finds the account that owns it; sign-in is by USERNAME. For anyone
+              who arrived through Google those differ — the username was generated from their
+              display name — so they would set a password here and then be told "invalid username
+              or password" while typing something the account was never keyed by.
+            -->
+            <p class="hint" style="margin-top:-4px">
+              Sign in with the username <strong>{{ signedInAs() }}</strong> — or with your email
+              address, which also works.
+            </p>
+          }
           <label class="muted" style="display:block">New password
             <input type="password" autocomplete="new-password"
                    [ngModel]="newPassword()" (ngModelChange)="newPassword.set($event)"
@@ -163,6 +177,8 @@ import { AuthService } from '../services/auth.service';
 export class LoginComponent implements OnInit {
   readonly mode = signal<'login' | 'register' | 'mfa' | 'otp' | 'setpwd'>('login');
   readonly newPassword = signal('');
+  /** The account the code signed us in to — shown so the user knows what to sign in with. */
+  readonly signedInAs = signal('');
   readonly username = signal('');
   readonly email = signal('');
   readonly phone = signal('');
@@ -285,6 +301,7 @@ export class LoginComponent implements OnInit {
         // The token from this exchange is marked as verified-by-code, so setting a password needs
         // no old password and no second code. That window is short and the server enforces it.
         this.newPassword.set('');
+        this.signedInAs.set(this.auth.username() ?? '');
         this.mode.set('setpwd');
       },
       error: (e) => { this.busy.set(false); this.error.set(this.msg(e)); },
@@ -296,9 +313,10 @@ export class LoginComponent implements OnInit {
     if (this.newPassword().length < 8) return;
     this.busy.set(true); this.error.set('');
     this.auth.changePassword({ newPassword: this.newPassword() }).subscribe({
-      next: () => {
+      next: (r) => {
         this.busy.set(false);
         this.newPassword.set('');
+        if (r.username) this.signedInAs.set(r.username);
         this.router.navigateByUrl(this.dest());
       },
       error: (e) => { this.busy.set(false); this.error.set(this.msg(e)); },

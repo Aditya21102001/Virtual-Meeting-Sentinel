@@ -117,9 +117,11 @@ public class AuthController {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
                     "Sign in before changing your password.");
         }
-        auth.changePassword(me.getName(), req.currentPassword(), req.otpChannel(), req.otpCode(),
-                            req.newPassword());
-        return Map.of("changed", true);
+        String account = auth.changePassword(me.getName(), req.currentPassword(), req.otpChannel(),
+                                            req.otpCode(), req.newPassword());
+        // Echo the account so the client can tell the user which username the new password belongs
+        // to — see AuthService.changePassword for why that is not always obvious.
+        return Map.of("changed", true, "username", account);
     }
 
     @PostMapping("/refresh-session")

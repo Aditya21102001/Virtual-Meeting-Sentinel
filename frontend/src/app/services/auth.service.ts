@@ -376,8 +376,11 @@ export class AuthService {
     otpChannel?: 'email' | 'sms';
     otpCode?: string;
     newPassword: string;
-  }): Observable<{ changed: boolean }> {
-    return this.http.post<{ changed: boolean }>(
+    // The server echoes `username`: the account the password was actually set on. Recovery finds
+    // an account by email and sign-in finds one by username, so those can differ — see
+    // AuthService.changePassword. The UI names it so nobody is left guessing what to type.
+  }): Observable<{ changed: boolean; username: string }> {
+    return this.http.post<{ changed: boolean; username: string }>(
       `${this.base}/api/auth/change-password`,
       input,
       { headers: this.authHeaders() },

@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
+import java.util.Optional;
 import java.util.List;
 
 /**
@@ -126,8 +127,8 @@ public class AuthService {
      * there is no current password for them to supply.
      */
     @Transactional
-    public void changePassword(String username, String currentPassword,
-                               String otpChannel, String otpCode, String newPassword) {
+    public String changePassword(String username, String currentPassword,
+                                 String otpChannel, String otpCode, String newPassword) {
         if (newPassword == null || newPassword.length() < 8) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "A new password must be at least 8 characters.");
@@ -179,6 +180,13 @@ public class AuthService {
         user.setPasswordHash(encoder.encode(newPassword));
         users.save(user);
         log.info("Password changed for {} (verified by {}).", username, otpCode != null ? "one-time code" : "current password");
+        // Return the username the password was actually set on. Recovery finds an account by EMAIL
+        // and sign-in finds one by USERNAME, so the account just changed is not always the one the
+        // user believes they have — someone who also has a Google-created account shares an address
+        // between two records with different usernames. Naming it here lets the UI say which
+        // username to sign in with, instead of leaving them to guess and read "invalid username or
+        // password" for a password that is perfectly correct.
+        return user.getUsername();
     }
 
     /**
@@ -328,11 +336,37 @@ public class AuthService {
      * access token immediately. Otherwise return ONLY a short-lived MFA-challenge token plus the
      * list of factors they can use — no access is granted until stage 2 (verifyMfa) succeeds.
      */
+    /**
+     * Find an account for sign-in by username OR email address.
+     *
+     * <h3>Why both</h3>
+     * Registration takes a username and an email; one-time codes go to the email; a Google account
+     * gets a username GENERATED from its display name. So the identifier somebody remembers is
+     * usually their email, and the one the account is keyed by often is not — which surfaces as
+     * "invalid username or password" for a password that is perfectly correct.
+     *
+     * <p>Username first, deliberately. If a username and somebody else's email were ever the same
+     * string, the account whose username it is wins — the field is labelled "username", so that is
+     * the reading the user intended.
+     *
+     * <p>The null-password filter in the caller matters as much: a Google-created account has no
+     * password hash, and {@code encoder.matches} against null throws rather than returning false.
+     */
+    private Optional<AppUser> findForSignIn(String identifier) {
+        if (identifier == null || identifier.isBlank()) return Optional.empty();
+        String cleaned = identifier.trim();
+        return users.findByUsername(cleaned)
+                .or(() -> cleaned.contains("@")
+                        ? users.findByEmail(Contacts.email(cleaned))
+                        : Optional.empty());
+    }
+
     public LoginResult login(LoginRequest req) {
         // BCrypt.matches re-hashes the input with the stored salt and compares — constant-time,
         // never decrypts. Same generic error whether the user or the password is wrong (avoids
         // leaking which usernames exist).
-        AppUser user = users.findByUsername(req.username())
+        AppUser user = findForSignIn(req.username())
+                .filter(u -> u.getPasswordHash() != null)
                 .filter(u -> encoder.matches(req.password(), u.getPasswordHash()))
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.UNAUTHORIZED, "Invalid username or password."));
