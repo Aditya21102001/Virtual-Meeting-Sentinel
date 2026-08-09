@@ -44,6 +44,23 @@ import { AuthService } from '../services/auth.service';
               {{ mode() === 'register' ? 'Have an account? Sign in' : 'New moderator? Register' }}
             </a>
           </div>
+
+          <!--
+            THE RECOVERY PATH, called by the name people look for.
+
+            There is no password-reset flow, and there does not need to be: an email address is
+            required at registration, and a one-time code to it signs you in without the password.
+            What was missing was the signpost — somebody who has forgotten their password looks for
+            "forgot password", not for "sign in with a one-time code", and never connects the two.
+
+            So this is a label over a capability that already existed, not a new mechanism.
+          -->
+          @if (mode() === 'login') {
+            <p class="hint" style="margin-top:12px">
+              <a style="cursor:pointer" (click)="startOtp('email')">Forgot your password?</a>
+              — sign in with a one-time code sent to your email instead.
+            </p>
+          }
         </div>
 
         <!-- alternative sign-in methods -->

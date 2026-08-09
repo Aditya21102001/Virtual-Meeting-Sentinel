@@ -226,6 +226,21 @@ otp:
   sms:
     provider: ${OTP_SMS_PROVIDER:}
     api-key: ${OTP_SMS_API_KEY:}
+  # Real EMAIL delivery — the one that matters. Registration requires an email address and there is
+  # no password-reset flow, so a one-time code to that address IS how somebody recovers an account.
+  #   OTP_EMAIL_PROVIDER=brevo
+  #   OTP_EMAIL_API_KEY=<the xkeysib-... key from Brevo: SMTP & API -> API Keys>
+  #   OTP_EMAIL_FROM=<an address Brevo has VERIFIED; sends are rejected without it>
+  # Brevo is 300 emails/day free, permanently, no card, over HTTP rather than SMTP — so no mail
+  # dependency and no outbound SMTP port for the host to block.
+  #
+  # Set OTP_DEMO_MODE=false only AFTER a real code arrives in an inbox. Until then demo mode returns
+  # the code in the API response, which is an account-takeover hole in production.
+  email:
+    provider: ${OTP_EMAIL_PROVIDER:}
+    api-key: ${OTP_EMAIL_API_KEY:}
+    from: ${OTP_EMAIL_FROM:}
+    from-name: ${OTP_EMAIL_FROM_NAME:VIRTUAL MEETING Sentinel}
 
 # WebAuthn (passkeys). rp-id + origins MUST match the FRONTEND domain (where the browser runs
 # the ceremony). Defaults are for local dev; set env vars in prod to the Vercel domain, e.g.
