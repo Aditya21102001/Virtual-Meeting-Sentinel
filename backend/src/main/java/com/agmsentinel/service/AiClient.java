@@ -11,6 +11,17 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
+import java.util.function.Supplier;
+import java.util.concurrent.TimeoutException;
+import java.net.UnknownHostException;
+import java.net.ConnectException;
+import java.io.IOException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
+import org.slf4j.LoggerFactory;
+import org.slf4j.Logger;
 
 import java.time.Duration;
 import java.util.List;
@@ -21,6 +32,8 @@ import java.util.UUID;
 /** Thin HTTP client over the Python AI service (embedding, clustering, RAG). */
 @Component
 public class AiClient {
+
+    private static final Logger log = LoggerFactory.getLogger(AiClient.class);
 
     private final WebClient web;
 
@@ -67,12 +80,12 @@ public class AiClient {
         // Map.of rejects a null value outright.
         body.put("meeting_id", meetingId == null ? null : meetingId.toString());
 
-        return web.post().uri("/ingest")
+        return await("ingest a question", () -> web.post().uri("/ingest")
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(IngestResult.class)
                 .timeout(Duration.ofSeconds(30))   // generous: covers free-tier cold starts
-                .block();
+                .block());
     }
 
     public DraftResult draft(String clusterId, String representativeQuestion) {
@@ -92,12 +105,12 @@ public class AiClient {
         body.put("representative_question", representativeQuestion);
         body.put("meeting_id", meetingId == null ? null : meetingId.toString());
 
-        return web.post().uri("/draft")
+        return await("draft an answer", () -> web.post().uri("/draft")
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(DraftResult.class)
                 .timeout(Duration.ofSeconds(60))
-                .block();
+                .block());
     }
 
     /** GenAI assistant: RAG-grounded answer to a shareholder's free-form message. */
@@ -111,12 +124,12 @@ public class AiClient {
         body.put("message", message);
         body.put("meeting_id", meetingId == null ? null : meetingId.toString());
 
-        return web.post().uri("/chat")
+        return await("ask the assistant", () -> web.post().uri("/chat")
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(AiChatResult.class)
                 .timeout(Duration.ofSeconds(60))
-                .block();
+                .block());
     }
 
     /** Forward an uploaded annual-report PDF to the AI service for runtime RAG indexing. */
@@ -146,7 +159,7 @@ public class AiClient {
         // empty string would be a meeting id that matches nothing.
         if (meetingId != null) builder.part("meeting_id", meetingId.toString());
 
-        return web.post().uri("/knowledge/upload")
+        return await("index a document", () -> web.post().uri("/knowledge/upload")
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .body(BodyInserters.fromMultipartData(builder.build()))
                 .retrieve()
@@ -158,7 +171,7 @@ public class AiClient {
                 // anyone watching it. The UI polls the run's own progress and no longer depends on
                 // this response arriving.
                 .timeout(Duration.ofMinutes(10))
-                .block();
+                .block());
     }
 
     private Map<String, Object> removalBody(String filename, UUID meetingId) {
@@ -170,11 +183,11 @@ public class AiClient {
 
     /** Fetch the raw bytes of an indexed source PDF (proxied to the browser for citation links). */
     public byte[] fetchKnowledgeFile(String filename) {
-        return web.get().uri("/knowledge/files/{name}", filename)
+        return await("fetch a source file", () -> web.get().uri("/knowledge/files/{name}", filename)
                 .retrieve()
                 .bodyToMono(byte[].class)
                 .timeout(Duration.ofSeconds(30))
-                .block();
+                .block());
     }
 
     /**
@@ -205,12 +218,12 @@ public class AiClient {
         body.put("vtt", webVtt);
         body.put("meeting_id", meetingId == null ? null : meetingId.toString());
 
-        return web.post().uri("/knowledge/transcript")
+        return await("index a transcript", () -> web.post().uri("/knowledge/transcript")
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(Map.class)
                 .timeout(Duration.ofSeconds(120))   // embedding a long transcript takes a moment
-                .block();
+                .block());
     }
 
     /**
@@ -232,13 +245,13 @@ public class AiClient {
             }
         });
 
-        Map<String, Object> body = web.post().uri("/transcribe")
+        Map<String, Object> body = await("transcribe audio", () -> web.post().uri("/transcribe")
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .body(BodyInserters.fromMultipartData(builder.build()))
                 .retrieve()
                 .bodyToMono(Map.class)
                 .timeout(Duration.ofMinutes(10))
-                .block();
+                .block());
 
         Object vtt = body == null ? null : body.get("vtt");
         return vtt instanceof String text && !text.isBlank() ? text : null;
@@ -264,14 +277,14 @@ public class AiClient {
         body.put("k", k);
         body.put("meeting_id", meetingId == null ? null : meetingId.toString());
 
-        return web.post().uri("/search")
+        return await("semantic search", () -> web.post().uri("/search")
                 .bodyValue(body)
                 .retrieve()
                 .bodyToFlux(Map.class)
                 .collectList()
                 .map(list -> (List<Map<String, Object>>) (List<?>) list)
                 .timeout(Duration.ofSeconds(20))
-                .block();
+                .block());
     }
 
     /**
@@ -285,11 +298,11 @@ public class AiClient {
      * Setup page — and the failure surfaced as "is the AI service awake?" with no way to wait.
      */
     public Map<String, Object> knowledgeStatus() {
-        return web.get().uri("/knowledge/status")
+        return await("read the knowledge-base status", () -> web.get().uri("/knowledge/status")
                 .retrieve()
                 .bodyToMono(Map.class)
                 .timeout(Duration.ofSeconds(60))
-                .block();
+                .block());
     }
 
     /**
@@ -315,12 +328,12 @@ public class AiClient {
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> removeKnowledgeSource(String filename, UUID meetingId) {
-        return web.post().uri("/knowledge/remove")
+        return await("remove a document", () -> web.post().uri("/knowledge/remove")
                 .bodyValue(removalBody(filename, meetingId))
                 .retrieve()
                 .bodyToMono(Map.class)
                 .timeout(Duration.ofSeconds(120))   // the whole index is re-embedded from disk
-                .block();
+                .block());
     }
 
     /** Every meeting's topics, merged and re-ranked. The unscoped board. */
@@ -337,7 +350,7 @@ public class AiClient {
      * meeting's.
      */
     public List<ClusterView> clusters(int limit, UUID meetingId) {
-        return web.get().uri(uri -> {
+        return await("load the board", () -> web.get().uri(uri -> {
                     uri.path("/clusters").queryParam("limit", limit);
                     if (meetingId != null) uri.queryParam("meeting_id", meetingId.toString());
                     return uri.build();
@@ -346,7 +359,7 @@ public class AiClient {
                 .bodyToFlux(ClusterView.class)
                 .collectList()
                 .timeout(Duration.ofSeconds(30))
-                .block();
+                .block());
     }
 
     /**
@@ -363,11 +376,115 @@ public class AiClient {
     public void retainMeeting(UUID meetingId) {
         Map<String, Object> body = new HashMap<>();
         body.put("meeting_id", meetingId == null ? null : meetingId.toString());
-        web.post().uri("/meetings/retain")
+        awaitQuietly("reset clustering state", () -> web.post().uri("/meetings/retain")
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(Map.class)
                 .timeout(Duration.ofSeconds(20))
-                .block();
+                .block());
+    }
+
+    // ---- failure handling ---------------------------------------------------
+
+    /**
+     * Run one call to the AI service, turning a failure to REACH it into an answer somebody can act
+     * on.
+     *
+     * <h3>Why this exists</h3>
+     * Every method here used to end in a bare {@code .block()}. When the AI service was asleep,
+     * crashed or simply unreachable, the resulting exception reached no handler at all — the SPA got
+     * Spring's default error page, a bare 500 with no {@code message} field, and, worse, <b>no log
+     * line anywhere</b>. An outage looked exactly like a bug and left nothing behind to diagnose it
+     * with.
+     *
+     * <h3>What is deliberately NOT caught</h3>
+     * {@link WebClientResponseException} — the AI service answered, and said no. That is a result,
+     * not a transport failure, and it carries a reason worth showing: "this document has 1167 pages
+     * and this instance can index at most 400", or "that document belongs to another meeting".
+     * {@code AdminController} catches these by status and translates them, so swallowing them here
+     * would silently break that. It is rethrown untouched.
+     *
+     * <h3>What IS caught</h3>
+     * The case where no answer arrived: connection refused, unknown host, or the timeout expiring.
+     * Those become 503 rather than 500 — the request was fine and the dependency was not, and a 503
+     * says retrying is a reasonable thing to do.
+     *
+     * @param operation short description of the call, for the log line and the message
+     * @param call      the blocking invocation, deferred so this method can wrap its failures
+     */
+    private <T> T await(String operation, Supplier<T> call) {
+        try {
+            return call.get();
+        } catch (WebClientResponseException answered) {
+            // The service replied with an error status. Let the caller decide what it means.
+            throw answered;
+        } catch (RuntimeException failed) {
+            if (timedOut(failed)) {
+                // Distinguished from "unreachable" on purpose: waiting longer may genuinely help
+                // here, and on a free-tier host the first request after an idle period often does
+                // time out while the container starts and the embedding model loads.
+                log.warn("AI service timed out trying to {}.", operation);
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "The AI service did not respond in time while trying to " + operation
+                        + ". It may still be starting up — try again in a minute.");
+            }
+            if (unreachable(failed)) {
+                // Logged with the cause: "connection refused" and "unknown host" are different
+                // operator problems — a crashed service versus a wrong AI_SERVICE_URL — and the
+                // message is the only thing that tells them apart.
+                log.warn("AI service unreachable trying to {}: {}", operation, rootMessage(failed));
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "The AI service is not available right now, so we could not " + operation
+                        + ". It may be restarting — try again shortly.");
+            }
+            // Anything else is a genuine fault in this application rather than an outage. Logged at
+            // ERROR with the stack trace and rethrown unchanged, not disguised as a dependency
+            // problem — mislabelling a bug as an outage is how a bug survives.
+            log.error("Unexpected failure trying to {} via the AI service.", operation, failed);
+            throw failed;
+        }
+    }
+
+    /**
+     * Run a call whose failure genuinely does not matter, logging instead of throwing.
+     *
+     * <p>Only for best-effort housekeeping: losing it must leave the application correct, merely
+     * less tidy. See {@link #retainMeeting}, where refusing to activate a meeting because a cache
+     * could not be cleared would be far worse than the stale cache.
+     */
+    private void awaitQuietly(String operation, Supplier<?> call) {
+        try {
+            call.get();
+        } catch (RuntimeException failed) {
+            log.warn("Could not {} (best effort, continuing): {}", operation, rootMessage(failed));
+        }
+    }
+
+    /** Whether the timeout operator fired. Reactor wraps it, so the whole cause chain is walked. */
+    private static boolean timedOut(Throwable t) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (c instanceof TimeoutException) return true;
+            if (c.getCause() == c) break;   // defensive: a self-referencing cause would not end
+        }
+        return false;
+    }
+
+    /** Whether the request never reached the service (refused, unknown host, socket closed). */
+    private static boolean unreachable(Throwable t) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (c instanceof WebClientRequestException
+                    || c instanceof ConnectException
+                    || c instanceof UnknownHostException
+                    || c instanceof IOException) return true;
+            if (c.getCause() == c) break;
+        }
+        return false;
+    }
+
+    /** The innermost message — the one that actually says what went wrong. */
+    private static String rootMessage(Throwable t) {
+        Throwable c = t;
+        while (c.getCause() != null && c.getCause() != c) c = c.getCause();
+        return c.toString();
     }
 }
