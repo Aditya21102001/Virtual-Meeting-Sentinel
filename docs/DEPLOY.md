@@ -182,3 +182,40 @@ Now the services stay awake during demos and interviews.
 
 Everything here is swappable to paid tiers (or Azure OpenAI) with config changes only —
 which is itself a talking point: **the design didn't change, only the deployment target.**
+
+---
+
+## Controlling how much gets logged
+
+Both services take a single environment variable that decides log volume. Nothing in the
+code branches on it — every class logs unconditionally through its logging framework, and
+the threshold decides what actually reaches the output. Turning logging down therefore costs
+nothing at runtime, and turning it up to diagnose something needs no code change and no
+rebuild, only a restart.
+
+**Backend** (Spring Boot):
+
+| Key             | Value                                                                    |
+| --------------- | ------------------------------------------------------------------------ |
+| `APP_LOG_LEVEL` | `DEBUG` \| `INFO` (default) \| `WARN` \| `OFF`                           |
+
+Only the `com.agmsentinel` package is bound to it, so raising it to `DEBUG` shows this
+application's own reasoning without burying it under Spring, Hibernate and Netty chatter.
+
+**AI service** (FastAPI):
+
+| Key            | Value                                                       |
+| -------------- | ----------------------------------------------------------- |
+| `AI_LOG_LEVEL` | `DEBUG` \| `INFO` (default) \| `WARNING` \| `ERROR`          |
+
+### What you lose by turning it down
+
+`WARN`/`WARNING` keeps problems and drops the **audit trail**, which is logged at `INFO`:
+role and duty changes (who granted whom which authority, and what it replaced), password
+changes, meeting activation, passkey registration, and feature-gate refusals. On a system
+that holds a governance record, that trail is usually the thing you most want to still have
+after something goes wrong — so prefer `INFO` in production and reach for `WARN` only if log
+volume is genuinely costing you.
+
+`DEBUG` adds expired-token and per-request detail. Useful while chasing a specific problem,
+poor as a steady state: free-tier hosts charge for log volume, and the signal drowns.
