@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 import logging
+import os
 
 from starlette.concurrency import run_in_threadpool
 
@@ -34,14 +35,44 @@ from .schemas import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Logging
+#
+# basicConfig here is load-bearing, not boilerplate. Under uvicorn the root logger has no
+# handler of its own, so module loggers created with getLogger(__name__) emit NOTHING —
+# every log call in this service was silently discarded. That is how a crash loop ran for
+# hours showing only the process dying, with no line saying which stage it died in.
+#
+# One env var decides the volume, matching APP_LOG_LEVEL on the backend:
+#   AI_LOG_LEVEL=DEBUG   per-chunk indexing and retrieval detail; noisy, for diagnosis
+#   AI_LOG_LEVEL=INFO    the default: startup stages, indexing runs, failures
+#   AI_LOG_LEVEL=WARNING problems only
+#
+# force=True because uvicorn may already have configured the root logger by this point;
+# without it basicConfig silently does nothing and we are back to no output at all.
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=os.getenv("AI_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-5s %(name)s | %(message)s",
+    force=True,
+)
+
 log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Warm the heavy singletons at startup so the first request isn't slow.
+    #
+    # Logged stage by stage because these two calls are where startup actually fails: loading
+    # the embedding model needs several hundred MB, and building the knowledge index reads
+    # every stored PDF. When this service died on boot, the only way to tell which of the two
+    # was responsible was to guess — these lines make the last one printed the answer.
+    log.info("Starting up: loading the embedding model…")
     get_embeddings()
+    log.info("Embedding model ready. Building the knowledge index…")
     get_kb()
+    log.info("Knowledge index ready — the service can now answer requests.")
     # In Kafka mode, start the background consumer that replays the question log to rebuild
     # clusters, then keeps ingesting live (see kafka_stream.py). No-op in inproc/redis mode.
     worker = None

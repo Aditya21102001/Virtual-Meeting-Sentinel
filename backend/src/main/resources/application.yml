@@ -281,3 +281,30 @@ management:
     web:
       exposure:
         include: health
+
+# ---------------------------------------------------------------------------
+# Logging
+#
+# One switch, set as an environment variable, decides how much this application
+# writes. Nothing in the code checks it: every class logs unconditionally through
+# SLF4J and this threshold decides what actually reaches the output, which is why
+# turning logging down costs nothing at runtime and turning it up needs no redeploy
+# of different code.
+#
+#   APP_LOG_LEVEL=DEBUG   everything, including expired-token and per-request detail.
+#                         Use while diagnosing something, not as a steady state — it
+#                         is noisy and free-tier hosts charge for log volume.
+#   APP_LOG_LEVEL=INFO    the default. Audit-worthy events only: role changes, meeting
+#                         activation, password changes, feature-gate refusals, AI-service
+#                         outages.
+#   APP_LOG_LEVEL=WARN    problems only. Quiet, but you lose the audit trail — the role
+#                         and duty changes in UserController are INFO.
+#   APP_LOG_LEVEL=OFF     silence from this application. Framework logs still appear.
+#
+# Only com.agmsentinel is bound to it. Spring, Hibernate and Netty keep their own
+# defaults, so raising this to DEBUG shows this application's reasoning without
+# burying it under framework chatter.
+# ---------------------------------------------------------------------------
+logging:
+  level:
+    com.agmsentinel: ${APP_LOG_LEVEL:INFO}

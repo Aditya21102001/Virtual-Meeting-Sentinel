@@ -11,6 +11,8 @@ import com.yubico.webauthn.exception.AssertionFailedException;
 import com.yubico.webauthn.exception.RegistrationFailedException;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -34,6 +36,15 @@ import java.util.stream.Collectors;
  */
 @Service
 public class WebAuthnService {
+
+    /**
+     * Passkey ceremonies are logged as security events.
+     *
+     * <p>Registration adds a new way into an account and failed assertion is what an attack looks
+     * like from here, so both are recorded. What is never recorded is the credential ID or the
+     * public key — those identify the authenticator, and a log file is the wrong place for them.
+     */
+    private static final Logger log = LoggerFactory.getLogger(WebAuthnService.class);
 
     private final AppUserRepository users;
     private final WebAuthnCredentialRepository creds;
@@ -116,7 +127,13 @@ public class WebAuthnService {
                     result.getKeyId().getId().getBase64Url(),
                     result.getPublicKeyCose().getBase64Url(),
                     result.getSignatureCount()));
+            // A new passkey is a new way into the account — worth recording for the same reason a
+            // role change is. The credential ID is deliberately not logged: it identifies the
+            // authenticator, and a log file is not the place for it.
+            log.info("Passkey registered for {} (now has {} credential(s)).",
+                     username, creds.countByUser(user));
         } catch (RegistrationFailedException | java.io.IOException e) {
+            log.warn("Passkey registration failed for {}: {}", username, e.getMessage());
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Passkey registration failed: " + e.getMessage());
         }
     }
@@ -149,10 +166,17 @@ public class WebAuthnService {
                 // Persist the new signature counter for clone detection.
                 creds.findByCredentialId(result.getCredential().getCredentialId().getBase64Url())
                         .ifPresent(c -> { c.setSignCount(result.getSignatureCount()); creds.save(c); });
+                log.debug("Passkey assertion succeeded for {}.", username);
                 return true;
             }
+            // The library verified the signature and said no. Distinct from the exception below and
+            // worth its own line: this is the shape a cloned or tampered authenticator takes.
+            log.warn("Passkey assertion rejected for {} — the signature did not verify.", username);
             return false;
         } catch (AssertionFailedException | java.io.IOException e) {
+            // Previously returned false in silence. A failed passkey login is precisely the event
+            // somebody investigating an account would look for, and there was nothing to find.
+            log.warn("Passkey assertion failed for {}: {}", username, e.getMessage());
             return false;
         }
     }

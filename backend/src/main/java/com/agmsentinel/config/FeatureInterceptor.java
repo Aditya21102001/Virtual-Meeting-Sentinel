@@ -4,12 +4,15 @@ import com.agmsentinel.security.RequiresFeature;
 import com.agmsentinel.service.FeatureService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Enforces {@link RequiresFeature} on every annotated route.
@@ -31,6 +34,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  */
 @Component
 public class FeatureInterceptor implements HandlerInterceptor, WebMvcConfigurer {
+
+    private static final Logger log = LoggerFactory.getLogger(FeatureInterceptor.class);
 
     private final FeatureService features;
 
@@ -62,8 +67,22 @@ public class FeatureInterceptor implements HandlerInterceptor, WebMvcConfigurer 
         // require() throws a ResponseStatusException, which the standard handling turns into 404
         // (feature disabled — deliberately not 403, since "you may not" confirms it exists) or 403
         // (enabled, but not for this caller's role).
-        for (RequiresFeature required : onClass) features.require(required.value());
-        for (RequiresFeature required : onMethod) features.require(required.value());
+        //
+        // Logged on the way past, because a refusal here is otherwise invisible. The symptom an
+        // operator reports is "the page is empty" or "it says not found", and without this line
+        // there is nothing to distinguish a switched-off feature from a broken route — which sends
+        // somebody debugging code that is working exactly as configured.
+        try {
+            for (RequiresFeature required : onClass) features.require(required.value());
+            for (RequiresFeature required : onMethod) features.require(required.value());
+        } catch (ResponseStatusException refused) {
+            // INFO, not WARN: this is the flag doing its job, not a fault. It names the feature and
+            // the route, which together answer "which switch do I turn back on?".
+            log.info("Feature gate refused {} {} ({}): {}",
+                     request.getMethod(), request.getRequestURI(),
+                     refused.getStatusCode(), refused.getReason());
+            throw refused;
+        }
         return true;
     }
 }
