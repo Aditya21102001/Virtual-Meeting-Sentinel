@@ -5,9 +5,13 @@ A WhatsApp‑style lounge for **registered members**: a directory of shareholder
 questions grounded in the company's annual report (reusing the existing RAG knowledge base).
 It also makes `ADMIN` / `MODERATOR` / `SHAREHOLDER` real, assignable roles.
 
-This feature is **purely additive** — nothing existing was removed. Public sign‑ups still
-default to `MODERATOR`, the anonymous attendee flow is unchanged, and the moderator board keeps
-streaming (the new WebSocket auth is lenient — see below).
+This feature is **purely additive** — nothing existing was removed. The anonymous attendee flow is
+unchanged, and the moderator board keeps streaming (the new WebSocket auth is lenient — see below).
+
+> **Corrected.** This paragraph used to say public sign‑ups default to `MODERATOR`. They did, and
+> that was a hole rather than a policy: `POST /api/auth/register` is public, so anyone who found it
+> could make themselves a moderator of a live meeting. New self‑registrations are `SHAREHOLDER`, and
+> a Google identity that has no account is refused outright unless `OAUTH_AUTO_PROVISION` is on.
 
 ---
 
@@ -45,9 +49,9 @@ principal — never a request‑body field — so a client cannot spoof another 
 | Role | Gets | How assigned |
 |---|---|---|
 | `ADMIN` | everything, incl. role management | promoted in `/members` |
-| `MODERATOR` | board, setup, members, Lounge | **default for new sign‑ups** |
-| `SHAREHOLDER` | the Lounge (chat + AI) | promoted in `/members` |
-| `ATTENDEE` | anonymous question submission | ephemeral token (no user row) |
+| `MODERATOR` | board, setup, members, Lounge | promoted in `/members` |
+| `SHAREHOLDER` | the Lounge (chat + AI), voting | **default for new sign‑ups**, or promoted in `/members` |
+| `ATTENDEE` | anonymous question submission and topic support — **nothing else** | ephemeral token (no user row) |
 
 `ADMIN`/`SHAREHOLDER` were previously unreachable; `UserController` (`/api/users/list-members`) + the
 `/members` screen now make them assignable. Roles are constants in `security/Roles.java`.
@@ -95,8 +99,9 @@ docker compose up --build       # Postgres + AI service + backend  (+ Kafka)
 cd frontend && npm install && npm start   # http://localhost:4200
 ```
 
-1. **Roles:** register two users (both `MODERATOR`). In `/members`, set user **B** to
-   `SHAREHOLDER`; re‑login as B → lands on `/chat`.
+1. **Roles:** register two users. Both are `SHAREHOLDER` now, which is already what this check
+   needs — sign in as **B** and it lands on `/chat`. To exercise the promotion path as well, sign
+   in as the seeded admin and set **A** to `MODERATOR` in `/members`.
 2. **Real‑time DM:** open two browsers (A and B, both logged in). Message B from A → B's thread
    updates instantly; the online dot shows; **"typing…"** appears while the other types; **✓✓**
    appears once the peer opens the thread.

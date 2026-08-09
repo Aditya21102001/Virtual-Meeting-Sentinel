@@ -219,3 +219,37 @@ volume is genuinely costing you.
 
 `DEBUG` adds expired-token and per-request detail. Useful while chasing a specific problem,
 poor as a steady state: free-tier hosts charge for log volume, and the signal drowns.
+
+---
+
+## Frontend hosting: why a deploy used to break open tabs
+
+Every page is loaded on demand and each build gives those files new hashed names. Three settings in
+`frontend/vercel.json` and `frontend/angular.json` make that safe; getting any of them wrong
+produces a menu that silently stops working after a deploy, with no error on screen.
+
+**1. The SPA rewrite must not swallow asset requests.** It was `/(.*)`, which matched everything
+including JavaScript. A rewrite applies only when no static file matches, so a browser asking for
+the *previous* build's chunk got `index.html` back, 200 OK, as `text/html`. The browser refused it —
+*"Expected a JavaScript-or-Wasm module script"* — Angular abandoned the navigation, and clicking
+Voting or Recordings did nothing whatsoever. The pattern now excludes any path with a file
+extension, so a missing chunk returns an honest 404.
+
+**2. `index.html` must never be cached.** It is the file that names every other file. Cached, a
+plain refresh reuses it, asks for the same missing chunks and fails identically — which is why only
+`Ctrl+Shift+R` recovered it. It is now `max-age=0, must-revalidate` (still cheap: unchanged content
+gets a 304), while hashed assets are `immutable` for a year, since a given filename's contents can
+never change.
+
+**3. The application recovers by itself anyway.** `AppComponent` watches for `NavigationError`,
+recognises a stale-chunk failure, and reloads once — recorded in `sessionStorage` so a genuinely
+broken deploy cannot cause an endless refresh loop.
+
+### Source maps
+
+Production builds emit source maps (`sourceMap` in `angular.json`), so a stack trace from a real
+user names the file and line rather than `main-VZRWARQA.js:4`. The trade is that readable source is
+published alongside the bundle. That is a deliberate choice for this application — there is no
+secret in the frontend, and the secrets that matter live on the server — but it is a choice, and
+worth revisiting for a codebase where it is not true. Set `"hidden": true` to keep the maps out of
+the browser while still producing them for an error tracker.

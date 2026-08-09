@@ -1,0 +1,150 @@
+@startuml flow-auth
+' Sign-in, recovery and Google — including the decisions that exist because the
+' obvious implementation was wrong. See AUTH_IMPLEMENTATION_PROMPT.md.
+'
+' Render:  plantuml docs/diagrams/flow-auth.puml
+
+title Flow — signing in, recovering a password, and Google
+
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #4A5568
+  LifeLineBorderColor #7C86A0
+  ParticipantBorderColor #7C86A0
+  ParticipantBackgroundColor #FDFDFD
+}
+
+actor User
+participant "Angular SPA" as SPA
+participant "AuthService" as API
+database "PostgreSQL" as DB
+participant "Brevo\n(HTTP API)" as Mail
+participant "Google" as Google
+
+== Password sign-in ==
+
+User -> SPA : identifier + password
+SPA -> API : POST /api/auth/login
+activate API
+API -> DB : findByUsername(identifier)
+alt not found and identifier contains "@"
+  API -> DB : findByEmail(normalised)
+  note right
+    Recovery mails a code to an **email** and
+    finds the account by it; sign-in finds
+    accounts by **username**. For anyone who
+    arrived through Google those differ — the
+    username is generated from their display
+    name — so without this fallback a user can
+    recover an account they cannot then sign
+    in to, and is told "invalid username or
+    password" for a password that is correct.
+  end note
+end
+API -> API : skip accounts with **no password hash**\n(a Google account has none;\nthe encoder throws on null)
+API -> API : BCrypt.matches
+
+alt MFA enrolled
+  API --> SPA : MFA_REQUIRED + challenge token (typ=mfa)
+  note right of API
+    The challenge token carries **no role** and is
+    rejected by JwtAuthFilter, so it can never act
+    as a session on its own.
+  end note
+  User -> SPA : PIN / TOTP / passkey
+  SPA -> API : POST /api/auth/verify-mfa
+  API --> SPA : full access token
+else no second factor
+  API --> SPA : full access token
+end
+deactivate API
+
+== Forgotten password ==
+
+User -> SPA : "Forgot your password?"
+SPA -> API : POST /api/auth/otp/request {email}
+activate API
+API -> DB : findByEmail
+API -> API : generate code, store hashed, 10-minute TTL
+
+alt demo mode ON
+  API --> SPA : the code, shown on screen
+else demo mode OFF
+  API -> Mail : POST /v3/smtp/email
+  alt 201 Created
+    Mail --> API : sent
+    API --> SPA : "check your email" — **no code in the response**
+  else delivery failed
+    Mail --> API : error
+    API -> API : delete the stored code
+    API --> SPA : **503**
+    note right of API
+      The bug this replaced: the code was hidden
+      only when delivery SUCCEEDED, so with no
+      provider configured it fell through and was
+      returned anyway — handing a working
+      credential to anyone able to trigger a
+      send failure.
+    end note
+  end
+end
+deactivate API
+
+User -> SPA : enters the code
+SPA -> API : POST /api/auth/otp/verify
+API --> SPA : token carrying **vbc** (verified by code)
+
+SPA -> User : "Set a password before continuing"
+note over SPA
+  Without this step, somebody who forgot their
+  password signs in by code forever and never
+  recovers the account — the one-time code
+  becomes a permanent workaround.
+end note
+
+User -> SPA : new password
+SPA -> API : POST /api/auth/change-password {newPassword}
+activate API
+API -> API : vbc present **and** issued < 15 min ago?
+note right
+  Bounded, and dropped on refresh. A tab left
+  open on a shared machine must not still be
+  able to rewrite the password tomorrow.
+end note
+API -> DB : save new BCrypt hash
+API --> SPA : {changed, **username**}
+deactivate API
+SPA --> User : "Sign in with the username X"
+
+== Google ==
+
+User -> SPA : "Continue with Google"
+SPA -> Google : OAuth2 authorisation
+Google --> API : callback with verified identity
+activate API
+API -> DB : findByEmail
+
+alt account exists
+  API --> SPA : token **with the role it already has**
+  note right of API
+    Google proves who somebody is. It does not
+    decide what they may do — the role is never
+    changed here.
+  end note
+else unknown identity
+  alt OAUTH_AUTO_PROVISION = false (default)
+    API --> SPA : redirect to /login?error=…
+    note right of API
+      Refused, and redirected back to the FRONTEND.
+      Letting it throw renders the backend's error
+      page on the backend's domain, which looks
+      like a crash and strands the user off-site.
+    end note
+  else auto-provision enabled
+    API -> DB : create with OAUTH_DEFAULT_ROLE (SHAREHOLDER)
+    API --> SPA : token
+  end
+end
+deactivate API
+
+@enduml

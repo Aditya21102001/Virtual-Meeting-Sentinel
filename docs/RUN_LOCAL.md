@@ -141,8 +141,19 @@ Wait for `Application bundle generation complete`, then open **http://localhost:
 Attendees stay anonymous, but moderators log in with a password and (optionally) a second
 factor. All factors run locally — no external service.
 
-1. Click **Moderator login** → **New moderator? Register** → create a username + password.
-   You're signed straight in (no MFA enrolled yet).
+1. Click **Login** → **Register** → create a username + password. You're signed straight in
+   (no MFA enrolled yet).
+
+   > **The first account you create is an `ADMIN`; every one after it is a `SHAREHOLDER`.**
+   >
+   > Registration is a public endpoint, so it grants the least privilege it can — it once created
+   > moderators, which meant anyone who found the page could take over a live meeting. The
+   > exception is a completely empty database: the first account has to be able to administer the
+   > system, or nobody can ever reach the Members screen to appoint anyone.
+   >
+   > So on a fresh local database, register **yourself first** and you are the admin. To try the
+   > member experience, register a second account — that one is a `SHAREHOLDER`, and you can
+   > promote it from **Members** while signed in as the first.
 2. Go to the **Security** tab and enroll any of:
    - **PIN** — a 4–8 digit code.
    - **Authenticator (OTP)** — click _Set up authenticator_, scan the QR in Google

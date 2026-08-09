@@ -1,0 +1,105 @@
+@startuml flow-question-to-answer
+' The central flow: a question arrives, joins a topic, gets an answer, reaches the room.
+'
+' Render:  plantuml docs/diagrams/flow-question-to-answer.puml
+
+title Flow — from a question asked to an answer published
+
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #4A5568
+  LifeLineBorderColor #7C86A0
+  ParticipantBorderColor #7C86A0
+  ParticipantBackgroundColor #FDFDFD
+}
+
+actor Attendee
+participant "Angular SPA" as SPA
+participant "Spring Boot" as API
+database "PostgreSQL" as DB
+participant "AI service\n(FastAPI)" as AI
+actor Moderator
+
+== Asking ==
+
+Attendee -> SPA : types a question
+SPA -> API : POST /api/questions/submit-question
+activate API
+
+API -> API : MeetingScope.activeMeetingId()
+note right
+  Stamped whether or not the MEETINGS
+  feature is on. A question filed
+  without a meeting id can never be
+  put back into the right partition
+  later.
+end note
+
+API -> AI : POST /ingest\n{text, attendeeId, weight, meeting_id}
+activate AI
+AI -> AI : embed (all-MiniLM-L6-v2, 384 dims)
+AI -> AI : nearest centroid **within this meeting**
+note right of AI
+  Partitioned by meeting. Without it a
+  question at this year's AGM folds into
+  a topic from last year's — not untidy,
+  simply a wrong answer, and invisible
+  until somebody reads the board.
+end note
+AI --> API : {cluster_id, isNew}
+deactivate AI
+
+API -> DB : INSERT question (cluster_id, meeting_id)
+API --> SPA : their own cluster assignment
+deactivate API
+SPA --> Attendee : "asked" / "merged with N others"
+
+note over SPA, Attendee
+  Returns immediately with **this** attendee's
+  result. The board catches up on its own.
+end note
+
+== Ranking ==
+
+API -> AI : GET /clusters?meeting_id=…
+AI --> API : topics ranked by weight and count
+API -> SPA : board push (WebSocket)\nfallback poll every 45s — SILENT, no global loader
+
+== Answering ==
+
+Moderator -> SPA : picks a topic, asks for a draft
+SPA -> API : POST /api/clusters/draft-answer
+activate API
+API -> AI : POST /draft\n{cluster_id, question, meeting_id}
+activate AI
+AI -> AI : retrieve from FAISS,\n**filtered to this meeting + shared docs**
+AI -> AI : generate, grounded, with citations
+AI --> API : {answer, citations}
+deactivate AI
+API -> DB : UPSERT cluster_draft (published = false)
+API --> SPA : draft + citations
+deactivate API
+
+Moderator -> SPA : edits, then publishes
+SPA -> API : POST /api/room/publish-answer
+API -> DB : cluster_draft.published = true
+API -> SPA : push to every attendee board
+
+SPA --> Attendee : the answer appears,\nwith the documents it came from
+
+== If the AI service is down ==
+
+SPA -> API : POST /api/chat/semantic-search
+API -> AI : POST /search
+AI --> API : ✗ connection refused
+API --> SPA : **503** "The AI service is not available\nright now… try again shortly."
+note over API
+  Not a bare 500. Every AiClient call used
+  to end in .block() with no handler and no
+  logger, so an outage reached the SPA as
+  Spring's default error page — no message
+  to show, and no log line to diagnose it
+  from. See AiClient.await().
+end note
+
+@enduml

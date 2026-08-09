@@ -194,10 +194,24 @@ from config. The RAG chain never imports a vendor SDK — swapping providers is 
 ### 4.4 Authentication & MFA (a big topic here)
 
 **Q: Walk me through your authentication.**
-A: Attendees are anonymous (a light JWT). Moderators register (username/email/mobile/password,
-BCrypt-hashed). Login is **staged**: a correct password returns either a full access token (no
-MFA enrolled) or a short-lived **MFA-challenge token**. The challenge is exchanged for a full
-token only after a valid second factor.
+A: Attendees are anonymous (a light JWT). Members register with a username, email and password
+(BCrypt-hashed) and are created as `SHAREHOLDER` — the least privileged role, because registration
+is a public endpoint. Moderator and admin are granted by someone who already holds them.
+
+Sign-in accepts **either the username or the email address**. That is not politeness: recovery
+mails a one-time code to an *email* and finds the account by it, while sign-in finds accounts by
+*username*, and for anyone who arrived through Google those differ — the username is generated from
+their display name. Without it, a user could recover an account they then could not sign in to.
+
+Login is **staged**: a correct password returns either a full access token (no MFA enrolled) or a
+short-lived **MFA-challenge token**. The challenge is exchanged for a full token only after a valid
+second factor, and the challenge token is rejected by the authentication filter so it can never act
+as a session on its own.
+
+Forgotten passwords are recovered with an emailed one-time code. The session that code creates
+carries a `vbc` claim, which permits setting a new password without the old one — honoured only
+within fifteen minutes of issue and dropped on refresh, so a tab left open cannot rewrite the
+password later.
 
 **Q: Which MFA factors did you implement?**
 A: Four: **PIN** (hashed), **TOTP/OTP** via authenticator apps (RFC 6238, QR enrollment),

@@ -1,0 +1,298 @@
+@startuml class-diagram
+' Virtual Meeting Sentinel — domain model and the services that own it.
+'
+' Scope: the AGM core. The video module is a large subsystem in its own right and is shown
+' collapsed here; expanding it would double the size of this diagram and halve its usefulness.
+' See VIDEO_LIBRARY.md for that side.
+'
+' Render:  plantuml docs/diagrams/class-diagram.puml
+'   or paste into https://www.plantuml.com/plantuml
+
+title Virtual Meeting Sentinel — class diagram (AGM core)
+
+skinparam shadowing false
+skinparam linetype ortho
+skinparam class {
+  BackgroundColor #FDFDFD
+  BorderColor #7C86A0
+  ArrowColor #4A5568
+}
+skinparam package {
+  BackgroundColor #F7F8FA
+  BorderColor #C3CAD6
+}
+hide empty members
+
+package "Identity" {
+  class AppUser {
+    UUID id
+    String username
+    String email
+    String phone
+    String passwordHash
+    --
+    String role
+    Set<String> extraRoles
+    --
+    String pinHash
+    String totpSecret
+    boolean totpEnabled
+    Instant createdAt
+  }
+  note right of AppUser
+    **role** is the primary role — exactly one of
+    ADMIN / MODERATOR / SHAREHOLDER / ATTENDEE.
+    **extraRoles** are duties granted on top
+    (MEETING_MANAGER, USER_MANAGER), any number,
+    because they are orthogonal to being a
+    moderator or a shareholder.
+
+    passwordHash is nullable: an account created
+    through Google has never had one.
+  end note
+
+  class WebAuthnCredential {
+    UUID id
+    String credentialId
+    String publicKeyCose
+    long signCount
+  }
+  AppUser "1" *-- "0..*" WebAuthnCredential : passkeys
+}
+
+package "The meeting" {
+  class Meeting {
+    UUID id
+    String title
+    String description
+    Instant scheduledAt
+    MeetingStatus status
+    double quorumThresholdPercent
+    Instant activatedAt
+    Instant closedAt
+  }
+  note right of Meeting
+    **At most one ACTIVE meeting**, enforced by a
+    partial unique index rather than by application
+    code — two moderators activating at once is a
+    race the database can settle and the service
+    cannot.
+
+    Everything else scopes to whichever meeting is
+    active: see MeetingScope.
+  end note
+
+  enum MeetingStatus {
+    DRAFT
+    ACTIVE
+    CLOSED
+  }
+
+  class MeetingMember {
+    UUID id
+    UUID meetingId
+    String username
+    String roleInMeeting
+    int votingWeight
+    String addedBy
+  }
+  note bottom of MeetingMember
+    The register of who may vote and for how much.
+    **votingWeight lives here, not on AppUser** — a
+    holding is a fact about one meeting, and last
+    year's shareholding is not this year's.
+  end note
+
+  Meeting "1" *-- "0..*" MeetingMember
+  Meeting -- MeetingStatus
+  MeetingMember "0..*" -- "1" AppUser : username
+}
+
+package "Questions and topics" {
+  class Question {
+    UUID id
+    String text
+    String attendeeId
+    float weight
+    UUID clusterId
+    UUID meetingId
+    Instant createdAt
+  }
+  note right of Question
+    **clusterId comes from the AI service**, which
+    embeds the text and assigns it to the nearest
+    centroid within the same meeting.
+
+    meetingId is stamped unconditionally, whether or
+    not the MEETINGS feature is on — partitioning
+    that followed the flag would leave everything
+    ingested with it off in the wrong partition the
+    moment it was switched on.
+  end note
+
+  class ClusterDraft {
+    UUID clusterId
+    UUID meetingId
+    String draftAnswer
+    String citations
+    boolean published
+    String title
+    String tags
+  }
+
+  class ClusterMerge {
+    UUID fromClusterId
+    UUID intoClusterId
+  }
+  note bottom of ClusterMerge
+    A durable redirect. The AI service keeps centroids
+    in memory and would happily recreate a cluster that
+    was merged away, so the merge has to survive here
+    rather than there. Followed with a cycle guard and
+    a depth limit — see ClusterCurationService.
+  end note
+
+  class ClusterUpvote {
+    UUID clusterId
+    String voterId
+  }
+
+  Question "0..*" --> "0..1" ClusterDraft : clusterId
+  ClusterDraft "1" -- "0..*" ClusterUpvote
+  Meeting "1" *-- "0..*" Question
+  Meeting "1" *-- "0..*" ClusterDraft
+}
+
+package "Voting" {
+  class Resolution {
+    UUID id
+    UUID meetingId
+    int seq
+    String title
+    String text
+    ResolutionType type
+    ResolutionStatus status
+    boolean liveResultsVisible
+    Instant openedAt
+    Instant closedAt
+  }
+
+  enum ResolutionType {
+    ORDINARY
+    SPECIAL
+    --
+    carried(for, against)
+  }
+  note right of ResolutionType
+    The majority rule lives on the enum, in integer
+    arithmetic, so a percentage never rounds a vote
+    the wrong way:
+      ORDINARY : for > against
+      SPECIAL  : for > 0 && for*4 >= (for+against)*3
+    The positive guard is load-bearing — without it
+    0 >= 0 reports an unvoted motion as carried.
+  end note
+
+  enum ResolutionStatus {
+    DRAFT
+    OPEN
+    CLOSED
+  }
+
+  class Vote {
+    UUID id
+    UUID resolutionId
+    UUID meetingId
+    String username
+    VoteChoice choice
+    int weight
+    Instant castAt
+  }
+  note bottom of Vote
+    **weight is copied in at the moment of casting**,
+    not read back from MeetingMember at tally time.
+    A holding corrected mid-meeting must not silently
+    restate votes already cast.
+
+    One vote per member per resolution, enforced by a
+    unique constraint.
+  end note
+
+  enum VoteChoice {
+    FOR
+    AGAINST
+    ABSTAIN
+  }
+
+  Meeting "1" *-- "0..*" Resolution
+  Resolution "1" *-- "0..*" Vote
+  Resolution -- ResolutionType
+  Resolution -- ResolutionStatus
+  Vote -- VoteChoice
+}
+
+package "Access control" {
+  class FeatureFlag {
+    String key
+    boolean enabled
+    Set<String> allowedRoles
+    String updatedBy
+  }
+  note right of FeatureFlag
+    Stored config **overrides** the catalogue defaults
+    in Feature.java. Tightening a default therefore
+    does not tighten a running deployment — the row
+    has to be changed too.
+  end note
+}
+
+package "Video library" <<Rectangle>> {
+  class "Video, VideoAsset, VideoRendition,\nVideoSegment, VideoComment, VideoLike" as VideoModule
+}
+Meeting ..> VideoModule : recordings\n(see VIDEO_LIBRARY.md)
+
+' ---------------------------------------------------------------- services
+package "Services" {
+  class MeetingScope {
+    Optional<UUID> activeMeetingId()
+    Optional<UUID> knowledgeMeetingId()
+  }
+  note right of MeetingScope
+    The single answer to "which meeting am I in?".
+    activeMeetingId() respects the MEETINGS flag;
+    knowledgeMeetingId() deliberately does not, so a
+    per-document choice is honoured even with the
+    flag off.
+  end note
+
+  class VotingService
+  class ClusterCurationService
+  class MeetingReportService
+  class AuthService
+  class FeatureService
+  class AiClient
+}
+
+VotingService --> Resolution
+VotingService --> Vote
+VotingService --> MeetingMember : entitlement + weight
+ClusterCurationService --> ClusterDraft
+ClusterCurationService --> ClusterMerge
+MeetingReportService --> Meeting
+MeetingReportService --> Question
+MeetingReportService --> Resolution
+AuthService --> AppUser
+FeatureService --> FeatureFlag
+MeetingScope --> Meeting
+
+class "AI service (FastAPI)" as AiService <<external>>
+AiClient --> AiService : embed, cluster,\nRAG draft, search
+note bottom of AiClient
+  Every call goes through await(), which turns an
+  unreachable service into a 503 with a readable
+  message. A WebClientResponseException is passed
+  through untouched — the service answered, and its
+  reason is worth showing.
+end note
+
+@enduml

@@ -324,6 +324,29 @@ public class AuthService {
         String role = Roles.isAssignable(registrationDefaultRole)
                 ? registrationDefaultRole.toUpperCase()
                 : Roles.SHAREHOLDER;   // a misconfigured value must fail toward less privilege
+
+        // FIRST-RUN BOOTSTRAP: the very first account on an empty database becomes ADMIN.
+        //
+        // Without this the rule above locks a fresh deployment out of itself. Registration creates
+        // a member, moderator is granted from the Members screen, and the Members screen needs a
+        // moderator — so nobody can ever reach it and the deployment has no administrator at all.
+        // There is no seeded account to fall back on.
+        //
+        // Safe precisely because of the condition: it applies only when the users table is EMPTY.
+        // The first person to reach a brand-new installation is whoever set it up, and after that
+        // one row exists and this can never fire again. It is not a race worth worrying about
+        // either — two simultaneous first registrations would both need to observe zero users, and
+        // the loser of that race is a second administrator on a system that had none a moment ago.
+        //
+        // Deliberately not configurable. A flag for "grant admin to a registration" is a thing
+        // somebody eventually switches on for convenience and forgets, which is the hole this
+        // whole method exists to close.
+        if (users.count() == 0) {
+            // Logged before the override, so `role` still reads as the ordinary default.
+            log.warn("Creating the FIRST account '{}' as ADMIN — the users table was empty. "
+                     + "Every later registration gets {}.", req.username(), role);
+            role = Roles.ADMIN;
+        }
         AppUser user = new AppUser(req.username(), email, encoder.encode(req.password()), role);
         user.setPhone(phone);
         users.save(user);

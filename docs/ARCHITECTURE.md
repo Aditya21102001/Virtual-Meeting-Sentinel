@@ -34,6 +34,23 @@ every major action. Read this to understand the system end to end.
 
 ---
 
+## 0. Diagrams
+
+PlantUML sources live in [`docs/diagrams/`](diagrams/). Render them with
+`plantuml docs/diagrams/*.puml`, or paste a file into <https://www.plantuml.com/plantuml>.
+
+| Diagram | What it shows |
+| --- | --- |
+| [`class-diagram.puml`](diagrams/class-diagram.puml) | The AGM domain model and the services that own it, with the reasoning behind the awkward parts — why voting weight lives on `MeetingMember` and is copied into `Vote`, why merges are stored rather than kept in memory. |
+| [`flow-question-to-answer.puml`](diagrams/flow-question-to-answer.puml) | A question arriving, joining a topic, being drafted against the documents, and reaching the room — plus what a caller sees when the AI service is down. |
+| [`flow-auth.puml`](diagrams/flow-auth.puml) | Password sign-in, MFA, one-time-code recovery with the forced set-password step, and Google. |
+| [`flow-voting.puml`](diagrams/flow-voting.puml) | A resolution from motion to declared result, including both places an anonymous token is refused. |
+
+The notes inside them are the point. A diagram that only shows the shape of the code is something
+you could regenerate from the code; these record the decisions you cannot.
+
+---
+
 ## 1. What the app does (in one minute)
 
 During a virtual **Annual General Meeting (VIRTUAL MEETING)**, thousands of shareholders type questions at
@@ -405,6 +422,7 @@ person per topic. Full model in
   - `/api/voting/**` → **never `ATTENDEE`** (see below); the chair's routes are moderator only
   - `/api/room/attendee-board`, `/api/room/support-topic` → attendee upwards; the rest moderator only
   - `/api/meetings/**` → split between MEETING_MANAGER and USER_MANAGER
+  - `/api/chat/**` → **never `ATTENDEE`** — `SHAREHOLDER`/`MODERATOR`/`ADMIN` only (see below)
   - `/api/features/my-features` → any signed-in user; the rest **ADMIN only**
   - `/api/videos/**` → any signed-in member; the **media** sub-routes (GET only) are permitted at the
     filter chain and authorised in code by a **playback ticket** (see below)
@@ -420,6 +438,30 @@ person per topic. Full model in
   anyone could request a token as `alice` and cast alice's vote. Voting routes therefore require a
   role only a real account can hold, _and_ `VotingController` rejects `ATTENDEE` independently. Two
   layers, because the cost of them disagreeing is a forged vote in a legal record.
+- **`.authenticated()` does not mean "is who they claim".** The chat, knowledge-search and
+  assistant routes were once `.authenticated()`, which reads as "any signed-in user" but is
+  satisfied by the anonymous attendee token described above. The result was reachable from the open
+  internet in two requests with no credentials: the full text of every indexed document, the
+  directory of registered users with their roles, and answers from the language model billed to the
+  deployment. Nothing failed and nothing was logged, because every component did exactly what it had
+  been told to do.
+
+  The rule is now the same one voting already used — a role only a real account can hold — and
+  `AttendeeAccessTest` holds it there, including a case asserting that attendees can *still* reach
+  the room, so an over-broad fix cannot silently lock out the people the application is for.
+- **The default role for a public sign-up is the least privileged one.** `POST /api/auth/register`
+  is public; it once created `MODERATOR`. A Google identity with no local account is refused unless
+  `OAUTH_AUTO_PROVISION` is switched on, and is then created as `SHAREHOLDER`.
+- **One exception, for first run only: the first account on an empty database is `ADMIN`.** The rule
+  above otherwise locks a new deployment out of itself — registration creates a member, moderator is
+  granted from the Members screen, and that screen needs a moderator. The condition is `users.count()
+  == 0`, so it can fire exactly once in the lifetime of a database and is not configurable, because a
+  switch for "grant admin on registration" is one somebody eventually leaves on.
+- **Sign-in accepts a username or an email address.** Not a convenience: account recovery mails a
+  code to an *email* and finds the account by it, while sign-in finds accounts by *username*, and
+  for anyone who arrived through Google those differ — the username is generated from their display
+  name. Without this, a user could recover an account they could not then sign in to, and the error
+  they saw was "invalid username or password" for a password that was correct.
 - **Voting weight never comes from the client.** A vote request carries the resolution and the
   choice; entitlement is read from the meeting's member list server-side.
 - Input validation on submissions; RAG prompt forbids inventing figures.

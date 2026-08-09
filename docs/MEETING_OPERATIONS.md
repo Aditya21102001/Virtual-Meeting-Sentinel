@@ -701,3 +701,34 @@ Stated because a document that omits them is one you cannot trust the rest of.
 _Last updated alongside the voting, curation, room and reporting features. Companion documents:
 [ARCHITECTURE.md](ARCHITECTURE.md) · [HOW_IT_WORKS.md](HOW_IT_WORKS.md) ·
 [VIDEO_LIBRARY.md](VIDEO_LIBRARY.md) · [LOUNGE.md](LOUNGE.md)_
+
+---
+
+## Uploading a document is all-or-nothing
+
+Indexing a document does two things to two different stores: it writes the file to disk, and it
+embeds its chunks into the FAISS index. There is no shared transaction to enlist them in, so they
+are made to succeed or fail together by hand.
+
+The write used to happen first. If embedding then failed — running out of memory on a large
+document is the usual way — the file stayed on disk with no vectors behind it. Two consequences,
+both quiet:
+
+- retrieval silently missed a document the operator had been told was indexed; and
+- the file was re-read on every restart, so an upload that killed the service went on killing it on
+  every boot. A 1,167-page PDF did exactly that, and the service crash-looped until the file was
+  removed by hand.
+
+Now the state needed to undo the write is captured first, and applied if the embedding does not
+finish:
+
+| Failure | What happens |
+| --- | --- |
+| A new document fails to embed | The file is deleted, its manifest tag removed, and the index rebuilt from what remains. Nothing is left behind. |
+| A **re-upload** fails to embed | The previous version is restored byte for byte. A failed correction never costs you the document you already had. |
+| Batches were committed before the failure | The rebuild from disk discards them, so no partial vectors survive to be cited. |
+| The rebuild itself fails | Logged at ERROR; the index is left as it stands and a restart rebuilds it from disk. |
+
+The rollback is best-effort by design: it runs while something has already gone wrong, and an
+exception raised *there* would replace the real cause with a rollback error — hiding the one thing
+the operator needs to read. Each part is attempted independently and logged.

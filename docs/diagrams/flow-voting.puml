@@ -1,0 +1,121 @@
+@startuml flow-voting
+' Putting a motion, opening the ballot, casting, and declaring the result.
+'
+' Render:  plantuml docs/diagrams/flow-voting.puml
+
+title Flow — a resolution from motion to result
+
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #4A5568
+  LifeLineBorderColor #7C86A0
+  ParticipantBorderColor #7C86A0
+  ParticipantBackgroundColor #FDFDFD
+}
+
+actor Moderator
+actor Shareholder
+participant "Angular SPA" as SPA
+participant "SecurityConfig" as Sec
+participant "VotingService" as Svc
+database "PostgreSQL" as DB
+
+== Putting the motion ==
+
+Moderator -> SPA : drafts a resolution
+SPA -> Sec : POST /api/voting/create-resolution
+Sec -> Sec : role must be MODERATOR or ADMIN
+Sec -> Svc : allowed
+Svc -> DB : INSERT resolution (status = DRAFT, type = ORDINARY | SPECIAL)
+
+Moderator -> SPA : opens the floor
+SPA -> Svc : POST /api/voting/open-resolution
+Svc -> DB : status = OPEN, openedAt = now
+
+== Casting ==
+
+Shareholder -> SPA : chooses FOR / AGAINST / ABSTAIN
+SPA -> Sec : POST /api/voting/cast-vote
+activate Sec
+
+Sec -> Sec : SHAREHOLDER / MODERATOR / ADMIN only
+note right of Sec
+  **Never `.authenticated()`.** /api/auth/attendee is
+  public and mints a token whose subject is whatever
+  username the caller types. Harmless for asking a
+  question, where the name is only a label. Fatal for
+  a ballot: anyone could request a token as "alice"
+  and cast alice's vote.
+end note
+
+Sec -> Svc : allowed
+deactivate Sec
+activate Svc
+
+Svc -> Svc : requireRealAccount() — rejects ATTENDEE again
+note right
+  Two layers, deliberately. The cost of them
+  disagreeing is a forged vote in a legal record.
+end note
+
+Svc -> DB : SELECT meeting_member\nWHERE meeting = ? AND username = ?
+alt not on the register
+  Svc --> SPA : 403 — being allowed to ask is not\nbeing entitled to vote
+else entitled
+  Svc -> Svc : weight := member.votingWeight
+  note right
+    **Copied in now, not read at tally time.** A holding
+    corrected mid-meeting must not silently restate
+    votes already cast.
+  end note
+  Svc -> DB : INSERT vote (unique per member per resolution)
+  alt already voted
+    DB --> Svc : constraint violation
+    Svc --> SPA : 409 — one vote each
+  else
+    Svc --> SPA : accepted
+  end
+end
+deactivate Svc
+
+== While the ballot is open ==
+
+Shareholder -> SPA : watches
+SPA -> Svc : POST /api/voting/list-resolutions + meeting-quorum\nevery 5s — **SILENT**, no global loader
+alt liveResultsVisible = false
+  Svc --> SPA : counts withheld
+  note right of Svc
+    Live tallies can influence the vote that is still
+    being taken, so showing them is the chair's choice
+    rather than the default.
+  end note
+else
+  Svc --> SPA : running tally
+end
+
+Svc -> DB : SUM(votingWeight) of members who cast at least one vote
+Svc --> SPA : quorum: represented vs quorumThresholdPercent
+
+== Declaring ==
+
+Moderator -> SPA : closes the ballot
+SPA -> Svc : POST /api/voting/close-resolution
+activate Svc
+Svc -> DB : status = CLOSED, closedAt = now
+Svc -> DB : SUM(weight) GROUP BY choice
+Svc -> Svc : ResolutionType.carried(for, against)
+note right
+  Integer arithmetic on the enum, so a percentage
+  never rounds a decision the wrong way:
+    ORDINARY : for > against
+    SPECIAL  : for > 0 && for*4 >= (for+against)*3
+  ABSTAIN counts toward quorum and toward neither side.
+end note
+Svc --> SPA : carried / not carried, with the tally
+deactivate Svc
+
+Moderator -> SPA : opens the meeting report
+SPA -> Svc : POST /api/reports/meeting-report
+Svc --> SPA : questions asked, answered and unanswered,\nplus every resolution and how it went
+
+@enduml
