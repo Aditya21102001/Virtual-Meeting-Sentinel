@@ -707,6 +707,19 @@ export class AppComponent {
    * @defer block and an @if, so it appears when the first recording is chosen and disappears when
    * playback is finished with. Publishing null in between is correct — the page checks.
    */
+  /**
+   * Expose a state snapshot for the browser console: `__pipState()`.
+   *
+   * <p>Not a debugging leftover — it is the thing that was missing. Whether the handover works
+   * depends on facts only the browser holds (does it report a session? is the player mounted? is
+   * the slot a real size?), and without a way to ask, every diagnosis was a guess. Reading state is
+   * harmless, so it is always available rather than hidden behind the debug flag.
+   */
+  private readonly exposeSnapshot = effect(() => {
+    (window as unknown as Record<string, unknown>)['__pipState'] = () =>
+      this.playerHost.snapshot();
+  });
+
   private readonly publishPlayer = effect(() => {
     const player = this.hostedPlayer() ?? null;
     untracked(() => this.playerHost.registerPlayer(player));

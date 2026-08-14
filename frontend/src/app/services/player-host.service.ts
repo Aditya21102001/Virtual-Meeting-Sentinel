@@ -73,9 +73,60 @@ export class PlayerHostService {
   private resize: ResizeObserver | null = null;
   private readonly onWindowResize = () => this.measure();
 
+  /**
+   * Trace the handover, when asked to.
+   *
+   * <p>Off unless {@code localStorage.agm_pip_debug === '1'}, so it is silent in normal use. It
+   * exists because this feature failed three times in a row on assumptions about what the browser
+   * was doing — whether it reported a session at all, whether the player was parked or destroyed,
+   * what state the element was in when the window closed. None of that was observable, so each fix
+   * was a guess. These lines make the next failure diagnosable in one attempt instead of three.
+   */
+  private trace(event: string, detail: Record<string, unknown> = {}): void {
+    try {
+      if (localStorage.getItem('agm_pip_debug') !== '1') return;
+    } catch {
+      return;   // storage blocked; stay quiet rather than throw from a log call
+    }
+    const pip = document.pictureInPictureElement;
+    // eslint-disable-next-line no-console
+    console.info('[pip] ' + event, {
+      ...detail,
+      pipElement: pip ? pip.tagName : 'NONE',
+      pipConnected: pip instanceof HTMLElement ? pip.isConnected : null,
+      card: this.card()?.video.id ?? null,
+      parked: this.box() === null,
+      apiPresent: 'pictureInPictureEnabled' in document,
+    });
+  }
+
+  /**
+   * A snapshot for the browser console, for when something looks wrong.
+   *
+   * <p>Reachable without the debug flag: paste
+   * {@code ng.getInjector(document.querySelector('app-root')).get(...)} is awkward, so this is
+   * exposed on window as {@code __pipState()} by AppComponent instead.
+   */
+  snapshot(): Record<string, unknown> {
+    const pip = document.pictureInPictureElement;
+    return {
+      apiPresent: 'pictureInPictureEnabled' in document,
+      pipElement: pip ? pip.tagName : 'NONE',
+      cardId: this.card()?.video.id ?? null,
+      parked: this.box() === null,
+      box: this.box(),
+      playerMounted: this.player() !== null,
+      videosInDom: document.querySelectorAll('video').length,
+      layerInDom: !!document.querySelector('.player-layer'),
+      layerParked: !!document.querySelector('.player-layer.parked'),
+      watching: this.leaveWatch !== null,
+    };
+  }
+
   /** Called by AppComponent when the player it renders comes and goes. */
   registerPlayer(player: VideoPlayerComponent | null): void {
     this.player.set(player);
+    this.trace('registerPlayer', { present: player !== null });
   }
 
   /**
@@ -100,6 +151,7 @@ export class PlayerHostService {
     window.addEventListener('resize', this.onWindowResize);
 
     this.measure();
+    this.trace('attach', { videoId: card.video.id, startAt });
   }
 
   /**
@@ -112,7 +164,13 @@ export class PlayerHostService {
   detach(): void {
     this.releaseAnchor();
 
-    if (this.inPictureInPicture()) {
+    const keepPlaying = this.inPictureInPicture();
+    // The single most important line in this file. If this says false while a floating window is
+    // open, the player is about to be unmounted and the window will die — and that is the failure
+    // that has been reported three times.
+    this.trace('detach', { keepPlaying });
+
+    if (keepPlaying) {
       // Park it. CSS only: nothing is moved in the DOM, so the session is untouched.
       this.box.set(null);
       this.watchForReturn();
@@ -153,10 +211,18 @@ export class PlayerHostService {
     // navigations for a single close.
     this.stopWatching();
 
+    this.trace('watching for the window to close');
+
     const onLeave = () => {
       this.stopWatching();
 
       const returningToTab = !video.paused;
+      this.trace('window closed', {
+        paused: video.paused,
+        readyState: video.readyState,
+        currentTime: Math.round(video.currentTime),
+        decision: returningToTab ? 'navigate back to the recording' : 'stop, viewer is finished',
+      });
       const at = Number.isFinite(video.currentTime) ? Math.floor(video.currentTime) : 0;
       const id = this.card()?.video.id;
 
@@ -191,6 +257,13 @@ export class PlayerHostService {
       return;
     }
     const rect = this.anchor.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      // A zero-sized slot means the layer is drawn on top of nothing, which looks exactly like
+      // "the player has vanished". Worth saying out loud rather than silently placing it.
+      this.trace('slot measured as ZERO size — the player will be invisible', {
+        top: rect.top, left: rect.left,
+      });
+    }
     this.box.set({
       // Document coordinates, so scrolling needs no listener — the layer scrolls with the page.
       top: rect.top + window.scrollY,
