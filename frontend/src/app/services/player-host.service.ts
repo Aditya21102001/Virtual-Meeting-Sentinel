@@ -68,6 +68,8 @@ export class PlayerHostService {
   readonly player = signal<VideoPlayerComponent | null>(null);
 
   private anchor: HTMLElement | null = null;
+  /** The pending "floating window closed" listener, so it is never registered twice. */
+  private leaveWatch: { video: HTMLVideoElement; handler: () => void } | null = null;
   private resize: ResizeObserver | null = null;
   private readonly onWindowResize = () => this.measure();
 
@@ -84,6 +86,8 @@ export class PlayerHostService {
    */
   attach(card: VideoCard, startAt: number | null, anchor: HTMLElement): void {
     this.releaseAnchor();
+    // Back on the page, so the "they closed the floating window" watch no longer applies.
+    this.stopWatching();
 
     this.anchor = anchor;
     this.card.set(card);
@@ -145,8 +149,12 @@ export class PlayerHostService {
     const video = document.pictureInPictureElement;
     if (!(video instanceof HTMLVideoElement)) return;
 
+    // Replace any previous watch rather than stack another one. Two listeners would fire two
+    // navigations for a single close.
+    this.stopWatching();
+
     const onLeave = () => {
-      video.removeEventListener('leavepictureinpicture', onLeave);
+      this.stopWatching();
 
       const returningToTab = !video.paused;
       const at = Number.isFinite(video.currentTime) ? Math.floor(video.currentTime) : 0;
@@ -167,6 +175,13 @@ export class PlayerHostService {
     };
 
     video.addEventListener('leavepictureinpicture', onLeave);
+    this.leaveWatch = { video, handler: onLeave };
+  }
+
+  private stopWatching(): void {
+    if (!this.leaveWatch) return;
+    this.leaveWatch.video.removeEventListener('leavepictureinpicture', this.leaveWatch.handler);
+    this.leaveWatch = null;
   }
 
   /** Measure the slot and place the layer over it, in document coordinates. */
