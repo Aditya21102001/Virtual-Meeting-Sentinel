@@ -3,6 +3,7 @@ import {
   ElementRef,
   OnDestroy,
   computed,
+  DestroyRef,
   effect,
   inject,
   input,
@@ -967,6 +968,19 @@ export class VideoPlayerComponent implements OnDestroy {
     // through onLeave and navigate us somewhere.
     this.pipKeepAlive.release();
 
+    // THE HAND-OFF IS REGISTERED HERE, AND THE POSITION IS THE WHOLE POINT.
+    //
+    // The effect below registers `onCleanup(() => this.teardown())`, and teardown() destroys the
+    // hls instance. Both that cleanup and this callback run when the component is destroyed, and
+    // DestroyRef runs its callbacks in REGISTRATION order — so registering before the effect is
+    // created is what guarantees the video is handed over before anything tears its stream down.
+    //
+    // Registered after the effect (or left in ngOnDestroy, where it was) the order reversed:
+    // hls.destroy() ran first, the hand-off then adopted an element whose MediaSource was already
+    // gone, and the floating window sat frozen on its last frame. Playing, as far as the page was
+    // concerned; stuck, as far as the viewer was concerned.
+    inject(DestroyRef).onDestroy(() => this.handOffIfPictureInPicture());
+
     // `card()` is the ONE tracked dependency: when the library switches videos this re-runs, the old
     // hls instance is torn down, per-video state is reset, and the new stream loads into the same
     // element. (viewChild signals resolve after the first render, which is also why setup is here.)
@@ -1039,14 +1053,9 @@ export class VideoPlayerComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
-    // Offered BEFORE teardown, and before Angular detaches this component's DOM.
-    //
-    // If the viewer put this recording in a floating window, destroying it here is the one thing
-    // they did not ask for — they popped it out precisely so they could go and look at something
-    // else. handOffIfPictureInPicture moves the element out of this subtree and passes ownership of
-    // the hls instance along with it, so teardown below has nothing left to destroy.
-    this.handOffIfPictureInPicture();
-
+    // The hand-off is NOT done here. It runs from the DestroyRef callback registered in the
+    // constructor, which is ordered ahead of the effect cleanup that would otherwise destroy the
+    // stream first. See there.
     this.teardown();
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     window.removeEventListener('resize', this.onWindowResize);

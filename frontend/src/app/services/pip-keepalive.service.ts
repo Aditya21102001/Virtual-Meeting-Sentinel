@@ -67,9 +67,14 @@ export class PipKeepAliveService {
     // keep an invisible one playing somewhere, which is a bug rather than a feature.
     if (document.pictureInPictureElement !== video) return false;
 
+    // Already holding this exact element: nothing to do. Without this an accidental second call
+    // would re-append the node and attach a DUPLICATE leavepictureinpicture listener, so closing
+    // the window would fire the return-navigation twice.
+    if (this.video === video) return true;
+
     // One at a time. A second request means an earlier one was left behind — release it rather than
     // accumulate hidden elements, each holding an hls instance and a network connection.
-    if (this.video && this.video !== video) this.release();
+    if (this.video) this.release();
 
     this.ensureHost().appendChild(video);
     this.video = video;
