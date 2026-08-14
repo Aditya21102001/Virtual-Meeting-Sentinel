@@ -1,5 +1,5 @@
 import { HttpContextToken } from '@angular/common/http';
-import { Injectable, computed, signal } from '@angular/core';
+import { Injectable, computed, signal, untracked } from '@angular/core';
 
 /**
  * Mark a request as background work that should not raise the loading bar.
@@ -68,7 +68,15 @@ export class LoadingService {
 
   start(): void {
     this.inFlight.update((n) => n + 1);
-    if (this.showTimer === null && !this.visible()) {
+    // untracked, and this is not defensive tidying.
+    //
+    // start() is reached from the HTTP interceptor, which a component effect can reach
+    // synchronously just by subscribing to a request. A tracked read here makes that effect depend
+    // on the loading bar — so raising the bar re-runs it, and if the effect is what issued the
+    // request, it issues another, which raises the bar again. That is an endless request loop that
+    // looks like a bug in the calling page. Nothing in this class may become a dependency of the
+    // code it is measuring; writes are safe, reads are not.
+    if (this.showTimer === null && !untracked(this.visible)) {
       this.showTimer = setTimeout(() => {
         this.showTimer = null;
         // Re-checked: everything may have finished inside the delay, which is the common case.
@@ -108,14 +116,17 @@ export class LoadingService {
     // finishes twice — would otherwise push the count negative and leave the bar stuck on for the
     // rest of the session.
     this.inFlight.update((n) => Math.max(0, n - 1));
-    if (this.inFlight() === 0) {
+    // untracked for the same reason as start(): finalize() can run synchronously on unsubscribe,
+    // which puts this back inside whatever reactive context tore the request down.
+    const idle = untracked(this.inFlight) === 0;
+    if (idle) {
       if (this.showTimer !== null) {
         clearTimeout(this.showTimer);
         this.showTimer = null;
       }
       this.visible.set(false);
     }
-    if (this.inFlight() === 0 && this.failsafeTimer !== null) {
+    if (idle && this.failsafeTimer !== null) {
       clearTimeout(this.failsafeTimer);
       this.failsafeTimer = null;
     }

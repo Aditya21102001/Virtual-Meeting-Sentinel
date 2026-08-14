@@ -1,4 +1,13 @@
-import { Component, OnDestroy, OnInit, computed, effect, inject, signal } from '@angular/core';
+import {
+  Component,
+  OnDestroy,
+  OnInit,
+  computed,
+  effect,
+  inject,
+  signal,
+  untracked,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import {
   VideoCard,
@@ -628,10 +637,23 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
     // next poll tick. The service bumps libraryChanged on completion; re-read the list then.
     // This also covers the FIRST load — the effect runs once on creation — so ngOnInit must not
     // fetch again or every visit to the page would open two of each request.
+    //
+    // `libraryChanged()` is the ONE tracked dependency, and untracked() around the work is what
+    // keeps it that way. Firing a request from inside an effect's tracking scope subscribes
+    // synchronously, so every signal read down that call stack becomes a dependency of the effect:
+    // `auth.token()` for the bearer header, `serverError()` in refreshStatus, and — the fatal one —
+    // `LoadingService.visible()` from the loading interceptor. That last is self-sustaining. The
+    // interceptor raises the bar 250 ms in and lowers it on completion; each flip re-ran this
+    // effect, which fired two more requests, which flipped it again. list-all-videos and
+    // storage-status alternated until the tab was closed, and the blocking overlay stayed up
+    // because the in-flight count never came back to zero. Same failure, and the same fix, as the
+    // session effect in AppComponent.
     effect(() => {
       this.videos.libraryChanged();
-      this.refreshList();
-      this.refreshStatus();
+      untracked(() => {
+        this.refreshList();
+        this.refreshStatus();
+      });
     });
   }
 
