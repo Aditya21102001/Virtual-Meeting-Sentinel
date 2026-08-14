@@ -5,6 +5,7 @@ import {
   effect,
   signal,
   untracked,
+  viewChild,
 } from "@angular/core";
 import {
   RouterLink,
@@ -14,6 +15,8 @@ import {
   NavigationError,
 } from "@angular/router";
 import { HelpWidgetComponent } from "./components/help-widget.component";
+import { VideoPlayerComponent } from "./components/video-player.component";
+import { PlayerHostService } from "./services/player-host.service";
 import { AuthService } from "./services/auth.service";
 import { FeatureService } from "./services/feature.service";
 import { LoadingService } from "./services/loading.service";
@@ -22,7 +25,7 @@ import { MeetingService } from "./services/meeting.service";
 @Component({
   selector: "app-root",
   standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, HelpWidgetComponent],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, HelpWidgetComponent, VideoPlayerComponent],
   template: `
     <!--
       First thing in the tab order and invisible until focused. Without it a keyboard user tabs
@@ -224,6 +227,50 @@ import { MeetingService } from "./services/meeting.service";
     <main id="main" tabindex="-1">
       <router-outlet></router-outlet>
     </main>
+
+    <!--
+      THE VIDEO PLAYER LIVES HERE, OUTSIDE THE OUTLET, AND THAT IS THE WHOLE POINT.
+
+      A picture-in-picture session ends the moment its <video> element leaves the document — the
+      specification says so, and moving a node with appendChild removes it before re-inserting it.
+      So the element can never be moved and never be unmounted by a navigation. Being a sibling of
+      the outlet rather than a child of it is what guarantees both.
+
+      The recordings page renders an empty slot and reports where it is; this layer is positioned
+      over that slot in document coordinates. Navigating changes only CSS. Nothing moves.
+
+      Parked (box() === null) means "playing in the floating window while the viewer is elsewhere":
+      still connected, still playing, just nowhere on screen.
+    -->
+    <!--
+      @defer, and it is not an optimisation — it is the difference between a 138 kB first load and a
+      279 kB one.
+
+      The player pulls in hls.js. Referenced normally from this component it lands in the MAIN
+      bundle, so every visitor downloads a video library before seeing the question form, whether or
+      not they ever open a recording. Used only inside a @defer block, the compiler keeps it in a
+      chunk of its own and fetches it the first time a recording is actually selected — which is
+      where it used to live, back when the lazy-loaded recordings page owned it.
+    -->
+    @defer (when playerHost.card()) {
+      @if (playerHost.card(); as card) {
+        <div
+          class="player-layer"
+          [class.parked]="!playerHost.box()"
+          [style.top.px]="playerHost.box()?.top"
+          [style.left.px]="playerHost.box()?.left"
+          [style.width.px]="playerHost.box()?.width"
+          [style.height.px]="playerHost.box()?.height"
+        >
+          <app-video-player
+            #hostedPlayer
+            [card]="card"
+            [autoplay]="true"
+            [startAt]="playerHost.startAt()"
+          ></app-video-player>
+        </div>
+      }
+    }
 
     <!--
       Outside the outlet on purpose: it is available on every page, and mounting it per route would
@@ -501,6 +548,30 @@ import { MeetingService } from "./services/meeting.service";
       .nav-user {
         white-space: nowrap;
       }
+      /*
+        Absolute, in DOCUMENT coordinates — not fixed in viewport ones. Scrolling then moves the
+        layer with the page for free, and only a resize or a layout change needs re-measuring.
+      */
+      .player-layer {
+        position: absolute;
+        z-index: 5;
+      }
+      /*
+        Parked: off-screen but STILL RENDERED and still in the document. Not display:none, and
+        never detached — either would end the picture-in-picture session this exists to preserve.
+      */
+      .player-layer.parked {
+        position: fixed;
+        top: auto;
+        bottom: 0;
+        left: 0;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        opacity: 0;
+        pointer-events: none;
+        z-index: -1;
+      }
       .site-footer {
         color: var(--muted);
         font-size: 12px;
@@ -617,6 +688,30 @@ export class AppComponent {
       (this.auth.managesMeetings() && this.features.enabled("MEETINGS")),
   );
 
+  /**
+   * The hosted player, handed to PlayerHostService so the recordings page can still reach it.
+   *
+   * <p>That page used `viewChild` when it owned the player. It does not own it any more, so the
+   * instance travels through the service instead — see PlayerHostService.player.
+   */
+  private readonly hostedPlayer = viewChild<VideoPlayerComponent>('hostedPlayer');
+
+  /**
+   * Publish the hosted player so the recordings page can reach it.
+   *
+   * <p>That page uses it for the transcript, for seeking from a segment or a comment, and for the
+   * playhead on the comment composer. It read those off a local `viewChild` while it owned the
+   * player; now the instance is created here, so it has to travel through the service.
+   *
+   * <p>An effect rather than a lifecycle hook because the player comes and goes: it is inside a
+   * @defer block and an @if, so it appears when the first recording is chosen and disappears when
+   * playback is finished with. Publishing null in between is correct — the page checks.
+   */
+  private readonly publishPlayer = effect(() => {
+    const player = this.hostedPlayer() ?? null;
+    untracked(() => this.playerHost.registerPlayer(player));
+  });
+
   private sessionLoadedFor: boolean | null = null;
 
   /**
@@ -673,6 +768,7 @@ export class AppComponent {
     public auth: AuthService,
     public features: FeatureService,
     public meetings: MeetingService,
+    public playerHost: PlayerHostService,
     private router: Router,
   ) {
     // Recover from a lazy chunk that no longer exists.

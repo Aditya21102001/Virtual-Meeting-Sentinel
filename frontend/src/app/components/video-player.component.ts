@@ -3,7 +3,6 @@ import {
   ElementRef,
   OnDestroy,
   computed,
-  DestroyRef,
   effect,
   inject,
   input,
@@ -13,7 +12,6 @@ import {
 } from '@angular/core';
 import Hls, { ErrorData, Events, Level } from 'hls.js';
 import { PlaybackProgressService } from '../services/playback-progress.service';
-import { PipKeepAliveService } from '../services/pip-keepalive.service';
 import {
   SegmentLocation,
   TranscriptCue,
@@ -843,7 +841,6 @@ export class VideoPlayerComponent implements OnDestroy {
   // ---- resume ----------------------------------------------------------------
 
   private readonly progress = inject(PlaybackProgressService);
-  private readonly pipKeepAlive = inject(PipKeepAliveService);
   private readonly videos = inject(VideoService);
 
   /** Set when this video started somewhere other than zero, so the UI can offer "start over". */
@@ -960,27 +957,6 @@ export class VideoPlayerComponent implements OnDestroy {
   });
 
   constructor() {
-    // The page is taking the player back, so any floating window must close.
-    //
-    // Without this, navigating to Recordings while a picture-in-picture video is still running
-    // leaves TWO videos playing — the kept-alive one in its corner and the new one on the page,
-    // both audible. release() removes its own listener before exiting, so this cannot bounce back
-    // through onLeave and navigate us somewhere.
-    this.pipKeepAlive.release();
-
-    // THE HAND-OFF IS REGISTERED HERE, AND THE POSITION IS THE WHOLE POINT.
-    //
-    // The effect below registers `onCleanup(() => this.teardown())`, and teardown() destroys the
-    // hls instance. Both that cleanup and this callback run when the component is destroyed, and
-    // DestroyRef runs its callbacks in REGISTRATION order — so registering before the effect is
-    // created is what guarantees the video is handed over before anything tears its stream down.
-    //
-    // Registered after the effect (or left in ngOnDestroy, where it was) the order reversed:
-    // hls.destroy() ran first, the hand-off then adopted an element whose MediaSource was already
-    // gone, and the floating window sat frozen on its last frame. Playing, as far as the page was
-    // concerned; stuck, as far as the viewer was concerned.
-    inject(DestroyRef).onDestroy(() => this.handOffIfPictureInPicture());
-
     // `card()` is the ONE tracked dependency: when the library switches videos this re-runs, the old
     // hls instance is torn down, per-video state is reset, and the new stream loads into the same
     // element. (viewChild signals resolve after the first render, which is also why setup is here.)
@@ -1053,43 +1029,10 @@ export class VideoPlayerComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
-    // The hand-off is NOT done here. It runs from the DestroyRef callback registered in the
-    // constructor, which is ordered ahead of the effect cleanup that would otherwise destroy the
-    // stream first. See there.
     this.teardown();
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     window.removeEventListener('resize', this.onWindowResize);
     if (this.hideTimer) clearTimeout(this.hideTimer);
-  }
-
-  /**
-   * Let a picture-in-picture video outlive this component.
-   *
-   * <p>Does nothing unless this element is the one in the floating window, so an ordinary navigation
-   * away from a playing video still stops it — which is what anybody would expect.
-   */
-  private handOffIfPictureInPicture(): void {
-    let element: HTMLVideoElement;
-    try {
-      element = this.mediaRef().nativeElement;
-    } catch {
-      return;   // destroyed before the view existed; nothing to hand over
-    }
-    if (document.pictureInPictureElement !== element) return;
-
-    const videoId = this.card().video.id;
-    const duration = this.card().video.durationSeconds;
-    // The recorder deliberately closes over `this.progress` — a root singleton — and two plain
-    // values. Nothing here touches the component or its view, both of which are about to go.
-    const progress = this.progress;
-    const adopted = this.pipKeepAlive.adopt(element, this.hls, videoId, (seconds) => {
-      progress.save(videoId, seconds, duration ?? 0);
-    });
-
-    if (adopted) {
-      // Ownership has moved. Null it so teardown() cannot destroy a stream that is still playing.
-      this.hls = null;
-    }
   }
 
   // ---- setup ---------------------------------------------------------------

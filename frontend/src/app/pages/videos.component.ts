@@ -1,15 +1,18 @@
 import {
   Component,
+  ElementRef,
   OnDestroy,
   OnInit,
   computed,
+  effect,
   inject,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
-import { VideoPlayerComponent } from '../components/video-player.component';
+import { PlayerHostService } from '../services/player-host.service';
 import {
   CommentView,
   DownloadOption,
@@ -29,7 +32,7 @@ import {
 @Component({
   selector: 'app-videos',
   standalone: true,
-  imports: [VideoPlayerComponent, DatePipe],
+  imports: [DatePipe],
   template: `
     <div class="container">
       <h1>Meeting recordings</h1>
@@ -54,12 +57,16 @@ import {
       <!-- Now playing -->
       @if (selected(); as card) {
         <div class="card">
-          <app-video-player
-            #player
-            [card]="card"
-            [autoplay]="true"
-            [startAt]="startAt()"
-          ></app-video-player>
+          <!--
+            An empty slot, not the player.
+
+            The player is mounted once in AppComponent, outside the router outlet, and positioned
+            over this box. It has to be: a picture-in-picture session ends the moment its <video>
+            element leaves the document, and leaving this page would take the element with it.
+
+            This div only reserves the space and reports where it is — see PlayerHostService.
+          -->
+          <div class="player-slot" #playerSlot></div>
 
           <h2 class="title">{{ card.video.title }}</h2>
           @if (card.video.description) {
@@ -366,6 +373,17 @@ import {
   `,
   styles: [
     `
+      /*
+        The same box the player draws itself into (see .player in VideoPlayerComponent): 16/9 and
+        full width. If these two ever disagree the player will sit slightly off its slot, so they
+        are deliberately identical.
+      */
+      .player-slot {
+        aspect-ratio: 16 / 9;
+        width: 100%;
+        background: #000;
+        border-radius: 12px;
+      }
       .title {
         font-size: 18px;
         margin: 14px 0 4px;
@@ -658,7 +676,33 @@ export class VideosComponent implements OnInit, OnDestroy {
   readonly activeRendition = signal<string | null>(null);
 
   /** Undefined until a video is selected — the player lives inside an `@if`. */
-  private readonly player = viewChild<VideoPlayerComponent>('player');
+  private readonly playerHost = inject(PlayerHostService);
+
+  /** The slot this page reserves; the hosted player is positioned over it. */
+  private readonly playerSlot = viewChild<ElementRef<HTMLElement>>('playerSlot');
+
+  /**
+   * The live player, which this page no longer owns.
+   *
+   * <p>Used for the transcript, for seeking from a segment or a comment, and for the playhead on
+   * the comment composer. It used to come from `viewChild`; the player is mounted in AppComponent
+   * now, so it arrives through the host service instead. Every call site below is unchanged.
+   */
+  private readonly player = this.playerHost.player;
+
+  /**
+   * Keep the hosted player pointed at the selected recording, and at this page's slot.
+   *
+   * <p>Runs whenever the selection changes or the slot appears. Both are needed: the slot only
+   * exists once a card is selected, because it is inside the same @if.
+   */
+  private readonly attachPlayer = effect(() => {
+    const card = this.selected();
+    const slot = this.playerSlot();
+    if (card && slot) {
+      untracked(() => this.playerHost.attach(card, this.startAt(), slot.nativeElement));
+    }
+  });
 
   /** The grid excludes whatever is already playing above it. */
   readonly others = computed(() => {
@@ -911,6 +955,13 @@ export class VideosComponent implements OnInit, OnDestroy {
   private transferFrame: HTMLIFrameElement | null = null;
 
   ngOnDestroy(): void {
+    // Tell the host the slot is gone. It decides what that means: if the viewer put the recording
+    // in a floating window it keeps playing, parked off-screen; otherwise playback stops, which is
+    // what leaving a video page has always done.
+    //
+    // Nothing is unmounted or moved here — that is the entire reason the player is not ours.
+    this.playerHost.detach();
+
     // The iframe lives on document.body, so leaving the page would otherwise leak it. Removing it
     // does not cancel a transfer already underway — the browser owns the download by then.
     this.transferFrame?.remove();
