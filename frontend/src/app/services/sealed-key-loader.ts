@@ -70,8 +70,21 @@ export function createMediaLoader(): typeof Hls.DefaultConfig.loader {
           ? new TextDecoder().decode(body)
           : body;
 
-        const stats = context.stats ?? {};
-        stats.loading = { start: started, first: performance.now(), end: performance.now() };
+        // hls.js does not treat stats as a plain bag: after onSuccess it writes into
+        // stats.parsing.start and stats.buffering.start directly. Handing it a bare {} threw
+        // "Cannot set properties of undefined (setting 'start')" on every request, so the POST
+        // transport failed instantly and silently fell back to GET. Reuse the object hls.js
+        // supplied when there is one; otherwise build the full shape it expects.
+        const now = performance.now();
+        const stats = context.stats ?? {
+          aborted: false, loaded: 0, retry: 0, total: 0, chunkCount: 0, bwEstimate: 0,
+          loading: { start: 0, first: 0, end: 0 },
+          parsing: { start: 0, end: 0 },
+          buffering: { start: 0, first: 0, end: 0 },
+        };
+        stats.loading.start = started;
+        stats.loading.first = now;
+        stats.loading.end = now;
         stats.loaded = stats.total = body.byteLength;
 
         callbacks.onSuccess({ url: context.url, data }, stats, context, null);
