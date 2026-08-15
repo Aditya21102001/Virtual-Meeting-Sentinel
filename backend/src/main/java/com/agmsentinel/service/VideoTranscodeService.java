@@ -355,6 +355,15 @@ public class VideoTranscodeService {
         // would have achieved nothing at all.
         Path keyDir = contentKey == null ? null : Files.createTempDirectory("hlskey-");
         Path keyInfo = contentKey == null ? null : writeKeyInfo(keyDir, contentKey);
+        if (keyInfo != null) {
+            // At INFO, unlike the command itself, which is DEBUG and therefore off in production.
+            // When encryption silently does not happen this line is the only evidence of whether
+            // the key file was created and what ffmpeg was told to read.
+            log.info("Encrypting: key info file {} ({} bytes), contents: {}",
+                     keyInfo, Files.size(keyInfo),
+                     Files.readString(keyInfo, StandardCharsets.UTF_8)
+                          .replace(System.lineSeparator(), " | "));
+        }
 
         List<RenditionOutput> renditions;
         try {
