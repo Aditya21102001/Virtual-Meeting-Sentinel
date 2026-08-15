@@ -125,4 +125,43 @@ class VideoStreamCopyTest {
         assertThat(cmd).containsSequence("-c:v", "copy");
         assertThat(cmd).doesNotContain("-c:a");
     }
+
+    // ---- BANDWIDTH must describe the bytes that were actually written ----------------------
+
+    private int measured(List<long[]> sizeAndDuration, int fallbackKbps) {
+        List<VideoTranscodeService.SegmentInfo> segments = new java.util.ArrayList<>();
+        int seq = 0;
+        for (long[] sd : sizeAndDuration) {
+            segments.add(new VideoTranscodeService.SegmentInfo(
+                    seq++, "seg.ts", (double) sd[1], 0.0, sd[0]));
+        }
+        return ReflectionTestUtils.invokeMethod(service, "measuredKbps", segments, fallbackKbps);
+    }
+
+    @Test
+    @DisplayName("BANDWIDTH is the PEAK segment bitrate, not the average")
+    void bandwidthUsesPeakNotAverage() {
+        // A 6 s segment of 750 000 bytes is 1000 kbps; one of 3 000 000 bytes is 4000 kbps.
+        // Averaging would advertise ~2500 and a player would stall on the big one.
+        int kbps = measured(List.of(new long[]{750_000, 6}, new long[]{3_000_000, 6}), 1400);
+
+        assertThat(kbps).isEqualTo(4000);
+    }
+
+    @Test
+    @DisplayName("a copied rung far above its ladder target is advertised honestly")
+    void copiedRungAdvertisesItsRealBitrate() {
+        // The whole ABR risk of stream copy: the ladder would have guessed 1400 kbps, but nothing
+        // was encoded, so the rung carries whatever the upload was.
+        assertThat(measured(List.of(new long[]{4_500_000, 6}), 1400)).isEqualTo(6000);
+    }
+
+    @Test
+    @DisplayName("an unmeasurable playlist falls back rather than advertising zero")
+    void unmeasurableFallsBack() {
+        // BANDWIDTH=0 is not a valid variant; players may drop it entirely.
+        assertThat(measured(List.of(new long[]{0, 6}, new long[]{750_000, 0}), 1400))
+                .isEqualTo(1400);
+        assertThat(measured(List.of(), 800)).isEqualTo(800);
+    }
 }
