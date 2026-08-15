@@ -224,6 +224,12 @@ poor as a steady state: free-tier hosts charge for log volume, and the signal dr
 
 ## Frontend hosting: why a deploy used to break open tabs
 
+> **`vercel.json` cannot carry comments.** It is validated against a strict schema that rejects any
+> unknown key — including a `_comment` field, which is the usual trick for annotating JSON. Adding
+> one fails the deploy outright with
+> `headers[0] should NOT have additional property _comment`, and the build never runs. That is why
+> the reasoning below lives here rather than beside the settings it explains.
+
 Every page is loaded on demand and each build gives those files new hashed names. Three settings in
 `frontend/vercel.json` and `frontend/angular.json` make that safe; getting any of them wrong
 produces a menu that silently stops working after a deploy, with no error on screen.
