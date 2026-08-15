@@ -103,7 +103,15 @@ public class SecurityConfig {
                 // one video. /key-exchange-parameters returns only a public key, which is safe to
                 // hand to anyone by definition.
                 .requestMatchers(HttpMethod.POST,
+                                 // "/media/**" as well as "/media": the loader appends a cosmetic
+                                 // label (media/segment_00028) so the network panel can name each
+                                 // request. Matching only the bare path left every labelled request
+                                 // to the authenticated() rule below, which answered 401 — so the
+                                 // POST transport was refused on every call and silently fell back
+                                 // to GET. The label is ignored by the handler; the body is the
+                                 // only authority, so a wider match grants nothing extra.
                                  "/api/videos/media",
+                                 "/api/videos/media/**",
                                  "/api/videos/content-key",
                                  "/api/videos/key-exchange-parameters").permitAll()
                 // The catalogue + segment index need a real session (any signed-in member).
