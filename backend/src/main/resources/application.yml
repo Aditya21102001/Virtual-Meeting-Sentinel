@@ -111,6 +111,11 @@ video:
     segment-seconds: ${VIDEO_SEGMENT_SECONDS:6}
     # Rungs are capped to the source resolution, so a 720p upload only produces 720p and below.
     ladder: ${VIDEO_LADDER:1080,720,480,360}
+    # Emit rungs TALLER than the source anyway. Off by default: an 848x480 master scaled up to
+    # 1080p carries no more detail than the 480p rung, at roughly 3.5x the bitrate and triple the
+    # transcode time. Turn on only to match an encoder that does not cap (the usual reason someone
+    # asks why "only 2 quality levels" appear for a 480p upload).
+    upscale: ${VIDEO_HLS_UPSCALE:false}
     preset: ${VIDEO_X264_PRESET:veryfast}
     # Encode every rung in ONE ffmpeg run (one decode, N simultaneous encoders)? Off by default.
     # One pass is faster in wall-clock terms, but every x264 encoder allocates its buffers at
