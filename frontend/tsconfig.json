@@ -2,6 +2,11 @@
   "compileOnSave": false,
   "compilerOptions": {
     "outDir": "./dist/out-tsc",
+    // Stated rather than inferred. TypeScript works the common source directory out from the files
+    // it compiles, so adding or removing a file outside src/ would silently move the whole output
+    // layout — and newer TypeScript warns because that inference is going away. Every .ts in this
+    // project already lives under src/, so this pins today's behaviour rather than changing it.
+    "rootDir": "./src",
     "strict": true,
     "noImplicitOverride": true,
     "noPropertyAccessFromIndexSignature": true,
