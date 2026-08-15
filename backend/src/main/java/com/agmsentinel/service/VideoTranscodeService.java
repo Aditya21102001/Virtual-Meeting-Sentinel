@@ -175,6 +175,22 @@ public class VideoTranscodeService {
                 if (ok) {
                     toolsVersion = ffmpeg.output().lines().findFirst().orElse("ffmpeg");
                     log.info("Video segmentation enabled — {}", toolsVersion);
+                    // State the ladder settings that actually took effect, rather than the ones
+                    // somebody believes they set. VIDEO_HLS_UPSCALE reaching the container and
+                    // reaching this object are different things — a name typed slightly wrong, or a
+                    // value saved without the restart that applies it, both look identical from
+                    // outside and produce a rendition list nobody can explain. Printed once at
+                    // startup, the answer is never in doubt again.
+                    log.info("Ladder: {} — upscale {} (VIDEO_HLS_UPSCALE), so a source shorter than "
+                             + "a rung {}. Workers {}, ffmpeg threads {}, parallel rungs {}.",
+                             props.getHls().getLadder(),
+                             props.getHls().isUpscale() ? "ON" : "OFF",
+                             props.getHls().isUpscale()
+                                     ? "still produces it, by upscaling"
+                                     : "skips that rung",
+                             props.getTools().getWorkers(),
+                             props.getTools().getThreads(),
+                             props.getHls().isParallelRungs() ? "ON" : "OFF");
                 } else {
                     log.warn("ffmpeg/ffprobe found but not runnable; falling back to progressive streaming.");
                 }

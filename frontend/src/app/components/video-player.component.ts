@@ -1119,7 +1119,13 @@ export class VideoPlayerComponent implements OnDestroy {
       // Start conservatively and let the ABR controller climb once it has measured throughput —
       // opening on the top rung is what causes the initial stall people read as "buffering".
       startLevel: -1,
-      capLevelToPlayerSize: true,
+      // OFF. When on, hls.js refuses any rendition taller than the <video> element, so a player
+      // laid out ~360 px tall served 360p to everyone on every connection — the recording looked
+      // permanently softer in the app than the same file played locally, and no amount of work on
+      // the ladder could change it, because bandwidth was never what decided. These recordings top
+      // out at 480p, so the pixels this used to save were never many; letting ABR choose on
+      // throughput alone is the difference between viewers seeing the master and seeing half of it.
+      capLevelToPlayerSize: false,
       // Retry a flaky segment rather than killing the session; a single lost .ts is recoverable.
       fragLoadPolicy: {
         default: {
