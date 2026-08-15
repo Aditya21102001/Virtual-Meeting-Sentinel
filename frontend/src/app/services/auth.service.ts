@@ -59,6 +59,27 @@ export class AuthService {
   );
 
   /**
+   * Whether this session belongs to a REAL, verified account rather than an anonymous pass.
+   *
+   * <p>`/api/auth/attendee` is public and mints a token for whatever username the caller types, so
+   * "signed in" and "is who they claim" are different questions. The server draws the line in
+   * SecurityConfig: the lounge, the knowledge search and the ballot all require SHAREHOLDER,
+   * MODERATOR or ADMIN, and refuse an attendee token with 403.
+   *
+   * <p>This mirrors that rule so the interface does not offer what the server will refuse. Feature
+   * flags alone are not enough — a flag says the deployment HAS a capability, not that this caller
+   * may use it, and an attendee was being shown Lounge and Voting links that answered 403 on click.
+   *
+   * <p>Not a security control. The server's rule is the security control; this only keeps the menu
+   * honest.
+   */
+  readonly hasRealAccount = computed(
+    () =>
+      this.hasValidToken(this.token()) &&
+      ["SHAREHOLDER", "MODERATOR", "ADMIN"].includes(this.role() ?? ""),
+  );
+
+  /**
    * Every role in the current token — the primary one plus any additional duties.
    *
    * <p>Read from the token's `roles` claim, falling back to the single `role` for tokens issued

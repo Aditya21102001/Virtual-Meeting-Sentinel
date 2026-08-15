@@ -115,7 +115,12 @@ import { MeetingService } from "./services/meeting.service";
         <!-- Taking part — everyone. -->
         <a routerLink="/ask" routerLinkActive="active" (click)="close()">Ask a question</a>
         @if (auth.isAuthenticated()) {
-          @if (features.enabled("LOUNGE_CHAT")) {
+          <!--
+            Both conditions, and the second is not redundant. The flag says this deployment HAS the
+            lounge; hasRealAccount says THIS caller may use it. /api/chat/** requires a verified
+            account, so an anonymous attendee was being shown a link that answered 403 on click.
+          -->
+          @if (features.enabled("LOUNGE_CHAT") && auth.hasRealAccount()) {
             <a routerLink="/chat" routerLinkActive="active" (click)="close()">💬 Lounge</a>
           }
           @if (features.enabled("VIDEO_LIBRARY")) {
@@ -126,7 +131,7 @@ import { MeetingService } from "./services/meeting.service";
             controls. Whether this user may actually cast a vote depends on the meeting's member
             list, which only the server knows.
           -->
-          @if (features.enabled("VOTING")) {
+          @if (features.enabled("VOTING") && auth.hasRealAccount()) {
             <a routerLink="/voting" routerLinkActive="active" (click)="close()">🗳️ Voting</a>
           }
         }
