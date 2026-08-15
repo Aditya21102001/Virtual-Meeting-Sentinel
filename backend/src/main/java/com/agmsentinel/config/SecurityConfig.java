@@ -90,6 +90,22 @@ public class SecurityConfig {
                                  // Save-to-disk. A download is a browser navigation, so it carries
                                  // no Authorization header either and authorises the same way.
                                  "/api/videos/*/download").permitAll()
+                // The POST transport for the same media, authorised the same way.
+                //
+                // These carry no Authorization header for exactly the reason the GET routes above
+                // do not: they are issued by hls.js's loader on behalf of the media stack, and the
+                // playback ticket travels in the body instead of the query string. Left to the
+                // `authenticated()` rule below they answer 401, which is not a hypothetical — the
+                // browser check caught precisely that, and the loader fell back to GET rather than
+                // playing nothing.
+                //
+                // Permitted here and authorised in VideoController by the same ticket, scoped to
+                // one video. /key-exchange-parameters returns only a public key, which is safe to
+                // hand to anyone by definition.
+                .requestMatchers(HttpMethod.POST,
+                                 "/api/videos/media",
+                                 "/api/videos/content-key",
+                                 "/api/videos/key-exchange-parameters").permitAll()
                 // The catalogue + segment index need a real session (any signed-in member).
                 .requestMatchers("/api/videos/**").authenticated()
                 // Meetings. Two duties, two roles — and the order below is load-bearing, because

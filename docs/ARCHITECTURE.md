@@ -44,6 +44,7 @@ PlantUML sources live in [`docs/diagrams/`](diagrams/). Render them with
 | [`class-diagram.puml`](diagrams/class-diagram.puml) | The AGM domain model and the services that own it, with the reasoning behind the awkward parts — why voting weight lives on `MeetingMember` and is copied into `Vote`, why merges are stored rather than kept in memory. |
 | [`flow-question-to-answer.puml`](diagrams/flow-question-to-answer.puml) | A question arriving, joining a topic, being drafted against the documents, and reaching the room — plus what a caller sees when the AI service is down. |
 | [`flow-auth.puml`](diagrams/flow-auth.puml) | Password sign-in, MFA, one-time-code recovery with the forced set-password step, and Google. |
+| [`PICTURE_IN_PICTURE.md`](PICTURE_IN_PICTURE.md) | Why the video player is mounted outside the router outlet, and the two implementations that failed before it. |
 | [`flow-voting.puml`](diagrams/flow-voting.puml) | A resolution from motion to declared result, including both places an anonymous token is refused. |
 
 The notes inside them are the point. A diagram that only shows the shape of the code is something

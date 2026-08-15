@@ -11,6 +11,7 @@ import {
   viewChild,
 } from '@angular/core';
 import Hls, { ErrorData, Events, Level } from 'hls.js';
+import { createMediaLoader } from '../services/sealed-key-loader';
 import { PlaybackProgressService } from '../services/playback-progress.service';
 import {
   SegmentLocation,
@@ -1099,6 +1100,11 @@ export class VideoPlayerComponent implements OnDestroy {
    */
   private startHls(element: HTMLVideoElement, source: string, resumeAt: number | null): void {
     const hls = new Hls({
+      // Every request hls.js makes — master playlist, rung playlist, segments, decryption key —
+      // goes out as POST, with the ticket in the body instead of the URL. The key is agreed by
+      // ECDH, so neither side transmits a secret. Anything unrecognised falls through to the stock
+      // loader and the GET routes. See createMediaLoader.
+      loader: createMediaLoader(),
       // Nothing loads until startLoad() below. This is what makes resuming cost one segment
       // instead of two: left to itself hls.js begins fetching fragment 0 the moment the manifest
       // parses, so setting currentTime afterwards throws that download away and then stalls while

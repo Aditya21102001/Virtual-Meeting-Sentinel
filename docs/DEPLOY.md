@@ -259,3 +259,67 @@ published alongside the bundle. That is a deliberate choice for this application
 secret in the frontend, and the secrets that matter live on the server — but it is a choice, and
 worth revisiting for a codebase where it is not true. Set `"hidden": true` to keep the maps out of
 the browser while still producing them for an error tracker.
+
+---
+
+## Encrypting recordings (optional)
+
+Segments can be encrypted at rest with **AES-128**, with each recording's key wrapped using **RSA**.
+Off unless configured, because recordings encoded before it was switched on have no key and must
+keep playing.
+
+### Why two algorithms
+
+Neither can do the job alone:
+
+- **The segments must be AES-128.** Not a preference — the HLS specification defines
+  `METHOD=AES-128`, and that is what players implement. A segment encrypted any other way is a
+  segment nothing can play.
+- **RSA cannot encrypt bulk data.** A 2048-bit key handles ~190 bytes per operation under OAEP and
+  is thousands of times slower than AES. Encrypting an hour of video with it is not slow, it is
+  impossible.
+
+So the video is encrypted with a random 16-byte AES key, and *that key* is encrypted with RSA. The
+same construction TLS and PGP use, for the same reason.
+
+### What asymmetry buys
+
+The **public** key wraps a content key and is all the transcoder needs; the **private** key unwraps
+it and is needed only when serving a key to a player. The public half can therefore be treated as
+non-secret. In a single-service deployment both live in the same environment, so the separation is
+latent — it becomes real when transcoding moves to its own worker.
+
+### Setting it up
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out private.pem
+openssl rsa -in private.pem -pubout -out public.pem
+```
+
+| Key | Value |
+| --- | --- |
+| `VIDEO_ENCRYPTION_PUBLIC_KEY` | contents of `public.pem` (PEM or bare base64 both work) |
+| `VIDEO_ENCRYPTION_PRIVATE_KEY` | contents of `private.pem` |
+
+Both are required. A public key alone would produce recordings whose keys can never be served, so
+that combination **disables** encryption and logs an error rather than creating unplayable video.
+
+> **The keypair cannot be rotated casually.** Every existing recording's content key is wrapped to
+> its public half. Replacing the pair makes all of them unplayable; losing the private key does so
+> permanently. Back it up somewhere other than the database.
+
+### What this protects — and what it does not
+
+**It protects the segments at rest.** In `database` storage mode every `.ts` segment is a row in
+`video_assets`. Without encryption, a database dump, a backup, a read replica or a leaked connection
+string hands somebody playable board recordings. With it, those rows are ciphertext and the private
+key is not in the database.
+
+**It is not DRM.** The content key is delivered to the browser in order to play the video, so anyone
+entitled to watch a recording can extract its key and keep a copy — `ffmpeg` and `yt-dlp` do exactly
+that, automatically. If the requirement is "authorised viewers must not be able to keep a copy",
+this is the wrong mechanism; that needs Widevine or FairPlay.
+
+**It covers segments only.** The original upload, the poster, the sprite and the transcript are
+stored unencrypted alongside them. If the goal is that a stolen database yields nothing, encrypt at
+the storage layer instead — that covers all of it, rather than a third.

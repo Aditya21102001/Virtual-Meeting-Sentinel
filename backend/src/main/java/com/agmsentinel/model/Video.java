@@ -148,6 +148,19 @@ public class Video {
     @Column(name = "segment_seconds")
     private Integer segmentSeconds;
 
+    /**
+     * This recording's AES-128 content key, encrypted with the deployment's RSA public key.
+     *
+     * <p>Null for recordings encoded before encryption was switched on, and for every recording
+     * when it is off — both must keep playing, so this is nullable rather than defaulted.
+     *
+     * <p>Safe to hold here precisely because it is wrapped: the private key that opens it lives in
+     * the environment, never in the database. A dump of this table yields ciphertext segments and a
+     * ciphertext key, which is the whole point of encrypting at rest.
+     */
+    @Column(name = "content_key", length = 1024)
+    private String contentKey;
+
     @Column(name = "uploaded_by")
     private String uploadedBy;
 
@@ -248,6 +261,11 @@ public class Video {
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
     public Integer getSegmentSeconds() { return segmentSeconds; }
     public void setSegmentSeconds(Integer segmentSeconds) { this.segmentSeconds = segmentSeconds; }
+    public String getContentKey() { return contentKey; }
+    public void setContentKey(String contentKey) { this.contentKey = contentKey; }
+    /** Whether this recording's segments are encrypted. */
+    public boolean isEncrypted() { return contentKey != null && !contentKey.isBlank(); }
+
     public String getUploadedBy() { return uploadedBy; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

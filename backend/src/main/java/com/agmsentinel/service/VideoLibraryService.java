@@ -482,6 +482,21 @@ public class VideoLibraryService {
     }
 
     /**
+     * Record this recording's wrapped content key.
+     *
+     * <p>Written before the encode begins, deliberately. A stored key with no segments is inert; a
+     * recording whose segments are encrypted with a key that was never stored is unplayable and
+     * unrecoverable — the only copy of it died with the process.
+     */
+    @Transactional
+    public void storeContentKey(UUID videoId, String wrappedKey) {
+        videos.findById(videoId).ifPresent(v -> {
+            v.setContentKey(wrappedKey);
+            videos.save(v);
+        });
+    }
+
+    /**
      * Progress ticks arrive several times a second; only whole-percent changes (all the UI shows)
      * are persisted, so a long transcode doesn't turn into a write storm.
      */

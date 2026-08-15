@@ -1,0 +1,125 @@
+@startuml flow-video-encryption
+' How a recording is encrypted, and how a browser gets the key to play it.
+'
+' Render:  plantuml docs/diagrams/flow-video-encryption.puml
+
+title Flow — encrypting a recording, and unlocking it for one viewer
+
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #4A5568
+  LifeLineBorderColor #7C86A0
+  ParticipantBorderColor #7C86A0
+  ParticipantBackgroundColor #FDFDFD
+}
+
+actor Moderator
+participant "Backend\n(Spring Boot)" as API
+participant "ffmpeg" as FF
+database "PostgreSQL" as DB
+participant "Browser\n(hls.js)" as Browser
+actor Viewer
+
+box "Server environment only" #F7F8FA
+  participant API
+end box
+
+== 1. Encoding — happens once, per recording ==
+
+Moderator -> API : upload a recording
+activate API
+
+API -> API : contentKey = 16 random bytes\n**AES-128**
+note right
+  A fresh key **per recording**.
+  One leaked key then costs one
+  meeting, not the whole archive.
+end note
+
+API -> API : wrapped = RSA-OAEP(**server public key**, contentKey)
+API -> DB : store `videos.content_key` = wrapped
+note right of DB
+  Stored BEFORE encoding starts.
+  A stored key with no segments is
+  inert; segments with no stored key
+  are unplayable forever.
+end note
+
+API -> FF : -hls_key_info_file <temp>
+activate FF
+note right of FF
+  The plaintext key lives in a TEMP
+  directory, never in the video folder —
+  everything there is ingested into
+  storage, so a key written there would
+  be filed next to the segments it opens.
+end note
+FF -> FF : encrypt every segment (AES-128)
+FF -> FF : write #EXT-X-KEY:METHOD=AES-128,URI="key"
+FF --> API : encrypted .ts segments + playlists
+deactivate FF
+
+API -> API : overwrite + delete the temp key
+API -> DB : store segments (ciphertext)
+deactivate API
+
+note over DB
+  **What a database dump now yields:**
+  ciphertext segments + an RSA-wrapped key.
+  The private key is NOT here — it is in the
+  environment. That is the threat this addresses.
+end note
+
+== 2. Playback — happens per viewer, per session ==
+
+Viewer -> Browser : press play
+Browser -> API : GET .../index.m3u8?t=<ticket>
+activate API
+API -> API : rewrite every URI to carry the ticket\n— including the #EXT-X-KEY URI
+note right
+  The one URI in a playlist that is NOT
+  on its own line. Missed, the key is
+  fetched unauthenticated, refused, and
+  playback fails with nothing on screen
+  to explain it.
+end note
+API --> Browser : playlist
+deactivate API
+
+Browser -> Browser : generate an **RSA keypair** (WebCrypto)\nprivate half never leaves the tab
+
+Browser -> API : GET .../key?t=<ticket>&**pk=<browser public key>**
+activate API
+API -> DB : read wrapped content key
+API -> API : contentKey = RSA-decrypt(**server private key**, wrapped)
+API -> API : sealed = RSA-OAEP(**browser public key**, contentKey)
+API --> Browser : 200, body = sealed (256 bytes)\nCache-Control: no-store
+deactivate API
+
+note over API, Browser
+  The raw AES key never crosses the network.
+  Only a **public key** goes out and a **ciphertext**
+  comes back — so a TLS-terminating proxy, CDN or
+  WAF sees nothing usable.
+end note
+
+Browser -> Browser : contentKey = RSA-decrypt(**browser private key**, sealed)
+Browser -> API : GET .../seg_00028.ts?t=<ticket>
+API --> Browser : encrypted segment
+Browser -> Browser : AES-128 decrypt, decode, render
+Browser --> Viewer : video plays
+
+== What this does NOT protect against ==
+
+note over Viewer
+  The browser must hold the plaintext AES key
+  to decrypt the video, so **the viewer can read
+  it** — devtools, or ffmpeg/yt-dlp, which handle
+  AES-128 HLS automatically.
+
+  This is the DRM problem. No key exchange solves
+  it; only Widevine/FairPlay, where decryption
+  happens inside a black box the user cannot open.
+end note
+
+@enduml

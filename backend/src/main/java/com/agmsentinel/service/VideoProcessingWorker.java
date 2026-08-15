@@ -61,6 +61,7 @@ public class VideoProcessingWorker {
     private final AiClient ai;
     /** Consulted for AUTO_TRANSCRIPTION — the switch an administrator can reach without a deploy. */
     private final FeatureService features;
+    private final VideoContentKeyService contentKeys;
 
     public VideoProcessingWorker(VideoRepository videos,
                                  VideoLibraryService library,
@@ -70,7 +71,9 @@ public class VideoProcessingWorker {
                                  VideoSegmentDrainer drainer,
                                  VideoProperties props,
                                  AiClient ai,
-                                 FeatureService features) {
+                                 FeatureService features,
+                                 VideoContentKeyService contentKeys) {
+        this.contentKeys = contentKeys;
         this.videos = videos;
         this.library = library;
         this.storage = storage;
@@ -146,6 +149,18 @@ public class VideoProcessingWorker {
                      Math.round(info.frameRate()), info.hasAudio());
             library.storeProbe(videoId, info);
 
+            // Mint a content key for this recording, when encryption is configured. Generated
+            // per recording rather than per deployment: one leaked key then costs one meeting's
+            // footage instead of the whole archive.
+            byte[] contentKey = contentKeys.enabled() ? contentKeys.newContentKey() : null;
+            if (contentKey != null) {
+                // Wrapped and stored FIRST. If the process dies mid-encode, a stored key with no
+                // segments is harmless; segments with no stored key are an unplayable recording
+                // that nothing can ever recover.
+                library.storeContentKey(videoId, contentKeys.wrap(contentKey));
+                log.info("Encrypting {} — AES-128 segments, content key wrapped with RSA.", videoId);
+            }
+
             TranscodeOutput output;
             // Segments move into the database as ffmpeg finishes them, so neither heap nor disk
             // has to hold the whole ladder at once. Without this the cost of a transcode scales
@@ -158,7 +173,8 @@ public class VideoProcessingWorker {
                             drain.raiseIfFailed();
                             library.updateProgress(videoId, percent);
                         },
-                        drain::sizeOf);
+                        drain::sizeOf,
+                        contentKey);
 
                 // Poster and filmstrip are cosmetic — a failure in either must not fail the video,
                 // so both return null rather than throwing.

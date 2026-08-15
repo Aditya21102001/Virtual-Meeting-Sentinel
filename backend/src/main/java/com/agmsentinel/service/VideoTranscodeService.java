@@ -322,6 +322,20 @@ public class VideoTranscodeService {
     public TranscodeOutput transcodeToHls(Path videoDir, Path source, MediaInfo info,
                                           IntConsumer progress, DrainedSizes drained)
             throws IOException, InterruptedException {
+        return transcodeToHls(videoDir, source, info, progress, drained, null);
+    }
+
+    /**
+     * Transcode, optionally encrypting every segment with AES-128.
+     *
+     * @param contentKey the raw 16-byte key, or null to leave the segments in the clear. The caller
+     *                   owns wrapping and storing it — this method only hands it to ffmpeg and makes
+     *                   sure the plaintext copy does not outlive the encode.
+     */
+    public TranscodeOutput transcodeToHls(Path videoDir, Path source, MediaInfo info,
+                                          IntConsumer progress, DrainedSizes drained,
+                                          byte[] contentKey)
+            throws IOException, InterruptedException {
         List<Rung> ladder = buildLadder(info);
         Path hlsDir = videoDir.resolve(HLS_DIR);
         Files.createDirectories(hlsDir);
@@ -335,9 +349,23 @@ public class VideoTranscodeService {
                  ladder.stream().map(Rung::name).toList(),
                  props.getHls().isParallelRungs() ? "one pass" : "one rung at a time");
 
-        List<RenditionOutput> renditions = props.getHls().isParallelRungs()
-                ? encodeInOnePass(hlsDir, source, info, ladder, progress, drained)
-                : encodeRungByRung(hlsDir, source, info, ladder, progress, drained);
+        // The key info file, and the raw key it points at, live in a temporary directory — NOT in
+        // videoDir. Everything under videoDir is ingested into storage when the encode finishes, so
+        // a key written there would be filed alongside the segments it unlocks, and encrypting them
+        // would have achieved nothing at all.
+        Path keyDir = contentKey == null ? null : Files.createTempDirectory("hlskey-");
+        Path keyInfo = contentKey == null ? null : writeKeyInfo(keyDir, contentKey);
+
+        List<RenditionOutput> renditions;
+        try {
+            renditions = props.getHls().isParallelRungs()
+                    ? encodeInOnePass(hlsDir, source, info, ladder, progress, drained, keyInfo)
+                    : encodeRungByRung(hlsDir, source, info, ladder, progress, drained, keyInfo);
+        } finally {
+            // Best effort, but attempted on every path including failure: a plaintext content key
+            // left on disk is the one artefact that undoes the encryption entirely.
+            shredKeyMaterial(keyDir);
+        }
 
         if (renditions.isEmpty()) {
             throw new IOException("Transcode produced no playable renditions.");
@@ -352,9 +380,9 @@ public class VideoTranscodeService {
      */
     private List<RenditionOutput> encodeInOnePass(Path hlsDir, Path source, MediaInfo info,
                                                   List<Rung> ladder, IntConsumer progress,
-                                                  DrainedSizes drained)
+                                                  DrainedSizes drained, Path keyInfo)
             throws IOException, InterruptedException {
-        List<String> command = buildFfmpegCommand(hlsDir, source, info, ladder);
+        List<String> command = buildFfmpegCommand(hlsDir, source, info, ladder, keyInfo);
         log.debug("ffmpeg command: {}", String.join(" ", command));
 
         ProcessResult result = runWithProgress(command, info.durationSeconds(), progress);
@@ -400,7 +428,7 @@ public class VideoTranscodeService {
      */
     private List<RenditionOutput> encodeRungByRung(Path hlsDir, Path source, MediaInfo info,
                                                    List<Rung> ladder, IntConsumer progress,
-                                                   DrainedSizes drained)
+                                                   DrainedSizes drained, Path keyInfo)
             throws IOException, InterruptedException {
         List<RenditionOutput> renditions = new ArrayList<>();
         int total = ladder.size();
@@ -408,7 +436,7 @@ public class VideoTranscodeService {
         for (int i = 0; i < total; i++) {
             Rung rung = ladder.get(i);
             final int done = i;
-            List<String> command = buildSingleRungCommand(hlsDir, source, info, rung);
+            List<String> command = buildSingleRungCommand(hlsDir, source, info, rung, keyInfo);
             log.info("Encoding rung {}/{}: {}", i + 1, total, rung.name());
             log.debug("ffmpeg command: {}", String.join(" ", command));
 
@@ -570,7 +598,58 @@ public class VideoTranscodeService {
      * {@code split}. Options are unqualified because there is exactly one output stream of each
      * kind here, where the one-pass command has to say {@code -c:v:2} to address a specific rung.
      */
-    private List<String> buildSingleRungCommand(Path hlsDir, Path source, MediaInfo info, Rung rung) {
+    /**
+     * Write the three-line file ffmpeg reads the encryption settings from.
+     *
+     * <pre>
+     *   line 1  the URI written verbatim into #EXT-X-KEY in the playlist
+     *   line 2  the local path ffmpeg reads the raw 16 bytes from
+     *   line 3  (omitted) an explicit IV; without it ffmpeg derives one per segment
+     * </pre>
+     *
+     * <p>Line 1 is the relative string {@code key} on purpose. It resolves against the playlist's
+     * own URL, so a player asks for {@code /api/videos/{id}/r/{rung}/key} — and VideoController
+     * rewrites that line to carry the playback ticket, exactly as it already does for segments. An
+     * absolute URL would freeze today's host and today's ticket into files that outlive both.
+     */
+    private Path writeKeyInfo(Path keyDir, byte[] contentKey) throws IOException {
+        Path keyFile = keyDir.resolve("content.key");
+        Files.write(keyFile, contentKey);
+
+        Path info = keyDir.resolve("key_info");
+        Files.writeString(info, "key" + System.lineSeparator()
+                                + keyFile.toAbsolutePath() + System.lineSeparator(),
+                          StandardCharsets.UTF_8);
+        return info;
+    }
+
+    /**
+     * Remove the plaintext key and the file pointing at it.
+     *
+     * <p>Overwritten before deletion rather than simply unlinked. On a container filesystem that is
+     * mostly ceremony, but the cost is nothing and the alternative is a 16-byte file that undoes the
+     * encryption of an entire recording sitting in a temp directory nobody thinks to look at.
+     */
+    private void shredKeyMaterial(Path keyDir) {
+        if (keyDir == null) return;
+        try (var entries = Files.list(keyDir)) {
+            for (Path file : entries.toList()) {
+                try {
+                    byte[] zeros = new byte[(int) Math.max(1, Files.size(file))];
+                    Files.write(file, zeros);
+                } catch (IOException ignored) {
+                    // Best effort; the delete below is what matters.
+                }
+                Files.deleteIfExists(file);
+            }
+            Files.deleteIfExists(keyDir);
+        } catch (IOException e) {
+            log.warn("Could not remove the temporary key material at {}: {}", keyDir, e.getMessage());
+        }
+    }
+
+    private List<String> buildSingleRungCommand(Path hlsDir, Path source, MediaInfo info,
+                                                Rung rung, Path keyInfo) {
         int segmentSeconds = Math.max(2, props.getHls().getSegmentSeconds());
         int gop = Math.max(1, (int) Math.round((info.frameRate() > 0 ? info.frameRate() : 25) * segmentSeconds));
         Path rungDir = hlsDir.resolve(rung.name());
@@ -614,12 +693,18 @@ public class VideoTranscodeService {
                 "-hls_flags", "independent_segments+temp_file",
                 "-hls_segment_type", "mpegts",
                 "-hls_list_size", "0",
-                "-hls_segment_filename", rungDir.resolve("seg_%05d.ts").toString(),
-                rungDir.resolve(MEDIA_PLAYLIST).toString()));
+                "-hls_segment_filename", rungDir.resolve("seg_%05d.ts").toString()));
+        // Encrypt, when a key was supplied. ffmpeg reads the URI and the key path from this file
+        // and writes #EXT-X-KEY into the playlist itself.
+        if (keyInfo != null) {
+            cmd.addAll(List.of("-hls_key_info_file", keyInfo.toString()));
+        }
+        cmd.add(rungDir.resolve(MEDIA_PLAYLIST).toString());
         return cmd;
     }
 
-    private List<String> buildFfmpegCommand(Path hlsDir, Path source, MediaInfo info, List<Rung> ladder) {
+    private List<String> buildFfmpegCommand(Path hlsDir, Path source, MediaInfo info,
+                                           List<Rung> ladder, Path keyInfo) {
         int segmentSeconds = Math.max(2, props.getHls().getSegmentSeconds());
         // Keyframe every segment: a segment must start on a keyframe to be independently
         // decodable, and matching the GOP to the segment length is what lets the player switch
@@ -685,8 +770,13 @@ public class VideoTranscodeService {
                 "-hls_list_size", "0",
                 "-hls_segment_filename", hlsDir.resolve("%v").resolve("seg_%05d.ts").toString(),
                 "-master_pl_name", MASTER_PLAYLIST,
-                "-var_stream_map", varStreamMap(ladder, info.hasAudio()),
-                hlsDir.resolve("%v").resolve(MEDIA_PLAYLIST).toString()));
+                "-var_stream_map", varStreamMap(ladder, info.hasAudio())));
+        // One key for the whole ladder, which is what lets a player switch quality without
+        // fetching a second one. ffmpeg writes #EXT-X-KEY into each rung's playlist itself.
+        if (keyInfo != null) {
+            cmd.addAll(List.of("-hls_key_info_file", keyInfo.toString()));
+        }
+        cmd.add(hlsDir.resolve("%v").resolve(MEDIA_PLAYLIST).toString());
         return cmd;
     }
 

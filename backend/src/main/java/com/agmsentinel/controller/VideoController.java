@@ -13,6 +13,7 @@ import com.agmsentinel.security.RequiresFeature;
 import com.agmsentinel.model.VideoRendition;
 import com.agmsentinel.model.VideoSegment;
 import com.agmsentinel.security.PlaybackTicketService;
+import com.agmsentinel.service.VideoContentKeyService;
 import com.agmsentinel.service.VideoEngagementService;
 import com.agmsentinel.service.VideoLibraryService;
 import com.agmsentinel.service.VideoMediaStore;
@@ -74,6 +75,7 @@ public class VideoController {
 
     /** Only ever serve files that look like generated segments. */
     private static final Pattern SEGMENT_NAME = Pattern.compile("^seg_\\d{1,9}\\.ts$");
+
     /** Rung folder names, as produced by the ladder ("720p"). */
     private static final Pattern RENDITION_NAME = Pattern.compile("^[0-9]{2,4}p$");
 
@@ -94,10 +96,13 @@ public class VideoController {
     private final VideoUrlFactory urls;
     private final PlaybackTicketService tickets;
     private final VideoEngagementService engagement;
+    private final VideoContentKeyService contentKeys;
 
     public VideoController(VideoLibraryService library, VideoMediaStore media,
                           VideoUrlFactory urls, PlaybackTicketService tickets,
-                          VideoEngagementService engagement) {
+                          VideoEngagementService engagement,
+                          VideoContentKeyService contentKeys) {
+        this.contentKeys = contentKeys;
         this.library = library;
         this.media = media;
         this.urls = urls;
@@ -403,6 +408,204 @@ public class VideoController {
     }
 
     /**
+     * One media fetch, addressed by parts rather than by URL.
+     *
+     * @param kind {@code master}, {@code playlist} or {@code segment}
+     */
+    public record MediaRequest(UUID id, String kind, String rendition, String filename,
+                               String ticket) { }
+
+    /**
+     * Every media byte hls.js needs, over POST.
+     *
+     * <h3>Why this exists alongside the GET routes</h3>
+     * The GET routes are issued by the BROWSER — a {@code <video>} element, an {@code <img>}, or
+     * Safari's native HLS — and cannot be anything else. This one is issued by our own code inside
+     * hls.js's loader, so the method is ours to choose, and POST keeps the ticket and the requested
+     * path out of URLs entirely: out of browser history, out of access logs, out of {@code Referer}
+     * headers, out of any CDN cache key.
+     *
+     * <h3>Why one endpoint rather than three</h3>
+     * The client sends what it wants as fields, so nothing has to be parsed back out of a path.
+     * That also removes the traversal surface: {@code filename} is matched against the segment
+     * pattern and resolved relative to the rendition's own stored playlist, exactly as the GET route
+     * does. The caller never supplies a path.
+     */
+    @PostMapping("/media")
+    public ResponseEntity<byte[]> media(@RequestBody MediaRequest req) {
+        Video video = authorise(req.id(), req.ticket());
+        String kind = req.kind() == null ? "" : req.kind();
+
+        if ("master".equals(kind)) {
+            String body = HlsPlaylistRewriter.appendTicket(
+                    media.readText(video, video.getMasterPlaylistRel()), req.ticket());
+            return mediaBytes(body.getBytes(StandardCharsets.UTF_8), HLS);
+        }
+
+        VideoRendition chosen = requireRendition(video, req.rendition());
+
+        if ("playlist".equals(kind)) {
+            String body = HlsPlaylistRewriter.appendTicket(
+                    media.readText(video, chosen.getPlaylistRel()), req.ticket());
+            return mediaBytes(body.getBytes(StandardCharsets.UTF_8), HLS);
+        }
+
+        if ("segment".equals(kind)) {
+            String filename = req.filename() == null ? "" : req.filename();
+            if (!SEGMENT_NAME.matcher(filename).matches()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Not a segment filename.");
+            }
+            String path = siblingOf(chosen.getPlaylistRel(), filename);
+            if (!media.exists(video, path)) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Segment not found.");
+            }
+            return mediaBytes(readAll(media.resource(video, path)), MP2T);
+        }
+
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "kind must be master, playlist or segment.");
+    }
+
+    private ResponseEntity<byte[]> mediaBytes(byte[] body, MediaType type) {
+        return ResponseEntity.ok()
+                .contentType(type)
+                .contentLength(body.length)
+                // A POST response is not cached by browsers regardless; stated so nothing
+                // downstream decides otherwise.
+                .cacheControl(CacheControl.noStore())
+                .body(body);
+    }
+
+    private byte[] readAll(Resource resource) {
+        try (var in = resource.getInputStream()) {
+            return in.readAllBytes();
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Could not read the segment.", e);
+        }
+    }
+
+    /** The two public keys of one exchange: ours going out, the client's coming in. */
+    public record KeyExchangeRequest(UUID id, String rendition, String ticket, String publicKey) { }
+
+    /** The server's ECDH public key, so a client can derive the shared secret. */
+    public record ServerPublicKey(String publicKey) { }
+
+    /**
+     * Publish this server's ECDH public key.
+     *
+     * <p>Deliberately unauthenticated and deliberately public — that is what a public key is for.
+     * Holding it grants nothing: deriving the shared secret also requires the server's PRIVATE half,
+     * which never leaves the process, and it is regenerated on every boot.
+     */
+    @PostMapping("/key-exchange-parameters")
+    public ServerPublicKey keyExchangeParameters() {
+        return new ServerPublicKey(contentKeys.agreementPublicKey());
+    }
+
+    /**
+     * Exchange public keys and return the content key, sealed under the agreed secret.
+     *
+     * <h3>Why this is a POST, unlike every other media route</h3>
+     * The rest of the media surface is GET because the BROWSER issues those requests — a
+     * {@code <video>} element or an {@code <img>} cannot be told to do anything else. This one is
+     * different: it is fetched by our own code inside hls.js's loader, so the method is ours to
+     * choose. POST means the client's public key travels in the body rather than a query string,
+     * and nothing about the exchange lands in browser history, an access log or a Referer header.
+     *
+     * <h3>What crosses the network</h3>
+     * A public key up, a public key down, and a ciphertext. The shared secret is derived
+     * independently on both sides and is never transmitted; the AES content key never appears in
+     * the clear outside the two endpoints.
+     */
+    @PostMapping("/content-key")
+    public ResponseEntity<byte[]> contentKeyExchange(@RequestBody KeyExchangeRequest req) {
+        Video video = authorise(req.id(), req.ticket());
+        requireRendition(video, req.rendition());
+
+        if (!video.isEncrypted()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "This recording is not encrypted.");
+        }
+        if (req.publicKey() == null || req.publicKey().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A client public key is required to agree a content key.");
+        }
+
+        byte[] contentKey = contentKeys.unwrap(video.getContentKey());
+        try {
+            byte[] sealed = contentKeys.agreeAndSeal(contentKey, req.publicKey());
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .contentLength(sealed.length)
+                    .cacheControl(CacheControl.noStore())
+                    .body(sealed);
+        } catch (IllegalArgumentException badKey) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, badKey.getMessage());
+        }
+    }
+
+    /**
+     * This recording's AES-128 content key, for a player that has a valid ticket.
+     *
+     * <p>Mapped on the literal path {@code /key}, which Spring prefers over the {@code {filename}}
+     * pattern below — so the key is never mistaken for a segment, nor a segment for the key.
+     *
+     * <h3>Why this is authorised exactly like a segment</h3>
+     * The browser's media stack fetches this URI itself, from inside the playlist, and cannot attach
+     * an Authorization header — the same constraint that put the ticket in the query string in the
+     * first place. So the ticket authorises it, scoped to one video like everything else.
+     *
+     * <h3>What that means for the threat model</h3>
+     * Anyone entitled to watch a recording can also read its key, and could decrypt the segments
+     * themselves. That is inherent to HLS encryption, not a hole in this implementation: the
+     * protection is <b>at rest</b>, against a database dump or a stolen backup, where neither the
+     * ticket nor the RSA private key is present. It is not, and cannot be, DRM.
+     *
+     * <p>Never cached: a key in a shared or on-disk cache outlives the ticket that authorised it.
+     */
+    @GetMapping("/{id}/r/{rendition}/key")
+    public ResponseEntity<byte[]> contentKey(@PathVariable UUID id,
+                                             @PathVariable String rendition,
+                                             @RequestParam(name = "t", required = false) String ticket,
+                                             @RequestParam(name = "pk", required = false) String clientPublicKey) {
+        Video video = authorise(id, ticket);
+        requireRendition(video, rendition);
+
+        if (!video.isEncrypted()) {
+            // The playlist and the stored recording disagree. Worth saying so, rather than handing
+            // back an empty body the player will silently fail to decrypt with.
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "This recording is not encrypted.");
+        }
+
+        byte[] key = contentKeys.unwrap(video.getContentKey());
+
+        // The player may send a public key it generated itself. When it does, the AES key is sealed
+        // to that key and the raw bytes never cross the network at all — not even inside TLS, which
+        // matters because TLS terminates at the edge (a proxy, a CDN, a WAF) and not here.
+        //
+        // Optional, and the absence of `pk` is the old behaviour exactly. A player that does not
+        // implement this — or a raw hls.js, or ffmpeg — still works.
+        if (clientPublicKey != null && !clientPublicKey.isBlank()) {
+            try {
+                byte[] sealed = contentKeys.sealToClient(key, clientPublicKey);
+                return ResponseEntity.ok()
+                        .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                        .contentLength(sealed.length)
+                        .cacheControl(CacheControl.noStore())
+                        .body(sealed);
+            } catch (IllegalArgumentException badKey) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, badKey.getMessage());
+            }
+        }
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .contentLength(key.length)
+                .cacheControl(CacheControl.noStore())
+                .body(key);
+    }
+
+    /**
      * One segment. Segments are immutable once written, so they get a long private cache lifetime —
      * re-watching or scrubbing backwards then costs nothing.
      */
@@ -665,19 +868,9 @@ public class VideoController {
         return null;
     }
 
-    /** Append the ticket to each segment URI; the filename stays relative to the playlist. */
+    /** Append the ticket to every URI in a playlist — see {@link HlsPlaylistRewriter}. */
     private String appendTicketToUris(String playlist, String ticket) {
-        if (ticket == null || ticket.isBlank()) return playlist;
-        List<String> out = new ArrayList<>();
-        for (String raw : playlist.split("\\r?\\n")) {
-            String line = raw.trim();
-            if (line.isEmpty() || line.startsWith("#")) {
-                out.add(raw);
-            } else {
-                out.add(line + (line.contains("?") ? "&" : "?") + "t=" + ticket);
-            }
-        }
-        return String.join("\n", out) + "\n";
+        return HlsPlaylistRewriter.appendTicket(playlist, ticket);
     }
 
     /**
