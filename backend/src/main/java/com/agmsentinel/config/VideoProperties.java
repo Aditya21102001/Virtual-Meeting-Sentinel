@@ -191,6 +191,20 @@ public class VideoProperties {
          */
         private List<Integer> ladder = List.of(1080, 720, 480, 360);
 
+        /**
+         * Produce rungs taller than the source, by upscaling.
+         *
+         * <p>Off, because upscaling invents no detail: a 720p rung encoded from a 576p master looks
+         * exactly like the 480p one, costs a third encode, and adds storage and bandwidth for a
+         * picture nobody can tell apart. Capping to the source is what most hosted encoders
+         * (Mux, Cloudflare Stream) do for the same reason.
+         *
+         * <p>Turn it on ({@code VIDEO_HLS_UPSCALE=true}) when a fuller ladder matters more than
+         * those costs — some players switch more smoothly with more steps between rungs, and
+         * matching another system's output is a legitimate reason on its own.
+         */
+        private boolean upscale = false;
+
         /** x264 speed/size trade-off. veryfast keeps a 1 h recording tractable on a single box. */
         private String preset = "veryfast";
 
@@ -222,6 +236,8 @@ public class VideoProperties {
         public int getSegmentSeconds() { return segmentSeconds; }
         public void setSegmentSeconds(int segmentSeconds) { this.segmentSeconds = segmentSeconds; }
         public List<Integer> getLadder() { return ladder; }
+        public boolean isUpscale() { return upscale; }
+        public void setUpscale(boolean upscale) { this.upscale = upscale; }
         public void setLadder(List<Integer> ladder) { this.ladder = ladder; }
         public String getPreset() { return preset; }
         public void setPreset(String preset) { this.preset = preset; }

@@ -513,7 +513,10 @@ public class VideoTranscodeService {
         List<Rung> ladder = new ArrayList<>();
         Set<Integer> seen = new HashSet<>();
         for (int height : configured) {
-            if (info.height() > 0 && height > info.height()) continue;
+            // Skip rungs taller than the source, unless upscaling was asked for. Upscaling adds
+            // no detail — a 720p rung from a 576p master is the 480p picture in a bigger file — so
+            // the default is to cap. See VideoProperties.Hls.upscale for when to turn it on.
+            if (!props.getHls().isUpscale() && info.height() > 0 && height > info.height()) continue;
             if (!seen.add(height)) continue;
             int[] bitrates = bitratesFor(height);
             ladder.add(new Rung(height + "p", height, bitrates[0], bitrates[1]));

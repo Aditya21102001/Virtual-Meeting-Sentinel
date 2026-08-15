@@ -323,3 +323,26 @@ this is the wrong mechanism; that needs Widevine or FairPlay.
 **It covers segments only.** The original upload, the poster, the sprite and the transcript are
 stored unencrypted alongside them. If the goal is that a stolen database yields nothing, encrypt at
 the storage layer instead — that covers all of it, rather than a third.
+
+### Rendition ladder
+
+Recordings are encoded into `1080p / 720p / 480p / 360p`, **capped to the source height**. A 576p
+master therefore produces only `480p` and `360p` — that is working as designed, not a fault.
+
+Upscaling invents no detail: a 720p rung encoded from a 576p source is the 480p picture in a larger
+file, costing a third encode plus storage and bandwidth for something nobody can distinguish. Hosted
+encoders such as Mux and Cloudflare Stream cap for the same reason.
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `VIDEO_HLS_LADDER` | `1080,720,480,360` | which heights to attempt |
+| `VIDEO_HLS_UPSCALE` | `false` | `true` produces every rung regardless of source height |
+
+Turn upscaling on if a fuller ladder matters more than the cost — some players switch more smoothly
+with more steps between rungs, and matching another system's output is a fair reason on its own.
+
+The transcode log names what was actually produced:
+
+```
+Transcoding <file> into 2 rendition(s): [480p, 360p]
+```
