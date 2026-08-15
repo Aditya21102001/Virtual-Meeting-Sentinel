@@ -367,6 +367,21 @@ public class VideoTranscodeService {
             shredKeyMaterial(keyDir);
         }
 
+        // POST-CONDITION: if a key was supplied, the output must actually be encrypted.
+        //
+        // This is not defensive padding. A recording was observed in production with a content key
+        // stored in the database and completely unencrypted segments on disk — the row said
+        // "encrypted", the bytes said otherwise, and nothing anywhere disagreed. That is the worst
+        // failure this feature can have: it does not break playback, it just quietly means the
+        // protection somebody was told they had does not exist.
+        //
+        // ffmpeg writes #EXT-X-KEY into each rung's playlist when -hls_key_info_file takes effect,
+        // so its absence is proof the encryption did not happen. Failing here means the upload is
+        // reported as failed rather than succeeding with a false claim about itself.
+        if (contentKey != null) {
+            verifyEncrypted(hlsDir, renditions);
+        }
+
         if (renditions.isEmpty()) {
             throw new IOException("Transcode produced no playable renditions.");
         }
@@ -601,6 +616,27 @@ public class VideoTranscodeService {
      * {@code split}. Options are unqualified because there is exactly one output stream of each
      * kind here, where the one-pass command has to say {@code -c:v:2} to address a specific rung.
      */
+    /**
+     * Confirm every rung really was encrypted, and refuse the transcode if not.
+     *
+     * @throws IOException when a playlist carries no {@code #EXT-X-KEY}, meaning ffmpeg ignored or
+     *                     never received the key file
+     */
+    private void verifyEncrypted(Path hlsDir, List<RenditionOutput> renditions) throws IOException {
+        for (RenditionOutput rendition : renditions) {
+            Path playlist = hlsDir.getParent().resolve(rendition.playlistRel());
+            if (!Files.isRegularFile(playlist)) continue;   // already drained into storage
+            String body = Files.readString(playlist, StandardCharsets.UTF_8);
+            if (!body.contains("#EXT-X-KEY")) {
+                throw new IOException(
+                        "Encryption was requested but " + rendition.name() + " was written without "
+                        + "it — no #EXT-X-KEY in its playlist. Refusing to publish a recording that "
+                        + "would be recorded as encrypted while its segments are in the clear.");
+            }
+        }
+        log.info("Verified: every rendition carries #EXT-X-KEY, so the segments are encrypted.");
+    }
+
     /**
      * Write the three-line file ffmpeg reads the encryption settings from.
      *
