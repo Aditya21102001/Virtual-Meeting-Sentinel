@@ -348,7 +348,11 @@ import {
               Re-process
             </button>
             <button class="danger" (click)="remove(card)" [disabled]="working() === card.video.id">
-              {{ confirming() === card.video.id ? 'Click again to delete' : 'Delete' }}
+              @if (working() === card.video.id) {
+                Deleting…
+              } @else {
+                {{ confirming() === card.video.id ? 'Click again to delete' : 'Delete' }}
+              }
             </button>
           </div>
         </div>

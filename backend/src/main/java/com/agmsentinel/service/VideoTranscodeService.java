@@ -461,7 +461,13 @@ public class VideoTranscodeService {
             Rung rung = ladder.get(i);
             final int done = i;
             List<String> command = buildSingleRungCommand(hlsDir, source, info, rung, keyInfo);
-            log.info("Encoding rung {}/{}: {}", i + 1, total, rung.name());
+            if (canCopyVideo(info, rung)) {
+                log.info("Encoding rung {}/{}: {} — stream copy, no re-encode "
+                         + "(source is already {}), so this rung is identical to the upload.",
+                         i + 1, total, rung.name(), info.videoCodec());
+            } else {
+                log.info("Encoding rung {}/{}: {}", i + 1, total, rung.name());
+            }
             log.debug("ffmpeg command: {}", String.join(" ", command));
 
             // Each rung covers its own slice of the overall bar, so the percentage the admin sees
@@ -696,11 +702,36 @@ public class VideoTranscodeService {
         }
     }
 
+    /**
+     * Can this rung be segmented straight from the source, without re-encoding?
+     *
+     * <p>Only when nothing would change: the rung is the source's own height, and the source is
+     * already H.264, which is what HLS carries anyway. Re-encoding in that situation is pure
+     * generation loss — H.264 in, H.264 out, at a bitrate the ladder guessed rather than the one
+     * the file was made with. That is why an upload could come back looking worse than the same
+     * file played locally while <em>growing</em> on disk: a 19.8 MB source re-encoded into a
+     * 21.1 MB rendition, larger and softer at the same time.
+     */
+    private boolean canCopyVideo(MediaInfo info, Rung rung) {
+        return "h264".equalsIgnoreCase(info.videoCodec())
+                && info.height() > 0
+                && rung.height() == info.height();
+    }
+
+    /** Audio survives untouched when it is already AAC, for the same reason as the video. */
+    private boolean canCopyAudio(MediaInfo info) {
+        return info.hasAudio() && "aac".equalsIgnoreCase(info.audioCodec());
+    }
+
     private List<String> buildSingleRungCommand(Path hlsDir, Path source, MediaInfo info,
                                                 Rung rung, Path keyInfo) {
         int segmentSeconds = Math.max(2, props.getHls().getSegmentSeconds());
         int gop = Math.max(1, (int) Math.round((info.frameRate() > 0 ? info.frameRate() : 25) * segmentSeconds));
         Path rungDir = hlsDir.resolve(rung.name());
+
+        if (canCopyVideo(info, rung)) {
+            return buildCopyRungCommand(rungDir, source, info, rung, keyInfo, segmentSeconds);
+        }
 
         List<String> cmd = ffmpegPrefix();
         cmd.addAll(List.of("-i", source.toString()));
@@ -744,6 +775,54 @@ public class VideoTranscodeService {
                 "-hls_segment_filename", rungDir.resolve("seg_%05d.ts").toString()));
         // Encrypt, when a key was supplied. ffmpeg reads the URI and the key path from this file
         // and writes #EXT-X-KEY into the playlist itself.
+        if (keyInfo != null) {
+            cmd.addAll(List.of("-hls_key_info_file", keyInfo.toString()));
+        }
+        cmd.add(rungDir.resolve(MEDIA_PLAYLIST).toString());
+        return cmd;
+    }
+
+    /**
+     * Segment a rung without re-encoding it — the source's own bytes, cut into .ts files.
+     *
+     * <p>Quality is bit-exact with the upload because no pixel is decoded and re-compressed, and it
+     * costs almost no CPU, so this rung finishes in seconds rather than minutes.
+     *
+     * <p>The trade-off is segment length. A copied stream can only be cut on keyframes the source
+     * already has, so {@code -hls_time} becomes a target rather than a rule and segments land on
+     * the next keyframe after it. HLS allows that — {@code #EXTINF} carries each segment's real
+     * duration — which is why the encode path forces keyframes and this one cannot.
+     *
+     * <p>Encryption is unaffected: {@code -hls_key_info_file} is read by the HLS muxer, downstream
+     * of the codec, so copied segments are encrypted exactly like encoded ones.
+     */
+    private List<String> buildCopyRungCommand(Path rungDir, Path source, MediaInfo info,
+                                              Rung rung, Path keyInfo, int segmentSeconds) {
+        List<String> cmd = ffmpegPrefix();
+        cmd.addAll(List.of("-i", source.toString()));
+        cmd.addAll(List.of("-map", "0:v:0", "-c:v", "copy"));
+
+        if (info.hasAudio()) {
+            if (canCopyAudio(info)) {
+                cmd.addAll(List.of("-map", "0:a:0", "-c:a", "copy"));
+            } else {
+                // Video still copies; only the audio is converted, which is cheap.
+                cmd.addAll(List.of("-map", "0:a:0", "-c:a", "aac",
+                                   "-b:a", rung.audioKbps() + "k", "-ac", "2"));
+            }
+        }
+
+        cmd.addAll(List.of(
+                // No -force_key_frames here: ffmpeg rejects it alongside a copied video stream,
+                // because placing a keyframe means encoding one.
+                "-max_muxing_queue_size", "256",
+                "-f", "hls",
+                "-hls_time", String.valueOf(segmentSeconds),
+                "-hls_playlist_type", "vod",
+                "-hls_flags", "independent_segments+temp_file",
+                "-hls_segment_type", "mpegts",
+                "-hls_list_size", "0",
+                "-hls_segment_filename", rungDir.resolve("seg_%05d.ts").toString()));
         if (keyInfo != null) {
             cmd.addAll(List.of("-hls_key_info_file", keyInfo.toString()));
         }

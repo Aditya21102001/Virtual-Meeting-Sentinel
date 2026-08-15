@@ -194,14 +194,15 @@ public class VideoProperties {
         /**
          * Produce rungs taller than the source, by upscaling.
          *
-         * <p>Off, because upscaling invents no detail: a 720p rung encoded from a 576p master looks
-         * exactly like the 480p one, costs a third encode, and adds storage and bandwidth for a
-         * picture nobody can tell apart. Capping to the source is what most hosted encoders
-         * (Mux, Cloudflare Stream) do for the same reason.
+         * <p>Off, and now for a stronger reason than cost. The rung at the source's own height is
+         * stream-copied rather than re-encoded (see canCopyVideo), so it is bit-exact with the
+         * upload. An upscaled rung above it would be a re-encode, and the player picks the highest
+         * rung the connection allows — so switching this on replaces a perfect copy with a lossy
+         * enlargement of it as the best available quality. Fewer rungs, the top one untouched,
+         * beats more rungs where the top one is worse than the file that was uploaded.
          *
-         * <p>Turn it on ({@code VIDEO_HLS_UPSCALE=true}) when a fuller ladder matters more than
-         * those costs — some players switch more smoothly with more steps between rungs, and
-         * matching another system's output is a legitimate reason on its own.
+         * <p>{@code VIDEO_HLS_UPSCALE=true} still forces the fuller ladder where matching another
+         * system's rendition list matters more than that.
          */
         private boolean upscale = false;
 

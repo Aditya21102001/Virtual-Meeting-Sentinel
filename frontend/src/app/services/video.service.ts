@@ -1,6 +1,6 @@
 import { HttpClient, HttpContext, HttpEvent, HttpEventType } from "@angular/common/http";
 import { Injectable, computed, inject, signal } from "@angular/core";
-import { Observable, Subscription, map } from "rxjs";
+import { Observable, Subscription, map, timeout } from "rxjs";
 import { environment } from "../../environments/environment";
 import { SILENT } from "./loading.service";
 import { AuthService } from "./auth.service";
@@ -516,8 +516,19 @@ export class VideoService {
       { id },
       {
         headers: this.headers(),
+        // SILENT, like reprocess() above. Deleting a recording removes its renditions, segments,
+        // thumbnails and embeddings, so it is not instant — and the global overlay is modal, which
+        // meant one admin deleting one card froze the whole application for everyone looking at it.
+        // The card disables its own buttons and shows "Deleting…" while this runs, so the feedback
+        // is local to the thing being deleted, which is where it belongs.
+        context: new HttpContext().set(SILENT, true),
       },
-    );
+    )
+      // SILENT skips the interceptor, and its timeout with it. Without a ceiling here, a request
+      // that never settles — what a sleeping instance behind a proxy actually produces — leaves the
+      // card disabled on "Deleting…" until the page is reloaded. Erroring out restores the buttons
+      // and shows why. Same two minutes the interceptor would have applied.
+      .pipe(timeout(120000));
   }
 
   /** Backend media URLs are root-relative; resolve them against the Render API, not Vercel. */
