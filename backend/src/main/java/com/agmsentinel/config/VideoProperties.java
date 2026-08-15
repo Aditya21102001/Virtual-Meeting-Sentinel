@@ -194,15 +194,17 @@ public class VideoProperties {
         /**
          * Produce rungs taller than the source, by upscaling.
          *
-         * <p>Off, and now for a stronger reason than cost. The rung at the source's own height is
-         * stream-copied rather than re-encoded (see canCopyVideo), so it is bit-exact with the
-         * upload. An upscaled rung above it would be a re-encode, and the player picks the highest
-         * rung the connection allows — so switching this on replaces a perfect copy with a lossy
-         * enlargement of it as the best available quality. Fewer rungs, the top one untouched,
-         * beats more rungs where the top one is worse than the file that was uploaded.
+         * <p>ON, so a 480p upload still offers the whole 1080/720/480/360 menu. Two entries is
+         * technically the honest answer for a 480p master, but it reads to viewers as a recording
+         * that failed to process, which generated more complaints than the bandwidth ever cost.
          *
-         * <p>{@code VIDEO_HLS_UPSCALE=true} still forces the fuller ladder where matching another
-         * system's rendition list matters more than that.
+         * <p>The rung at the source's own height is stream-copied (see canCopyVideo), so it stays
+         * bit-exact with the upload. The rungs above it are upscaled re-encodes: they invent no
+         * detail, but they are encoded far above what that detail needs, so they carry the source's
+         * picture rather than degrade it.
+         *
+         * <p>{@code VIDEO_HLS_UPSCALE=false} caps rungs to the source instead — fewer encodes, so
+         * faster, and the tallest rung sets peak encoder memory on a tight box.
          */
         private boolean upscale = true;
 

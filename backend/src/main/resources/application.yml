@@ -111,10 +111,12 @@ video:
     segment-seconds: ${VIDEO_SEGMENT_SECONDS:6}
     # Rungs are capped to the source resolution, so a 720p upload only produces 720p and below.
     ladder: ${VIDEO_LADDER:1080,720,480,360}
-    # Emit rungs TALLER than the source. Off: the rung at the source's own height is stream-copied,
-    # so it is identical to the upload. An upscaled rung above it would be a RE-ENCODE, and players
-    # pick the highest rung available — turning this on therefore makes the best quality on offer
-    # worse than the file that was uploaded. Set true only to match another system's rendition list.
+    # Emit rungs TALLER than the source, so a 480p upload still offers the full 1080/720/480/360
+    # menu. ON by default: two entries read to viewers as a recording that failed to process.
+    # The rung at the source's own height is stream-copied and so is identical to the upload; the
+    # rungs above it are upscaled re-encodes, which carry no extra detail but are encoded well
+    # above what that detail needs, so they look like the source and cost time and storage.
+    # Set false to cap to the source: fewer rungs, faster encodes, lower peak encoder memory.
     upscale: ${VIDEO_HLS_UPSCALE:true}
     preset: ${VIDEO_X264_PRESET:veryfast}
     # Encode every rung in ONE ffmpeg run (one decode, N simultaneous encoders)? Off by default.
