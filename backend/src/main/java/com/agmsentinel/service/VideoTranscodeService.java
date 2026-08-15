@@ -503,8 +503,37 @@ public class VideoTranscodeService {
         String rungRel = HLS_DIR + "/" + rung.name() + "/";
         Path playlist = hlsDir.resolve(rung.name()).resolve(MEDIA_PLAYLIST);
         List<SegmentInfo> segments = readMediaPlaylist(playlist, rungRel, drained);
-        return new RenditionOutput(rung.name(), width, height, rung.videoKbps(), rung.audioKbps(),
-                                   rungRel + MEDIA_PLAYLIST, segments);
+        int videoKbps = measuredKbps(segments, rung.videoKbps() + rung.audioKbps())
+                        - rung.audioKbps();
+        return new RenditionOutput(rung.name(), width, height, Math.max(1, videoKbps),
+                                   rung.audioKbps(), rungRel + MEDIA_PLAYLIST, segments);
+    }
+
+    /**
+     * The rung's real bitrate, measured from the segments that were actually written.
+     *
+     * <p>The ladder's number is a target handed to the encoder, and for an encoded rung the two
+     * agree closely. For a stream-copied rung they need not agree at all: nothing was encoded, so
+     * the bitrate is whatever the upload happened to be — which can be far above or below the
+     * target the ladder would have guessed.
+     *
+     * <p>That distinction decides whether ABR works. Players choose a variant by comparing
+     * {@code BANDWIDTH} against measured throughput, so a rung advertised at 1400 kbps that really
+     * carries 4000 kbps gets picked on a connection that cannot sustain it, and the result is a
+     * stall rather than a downswitch. Advertising the peak — per the HLS spec, the highest bitrate
+     * of any single segment, not the average — keeps the decision honest, because the peak segment
+     * is the one that has to arrive in time.
+     *
+     * @param fallbackKbps used when the playlist yielded nothing measurable, so a missing size
+     *                     never produces a zero-bandwidth variant that players would reject.
+     */
+    private int measuredKbps(List<SegmentInfo> segments, int fallbackKbps) {
+        double peak = 0;
+        for (SegmentInfo segment : segments) {
+            if (segment.durationSeconds() <= 0 || segment.byteSize() <= 0) continue;
+            peak = Math.max(peak, segment.byteSize() * 8.0 / segment.durationSeconds() / 1000.0);
+        }
+        return peak > 0 ? (int) Math.ceil(peak) : fallbackKbps;
     }
 
     /**
