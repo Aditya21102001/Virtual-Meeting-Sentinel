@@ -115,7 +115,7 @@ video:
     # so it is identical to the upload. An upscaled rung above it would be a RE-ENCODE, and players
     # pick the highest rung available — turning this on therefore makes the best quality on offer
     # worse than the file that was uploaded. Set true only to match another system's rendition list.
-    upscale: ${VIDEO_HLS_UPSCALE:false}
+    upscale: ${VIDEO_HLS_UPSCALE:true}
     preset: ${VIDEO_X264_PRESET:veryfast}
     # Encode every rung in ONE ffmpeg run (one decode, N simultaneous encoders)? Off by default.
     # One pass is faster in wall-clock terms, but every x264 encoder allocates its buffers at

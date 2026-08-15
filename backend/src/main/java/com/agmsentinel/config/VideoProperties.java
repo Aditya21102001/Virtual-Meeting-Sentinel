@@ -204,7 +204,7 @@ public class VideoProperties {
          * <p>{@code VIDEO_HLS_UPSCALE=true} still forces the fuller ladder where matching another
          * system's rendition list matters more than that.
          */
-        private boolean upscale = false;
+        private boolean upscale = true;
 
         /** x264 speed/size trade-off. veryfast keeps a 1 h recording tractable on a single box. */
         private String preset = "veryfast";
