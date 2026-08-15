@@ -431,14 +431,33 @@ public class VideoController {
      * pattern and resolved relative to the rendition's own stored playlist, exactly as the GET route
      * does. The caller never supplies a path.
      */
-    @PostMapping("/media")
-    public ResponseEntity<byte[]> media(@RequestBody MediaRequest req) {
+    @PostMapping({"/media", "/media/{label}"})
+    public ResponseEntity<byte[]> media(@RequestBody MediaRequest req,
+                                        @PathVariable(required = false) String label) {
+        // `label` is cosmetic and deliberately ignored. The browser's network panel names a request
+        // after its last path segment, so with everything posted to a bare /media the whole ladder
+        // appeared as an indistinguishable column of "media" rows — the exact readability that GET
+        // URLs gave for free and that moving to POST threw away. Carrying a label restores it
+        // (media_segment_00028, media_playlist_480p) without putting anything meaningful in the URL:
+        // the body is still the only authority, so nothing here can be tampered with by editing it.
         Video video = authorise(req.id(), req.ticket());
         String kind = req.kind() == null ? "" : req.kind();
 
         if ("master".equals(kind)) {
-            String body = HlsPlaylistRewriter.appendTicket(
-                    media.readText(video, video.getMasterPlaylistRel()), req.ticket());
+            if (video.getMasterPlaylistRel() == null) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "This video has no HLS manifest; use the progressive stream instead.");
+            }
+            // rewriteMaster, NOT just appendTicket — and the difference broke playback outright.
+            //
+            // The stored master refers to its rungs by their on-disk path ("360p/index.m3u8").
+            // rewriteMaster maps those onto the served route ("r/360p/index.m3u8") as well as
+            // carrying the ticket. Appending the ticket alone left the on-disk form, so the player
+            // asked for /api/videos/{id}/360p/index.m3u8 — a route that does not exist — and got
+            // 401 from the catch-all security rule. The video never started, and the POST itself
+            // had succeeded, so the GET fallback never triggered.
+            String body = rewriteMaster(media.readText(video, video.getMasterPlaylistRel()),
+                                        video, req.ticket());
             return mediaBytes(body.getBytes(StandardCharsets.UTF_8), HLS);
         }
 

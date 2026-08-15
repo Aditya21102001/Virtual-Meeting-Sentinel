@@ -175,7 +175,11 @@ function ensureServerKey(): Promise<CryptoKey> {
 }
 
 async function fetchMedia(target: MediaTarget): Promise<ArrayBuffer> {
-  return postFor(`${environment.apiBase}/api/videos/media`, {
+  // The label is cosmetic and the server ignores it — it exists so the browser's network panel,
+  // which names a row after the last path segment, shows media_segment_00028 rather than a column
+  // of identical "media" entries. That readability came free with GET URLs and was the one real
+  // cost of moving to POST.
+  return postFor(`${environment.apiBase}/api/videos/media/${label(target)}`, {
     id: target.id,
     kind: target.kind,
     rendition: target.rendition,
@@ -237,6 +241,15 @@ function parseMediaUrl(raw: string): MediaTarget | null {
   if (master) return { kind: 'master', id: master[1], rendition: '', filename: '', ticket };
 
   return null;
+}
+
+/** A human-readable name for the network panel: media_segment_00028, media_playlist_480p. */
+function label(target: MediaTarget): string {
+  if (target.kind === 'segment') {
+    return 'segment_' + (target.filename.match(/seg_(\d+)/)?.[1] ?? '0');
+  }
+  if (target.kind === 'playlist') return 'playlist_' + target.rendition;
+  return target.kind;
 }
 
 function base64(buffer: ArrayBuffer): string {
