@@ -546,7 +546,16 @@ public class VideoTranscodeService {
      */
     private void writeMasterPlaylist(Path hlsDir, List<RenditionOutput> renditions) throws IOException {
         StringBuilder master = new StringBuilder("#EXTM3U\n#EXT-X-VERSION:3\n");
-        for (RenditionOutput rendition : renditions) {
+        // Ascending BANDWIDTH, which the ladder no longer guarantees. Rungs are built tallest-first
+        // and their bitrates used to follow, because every one was encoded to a ladder target. A
+        // stream-copied rung carries the upload's own bitrate instead, so a lightly-compressed 480p
+        // source can measure BELOW the 360p rung encoded beside it and inverts the order. Players
+        // walk the variant list to choose, so an inverted list can leave a client on the smaller
+        // picture while it believes it upgraded. Sorting costs nothing and removes the whole class.
+        List<RenditionOutput> ordered = renditions.stream()
+                .sorted(Comparator.comparingInt(r -> r.videoKbps() + r.audioKbps()))
+                .toList();
+        for (RenditionOutput rendition : ordered) {
             long bandwidth = (rendition.videoKbps() + rendition.audioKbps()) * 1000L;
             master.append("#EXT-X-STREAM-INF:BANDWIDTH=").append(bandwidth);
             if (rendition.width() > 0 && rendition.height() > 0) {
