@@ -32,8 +32,11 @@ public class VideoEngagementService {
 
     private final VideoLikeRepository likes;
     private final VideoCommentRepository comments;
+    private final VideoWatchService watches;
 
-    public VideoEngagementService(VideoLikeRepository likes, VideoCommentRepository comments) {
+    public VideoEngagementService(VideoLikeRepository likes, VideoCommentRepository comments,
+                                  VideoWatchService watches) {
+        this.watches = watches;
         this.likes = likes;
         this.comments = comments;
     }
@@ -53,22 +56,33 @@ public class VideoEngagementService {
         Map<UUID, Long> likeCounts = tally(likes.countsByVideo(ids));
         Map<UUID, Long> commentCounts = tally(comments.countsByVideo(ids));
         Set<UUID> mine = viewer == null ? Set.of() : new HashSet<>(likes.likedByMe(viewer, ids));
+        // A fourth batched query, not one per card. Resume positions are deliberately NOT loaded
+        // here: the library shows a progress bar per card from this same batch, and asking for one
+        // member's position per recording would undo the batching the rest of this method exists for.
+        Map<UUID, Long> viewerCounts = watches.viewerCounts(ids);
 
         return cards.stream()
                 .map(card -> card.withEngagement(new VideoEngagement(
                         likeCounts.getOrDefault(card.video().id(), 0L),
                         mine.contains(card.video().id()),
-                        commentCounts.getOrDefault(card.video().id(), 0L))))
+                        commentCounts.getOrDefault(card.video().id(), 0L),
+                        viewerCounts.getOrDefault(card.video().id(), 0L),
+                        0)))
                 .toList();
     }
 
     /** Engagement for a single recording. */
     @Transactional(readOnly = true)
     public VideoEngagement engagementOf(UUID videoId, String viewer) {
+        // The single-card path DOES resolve the resume position: this is the call the player makes
+        // when opening a recording, and it is exactly where "continue from where you left off" has
+        // to come from.
         return new VideoEngagement(
                 likes.countByVideoId(videoId),
                 viewer != null && likes.findByVideoIdAndUsername(videoId, viewer).isPresent(),
-                comments.findByVideoIdOrderByCreatedAtAsc(videoId).size());
+                comments.findByVideoIdOrderByCreatedAtAsc(videoId).size(),
+                watches.viewerCounts(List.of(videoId)).getOrDefault(videoId, 0L),
+                watches.resumePosition(videoId, viewer));
     }
 
     @Transactional(readOnly = true)

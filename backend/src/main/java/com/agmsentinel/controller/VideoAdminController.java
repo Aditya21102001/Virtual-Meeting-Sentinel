@@ -1,5 +1,7 @@
 package com.agmsentinel.controller;
 
+import com.agmsentinel.dto.VideoDtos.ChapterView;
+import com.agmsentinel.dto.VideoDtos.SaveChaptersRequest;
 import com.agmsentinel.dto.VideoDtos.VideoCard;
 import com.agmsentinel.model.Video;
 import com.agmsentinel.dto.VideoDtos.VideoStorageStatus;
@@ -7,6 +9,7 @@ import com.agmsentinel.security.Feature;
 import com.agmsentinel.security.RequiresFeature;
 import com.agmsentinel.service.AiClient;
 import com.agmsentinel.service.SubtitleConverter;
+import com.agmsentinel.service.VideoChapterService;
 import com.agmsentinel.service.VideoLibraryService;
 import com.agmsentinel.service.VideoUrlFactory;
 import jakarta.validation.constraints.NotNull;
@@ -58,13 +61,16 @@ public class VideoAdminController {
     private final VideoUrlFactory urls;
     private final SubtitleConverter subtitles;
     private final AiClient ai;
+    private final VideoChapterService chapters;
 
     public VideoAdminController(VideoLibraryService library, VideoUrlFactory urls,
-                                SubtitleConverter subtitles, AiClient ai) {
+                                SubtitleConverter subtitles, AiClient ai,
+                                VideoChapterService chapters) {
         this.library = library;
         this.urls = urls;
         this.subtitles = subtitles;
         this.ai = ai;
+        this.chapters = chapters;
     }
 
     /** Identifies one video. In the body rather than the path, so the URL stays a readable name. */
@@ -183,6 +189,34 @@ public class VideoAdminController {
     @PostMapping("/delete-transcript")
     public VideoCard deleteTranscript(@RequestBody VideoRef req) {
         return urls.card(library.deleteTranscript(req.id()), currentSubject());
+    }
+
+    // ---- chapters ------------------------------------------------------------
+
+    /**
+     * Replace this recording's agenda — the named points a viewer can jump to.
+     *
+     * <p>The whole list every time, not one chapter at a time. Editing an agenda means renaming,
+     * moving and deleting entries together, and a per-row API would let a client leave the set
+     * half-applied: markers on the progress bar that disagree with the chapter list beside it.
+     *
+     * <p>Ordinals and ordering are decided here from the start times, so the client can send its
+     * rows in whatever order the moderator happened to type them.
+     */
+    @RequiresFeature(Feature.VIDEO_CHAPTERS)
+    @PostMapping("/save-chapters")
+    public VideoCard saveChapters(@RequestBody SaveChaptersRequest req) {
+        Video video = library.get(req.id());
+        chapters.replace(video.getId(), req.chapters());
+        return urls.card(video, currentSubject())
+                   .withChapters(chapters.forVideo(video.getId()));
+    }
+
+    /** Read them back for the editor. Also the way to confirm a save actually landed. */
+    @RequiresFeature(Feature.VIDEO_CHAPTERS)
+    @PostMapping("/list-chapters")
+    public List<ChapterView> listChapters(@RequestBody VideoRef req) {
+        return chapters.forVideo(library.get(req.id()).getId());
     }
 
     /** Remove the catalogue row, its segment index, and the whole folder on the NAS. */

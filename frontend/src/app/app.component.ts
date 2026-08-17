@@ -272,6 +272,7 @@ import { MeetingService } from "./services/meeting.service";
             [card]="card"
             [autoplay]="true"
             [startAt]="playerHost.startAt()"
+            (finished)="onPlaybackFinished()"
           ></app-video-player>
         </div>
       }
@@ -729,6 +730,21 @@ export class AppComponent {
     const player = this.hostedPlayer() ?? null;
     untracked(() => this.playerHost.registerPlayer(player));
   });
+
+  /**
+   * A recording reached its end.
+   *
+   * <p>Handled here rather than inside the player because what plays next belongs to the library,
+   * not to the playback surface — and this component is where the player actually lives, so it is
+   * the one place that can act on it without reaching across a router outlet.
+   *
+   * <p>Does nothing unless the viewer asked for autoplay. Silence at the end of a recording is the
+   * correct default for board meetings; rolling into an unrelated AGM is not.
+   */
+  protected onPlaybackFinished(): void {
+    if (!this.playerHost.autoplayNext()) return;
+    this.playerHost.playNext();
+  }
 
   private sessionLoadedFor: boolean | null = null;
 

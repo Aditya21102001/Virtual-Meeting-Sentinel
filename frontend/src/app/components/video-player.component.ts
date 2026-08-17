@@ -6,6 +6,7 @@ import {
   effect,
   inject,
   input,
+  output,
   signal,
   untracked,
   viewChild,
@@ -13,6 +14,8 @@ import {
 import Hls, { ErrorData, Events, Level } from 'hls.js';
 import { createMediaLoader } from '../services/sealed-key-loader';
 import { PlaybackProgressService } from '../services/playback-progress.service';
+import { PlayerHostService } from '../services/player-host.service';
+import { FeatureService } from '../services/feature.service';
 import {
   SegmentLocation,
   TranscriptCue,
@@ -123,6 +126,43 @@ interface QualityOption {
         <div class="caption"><span>{{ cue.text }}</span></div>
       }
 
+      <!--
+        Chapter list. An overlay rather than a column beside the video: the player is embedded at
+        whatever width the page gives it, and a side panel would have to steal that width from the
+        picture on exactly the small screens where the picture matters most.
+      -->
+      @if (chaptersOpen() && chapterSpans().length) {
+        <div class="chapters">
+          <div class="chapters-head">
+            <strong>Chapters</strong>
+            <button
+              class="icon"
+              type="button"
+              (click)="chaptersOpen.set(false)"
+              aria-label="Close chapters"
+            >
+              ✕
+            </button>
+          </div>
+          <ol>
+            @for (chapter of chapterSpans(); track chapter.id) {
+              <li>
+                <button
+                  type="button"
+                  class="chapter-row"
+                  [class.current]="activeChapter()?.id === chapter.id"
+                  (click)="jumpToChapter(chapter.startSeconds)"
+                  [attr.aria-current]="activeChapter()?.id === chapter.id ? 'true' : null"
+                >
+                  <span class="chapter-time">{{ timecode(chapter.startSeconds) }}</span>
+                  <span class="chapter-title">{{ chapter.title }}</span>
+                </button>
+              </li>
+            }
+          </ol>
+        </div>
+      }
+
       <!-- Stats: makes the adaptive behaviour visible instead of implied. -->
       @if (statsOpen()) {
         <div class="stats">
@@ -179,6 +219,16 @@ interface QualityOption {
               ></div>
             }
             <div class="played" [style.width.%]="playedPercent()"></div>
+            <!--
+              Chapter dividers. Thin gaps cut into the bar at each boundary rather than separate
+              sub-bars: the played fill and buffered ranges already span the whole track, so drawing
+              per-chapter bars would mean re-implementing both on top of them.
+            -->
+            @for (chapter of chapterSpans(); track chapter.id) {
+              @if (chapter.leftPercent > 0) {
+                <div class="chapter-divider" [style.left.%]="chapter.leftPercent"></div>
+              }
+            }
             <div class="knob" [style.left.%]="playedPercent()"></div>
           </div>
 
@@ -192,6 +242,10 @@ interface QualityOption {
                   [style.width.px]="sprite.width"
                   [style.height.px]="sprite.height"
                 ></div>
+              }
+              <!-- Which agenda item you would land on, above the timecode, as YouTube does. -->
+              @if (hoveredChapter(); as chapter) {
+                <span class="preview-chapter">{{ chapter.title }}</span>
               }
               <span class="preview-time">{{ timecode(hoverTime()!) }}</span>
             </div>
@@ -222,6 +276,21 @@ interface QualityOption {
           </div>
 
           <span class="time">{{ timecode(currentTime()) }} / {{ timecode(duration()) }}</span>
+
+          <!--
+            Which agenda item is playing, next to the clock as YouTube shows it. Clicking it opens
+            the list, which is the gesture people already expect from that label.
+          -->
+          @if (activeChapter(); as chapter) {
+            <button
+              type="button"
+              class="now-chapter"
+              (click)="chaptersOpen.set(!chaptersOpen())"
+              [title]="chapter.title"
+            >
+              {{ chapter.title }}
+            </button>
+          }
 
           <span class="spacer"></span>
 
@@ -296,6 +365,33 @@ interface QualityOption {
           <button
             class="icon"
             type="button"
+            [class.on]="loopEnabled()"
+            (click)="loopEnabled.set(!loopEnabled())"
+            [attr.aria-label]="loopEnabled() ? 'Turn off loop' : 'Loop this recording'"
+            [attr.aria-pressed]="loopEnabled()"
+            title="Loop"
+          >
+            ↻
+          </button>
+
+          <!-- Same rule as captions: no agenda, no button. -->
+          @if (chapterSpans().length) {
+            <button
+              class="icon"
+              type="button"
+              [class.on]="chaptersOpen()"
+              (click)="chaptersOpen.set(!chaptersOpen())"
+              [attr.aria-label]="chaptersOpen() ? 'Hide chapters' : 'Show chapters'"
+              [attr.aria-pressed]="chaptersOpen()"
+              title="Chapters"
+            >
+              ☰
+            </button>
+          }
+
+          <button
+            class="icon"
+            type="button"
             [class.on]="statsOpen()"
             (click)="statsOpen.set(!statsOpen())"
             aria-label="Stream stats"
@@ -306,6 +402,23 @@ interface QualityOption {
           @if (pipSupported) {
             <button class="icon" type="button" (click)="togglePip()" aria-label="Picture in picture">
               ⧉
+            </button>
+          }
+          <!--
+            Theater mode. Hidden in fullscreen, where it would do nothing: fullscreen is already
+            strictly wider, so offering both would present a choice with no visible effect.
+          -->
+          @if (!isFullscreen()) {
+            <button
+              class="icon"
+              type="button"
+              [class.on]="theater()"
+              (click)="toggleTheater()"
+              [attr.aria-label]="theater() ? 'Exit theater mode' : 'Theater mode'"
+              [attr.aria-pressed]="theater()"
+              title="Theater mode (t)"
+            >
+              {{ theater() ? '▭' : '▬' }}
             </button>
           }
           <button
@@ -322,7 +435,7 @@ interface QualityOption {
 
     <p class="shortcuts muted">
       <strong>Keys:</strong> space play/pause · ←/→ 5s · J/L 10s · ↑/↓ volume · M mute · F fullscreen
-      · P picture-in-picture · 0–9 jump to % · , / . frame step
+      · T theater · P picture-in-picture · 0–9 jump to % · , / . frame step
     </p>
   `,
   styles: [
@@ -472,6 +585,103 @@ interface QualityOption {
       }
 
       /* ---- stats ---- */
+      /* ---- chapters ---- */
+      /* Left, mirroring the stats panel on the right, so both can be open without overlapping. */
+      .chapters {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background: #0f172aee;
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 12px;
+        min-width: 220px;
+        max-width: min(360px, calc(100% - 20px));
+        /* A long agenda scrolls inside the panel rather than growing past the video. */
+        max-height: calc(100% - 20px);
+        overflow-y: auto;
+        z-index: 3;
+      }
+      .chapters-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 6px;
+      }
+      .chapters ol {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .chapter-row {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 10px;
+        width: 100%;
+        text-align: left;
+        background: none;
+        border: 0;
+        color: inherit;
+        font: inherit;
+        padding: 5px 6px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .chapter-row:hover,
+      .chapter-row:focus-visible {
+        background: #1e293b;
+      }
+      .chapter-row.current {
+        background: #1e293b;
+        /* The bar, not colour alone — the current row must be identifiable without colour vision. */
+        box-shadow: inset 3px 0 0 var(--accent, #38bdf8);
+      }
+      .chapter-time {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .chapter-row.current .chapter-title {
+        font-weight: 600;
+      }
+      /* Divider cut into the scrubber at each boundary. Non-interactive: the click belongs to the
+         track underneath, so seeking still works when the pointer lands exactly on a marker. */
+      .chapter-divider {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        margin-left: -1px;
+        background: #0f172a;
+        pointer-events: none;
+      }
+      .preview-chapter {
+        display: block;
+        max-width: 180px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        text-align: center;
+        font-size: 11px;
+        color: #e2e8f0;
+      }
+      /* Truncates rather than pushing the controls around as chapter titles change length. */
+      .now-chapter {
+        background: none;
+        border: 0;
+        color: var(--muted);
+        font: inherit;
+        cursor: pointer;
+        padding: 0 4px;
+        max-width: 22ch;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .now-chapter:hover {
+        color: #e2e8f0;
+      }
+
       .stats {
         position: absolute;
         top: 10px;
@@ -710,6 +920,42 @@ export class VideoPlayerComponent implements OnDestroy {
   readonly card = input.required<VideoCard>();
   /** Start playing as soon as the manifest is parsed. */
   readonly autoplay = input(false);
+
+  /**
+   * Fired when the recording reaches the end and is not looping.
+   *
+   * <p>An event rather than the player picking the next recording itself: what plays next is a
+   * property of the library, and a player that reached into the catalogue could not be reused
+   * anywhere the catalogue is not (Picture-in-Picture, a shared link, an embedded preview).
+   */
+  readonly finished = output<void>();
+
+  /**
+   * Repeat this recording instead of ending.
+   *
+   * <p>Local to the player and off by default. Deliberately not remembered between recordings: loop
+   * is a decision about the thing being watched right now, and silently carrying it into the next
+   * recording would trap someone in a replay they never asked for.
+   */
+  readonly loopEnabled = signal(false);
+
+  /**
+   * Theater mode, owned by the host service.
+   *
+   * <p>Read through rather than duplicated: the player cannot resize itself — it is drawn over a
+   * slot the page reserves — so the single copy of this state has to be the one the page reads.
+   *
+   * <p>A getter, not a field. Field initialisers run in declaration order, and the injected host
+   * service is declared further down with the rest of them — reading it here would be reading
+   * `undefined`. The getter defers the read to call time, when everything is constructed.
+   */
+  get theater() {
+    return this.host.theater;
+  }
+
+  toggleTheater(): void {
+    this.host.theater.set(!this.host.theater());
+  }
   /**
    * Second to begin at, overriding any stored resume point.
    *
@@ -843,6 +1089,9 @@ export class VideoPlayerComponent implements OnDestroy {
 
   private readonly progress = inject(PlaybackProgressService);
   private readonly videos = inject(VideoService);
+  /** Theater mode and the up-next queue live here — the player is drawn over its slot. */
+  private readonly host = inject(PlayerHostService);
+  private readonly features = inject(FeatureService);
 
   /** Set when this video started somewhere other than zero, so the UI can offer "start over". */
   readonly resumedFrom = signal<number | null>(null);
@@ -911,6 +1160,66 @@ export class VideoPlayerComponent implements OnDestroy {
     const at = this.currentTime();
     return this.cues().find((c) => at >= c.startSeconds && at < c.endSeconds) ?? null;
   });
+
+  // ---- chapters ---------------------------------------------------------------
+
+  /**
+   * The agenda, with each chapter's end filled in.
+   *
+   * <p>The server sends only start times, because an end is the next chapter's start and storing
+   * both invites the two to disagree. The player needs spans though — to size the marker segments on
+   * the progress bar and to decide which chapter the playhead is inside — so the ends are derived
+   * here, once, rather than at every read. The last chapter runs to the duration; while the metadata
+   * is still loading that is 0, so it falls back to the start and simply renders as a zero-width
+   * final segment until the duration arrives.
+   */
+  readonly chapterSpans = computed(() => {
+    const chapters = this.card()?.chapters ?? [];
+    const total = this.duration();
+    return chapters.map((chapter, index) => {
+      const next = chapters[index + 1];
+      const end = next ? next.startSeconds : Math.max(total, chapter.startSeconds);
+      return { ...chapter, endSeconds: end, widthPercent: total > 0 ? ((end - chapter.startSeconds) / total) * 100 : 0, leftPercent: total > 0 ? (chapter.startSeconds / total) * 100 : 0 };
+    });
+  });
+
+  /** Whether to show the chapter list. Only ever offered when there is an agenda to show. */
+  readonly chaptersOpen = signal(false);
+
+  /**
+   * The chapter containing the playhead.
+   *
+   * <p>Found from the end backwards: the first chapter whose start is at or before now is the one we
+   * are in, and scanning in reverse means the answer is the first match rather than the last. Cheap
+   * enough to recompute on every time update — an agenda is tens of rows, not thousands like cues.
+   */
+  readonly activeChapter = computed(() => {
+    const at = this.currentTime();
+    const spans = this.chapterSpans();
+    for (let i = spans.length - 1; i >= 0; i--) {
+      if (at >= spans[i].startSeconds) return spans[i];
+    }
+    return null;
+  });
+
+  /** The chapter under the scrub cursor, so the seek preview can name where you would land. */
+  readonly hoveredChapter = computed(() => {
+    const at = this.hoverTime();
+    if (at === null) return null;
+    const spans = this.chapterSpans();
+    for (let i = spans.length - 1; i >= 0; i--) {
+      if (at >= spans[i].startSeconds) return spans[i];
+    }
+    return null;
+  });
+
+  /** Jump to a chapter. Closing the list is deliberate: the point of the click was to watch. */
+  jumpToChapter(startSeconds: number): void {
+    this.seekTo(startSeconds);
+    this.chaptersOpen.set(false);
+    const element = this.mediaRef().nativeElement;
+    if (element.paused) void element.play().catch(() => undefined);
+  }
 
   /** Ticks of the 500 ms stats timer since the last write; see {@link rememberPosition}. */
   private sinceLastSave = 0;
@@ -1209,6 +1518,25 @@ export class VideoPlayerComponent implements OnDestroy {
       this.clearResumePoint();
       this.resumedFrom.set(null);
       this.resumeLocation.set(null);
+
+      // Tell the server it was finished, so it leaves "Continue watching". Forced past the throttle
+      // because this is the last report there will be for this recording.
+      if (this.activeVideoId && this.features.enabled('VIDEO_WATCH_TRACKING')) {
+        const total = element.duration;
+        this.videos
+            .reportProgress(this.activeVideoId, Number.isFinite(total) ? total : element.currentTime,
+                            Number.isFinite(total) ? total : null)
+            .subscribe({ error: () => undefined });
+      }
+
+      if (this.loopEnabled()) {
+        // Loop wins over up-next: it is an explicit instruction to repeat this recording, and the
+        // queue would otherwise silently override it.
+        this.seekTo(0);
+        void element.play().catch(() => undefined);
+        return;
+      }
+      this.finished.emit();
     });
     element.addEventListener('waiting', () => this.buffering.set(true));
     element.addEventListener('playing', () => this.buffering.set(false));
@@ -1304,6 +1632,34 @@ export class VideoPlayerComponent implements OnDestroy {
     if (element.ended) return;   // 'ended' clears the point; do not immediately re-save it
     if (!this.activeVideoId) return;
     this.progress.save(this.activeVideoId, seconds, Number.isFinite(total) ? total : 0);
+    this.reportProgressToServer(this.activeVideoId, seconds, total);
+  }
+
+  /**
+   * Mirror the playhead to the server, far less often than to `localStorage`.
+   *
+   * <p>Both are needed and neither replaces the other: local storage is instant and survives an
+   * offline tab, the server is what lets a shareholder start on a laptop and finish on a phone, and
+   * what makes the view count and the "Continue watching" row possible at all.
+   *
+   * <p>Every sixth write — so roughly every thirty seconds of playback rather than every five. This
+   * is a network round-trip per recording per viewer, and resume accuracy to the nearest half-minute
+   * is indistinguishable from perfect to the person watching.
+   *
+   * <p>Errors are swallowed on purpose. A dropped report costs a little resume precision; surfacing
+   * it would interrupt playback to report something the viewer cannot act on.
+   */
+  private serverReportsSkipped = 0;
+  private reportProgressToServer(videoId: string, seconds: number, total: number): void {
+    // Checked client-side as well as server-side. With the flag off the endpoint returns 403, and
+    // this fires on a timer — so without this the console and network panel would fill with a
+    // rejected request every thirty seconds for the whole length of every recording.
+    if (!this.features.enabled('VIDEO_WATCH_TRACKING')) return;
+    if (++this.serverReportsSkipped < 6) return;
+    this.serverReportsSkipped = 0;
+    this.videos
+        .reportProgress(videoId, seconds, Number.isFinite(total) ? total : null)
+        .subscribe({ error: () => undefined });
   }
 
   /** Discard the resume point and jump back to the beginning. */
@@ -1544,6 +1900,11 @@ export class VideoPlayerComponent implements OnDestroy {
       case 'f':
       case 'F':
         void this.toggleFullscreen();
+        break;
+      // 't' for theater, the same key YouTube uses.
+      case 't':
+      case 'T':
+        this.toggleTheater();
         break;
       case 'r':
       case 'R':

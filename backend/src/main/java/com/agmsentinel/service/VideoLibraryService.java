@@ -61,6 +61,8 @@ public class VideoLibraryService {
     private final VideoTranscodeService transcoder;
     private final VideoProperties props;
     private final VideoEngagementService engagement;
+    private final VideoChapterService chapters;
+    private final VideoWatchService watches;
     private final ApplicationEventPublisher events;
 
     public VideoLibraryService(VideoRepository videos,
@@ -70,7 +72,10 @@ public class VideoLibraryService {
                                VideoTranscodeService transcoder,
                                VideoProperties props,
                                VideoEngagementService engagement,
+                               VideoChapterService chapters,
+                               VideoWatchService watches,
                                ApplicationEventPublisher events) {
+        this.watches = watches;
         this.videos = videos;
         this.segments = segments;
         this.storage = storage;
@@ -78,6 +83,7 @@ public class VideoLibraryService {
         this.transcoder = transcoder;
         this.props = props;
         this.engagement = engagement;
+        this.chapters = chapters;
         this.events = events;
     }
 
@@ -212,6 +218,20 @@ public class VideoLibraryService {
                     "This video is still " + video.getStatus().name().toLowerCase(Locale.ROOT) + ".");
         }
         return video;
+    }
+
+    /**
+     * The recording if it exists and is playable, empty otherwise.
+     *
+     * <p>Optional rather than {@link #getPlayable}'s exception, for callers working from a list of
+     * ids that may have gone stale. "Continue watching" is exactly that: a watch row outlives the
+     * recording it points at until the next cleanup, and a deleted or still-processing recording
+     * should quietly drop out of the row rather than fail the whole request for every other entry.
+     */
+    @Transactional(readOnly = true)
+    public Optional<Video> findPlayable(UUID id) {
+        return videos.findWithRenditionsById(id)
+                .filter(video -> video.getStatus() == VideoStatus.READY);
     }
 
     @Transactional(readOnly = true)
@@ -417,6 +437,8 @@ public class VideoLibraryService {
         Video video = get(videoId);
         media.deleteAll(video);          // database assets and/or the NAS folder
         engagement.deleteAllFor(videoId); // likes and comments: plain columns, so no cascade
+        chapters.deleteFor(videoId);     // same — the agenda holds a plain video_id, not a relation
+        watches.deleteFor(videoId);      // and the watch history, for the same reason
         videos.delete(video);            // cascades to renditions -> segments
     }
 

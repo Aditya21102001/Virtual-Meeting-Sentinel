@@ -13,6 +13,7 @@ import {
 import { DatePipe } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { PlayerHostService } from '../services/player-host.service';
+import { FeatureService } from '../services/feature.service';
 import {
   CommentView,
   DownloadOption,
@@ -66,7 +67,7 @@ import {
 
             This div only reserves the space and reports where it is — see PlayerHostService.
           -->
-          <div class="player-slot" #playerSlot></div>
+          <div class="player-slot" [class.theater]="playerHost.theater()" #playerSlot></div>
 
           <h2 class="title">{{ card.video.title }}</h2>
           @if (card.video.description) {
@@ -91,6 +92,15 @@ import {
             }
             <span class="muted">{{ humanBytes(card.video.sizeBytes) }} source</span>
 
+            <!--
+              Distinct viewers, not plays. Hidden at zero rather than shown as "0 views": a board
+              recording nobody has opened yet is the normal state right after a meeting, and saying
+              so on every card reads as a failure rather than as a fact.
+            -->
+            @if (card.engagement?.viewers) {
+              <span class="muted">{{ viewerLabel(card.engagement!.viewers) }}</span>
+            }
+
             <button
               class="link"
               type="button"
@@ -104,6 +114,24 @@ import {
             </button>
 
             <button class="link" type="button" (click)="share(card)">⇪ Share</button>
+
+            <!--
+              Autoplay. Off by default and shown next to the recording it affects, rather than
+              buried in settings — these are board meetings, and rolling into an unrelated one is
+              something a viewer should be choosing on purpose each time.
+            -->
+            @if (playerHost.upNext(); as next) {
+              <button
+                class="link"
+                type="button"
+                [class.liked]="playerHost.autoplayNext()"
+                (click)="playerHost.autoplayNext.set(!playerHost.autoplayNext())"
+                [attr.aria-pressed]="playerHost.autoplayNext()"
+                [title]="'Up next: ' + next.video.title"
+              >
+                Autoplay {{ playerHost.autoplayNext() ? 'on' : 'off' }}
+              </button>
+            }
 
             <button
               class="link"
@@ -317,6 +345,36 @@ import {
         </div>
       }
 
+      <!--
+        Continue watching. Above the library and only when there is something to continue: a row
+        that is usually empty trains people to scroll past the top of the page.
+      -->
+      @if (!selected() && continueWatching().length) {
+        <h2 class="section">Continue watching</h2>
+        <div class="grid continue-grid">
+          @for (card of continueWatching(); track card.video.id) {
+            <button class="tile" type="button" (click)="play(card)">
+              <span class="thumb">
+                @if (card.posterUrl) {
+                  <img [src]="card.posterUrl" alt="" loading="lazy" />
+                }
+                <!--
+                  How far in they are, drawn over the thumbnail as YouTube does. The bar is the
+                  whole point of this row — without it these are just recently-opened recordings.
+                -->
+                <span class="resume-bar">
+                  <span class="resume-fill" [style.width.%]="watchedPercent(card)"></span>
+                </span>
+              </span>
+              <span class="tile-title">{{ card.video.title }}</span>
+              <span class="muted-inline">
+                {{ timecode(card.engagement?.resumeAtSeconds ?? 0) }} watched
+              </span>
+            </button>
+          }
+        </div>
+      }
+
       <!-- Library grid -->
       @if (cards().length) {
         <h2 class="section">{{ selected() ? 'More recordings' : 'Library' }}</h2>
@@ -378,6 +436,19 @@ import {
         full width. If these two ever disagree the player will sit slightly off its slot, so they
         are deliberately identical.
       */
+      /*
+        Theater mode. Breaks out of the container's max-width with a viewport-wide negative margin,
+        which is why it is a class on the SLOT and not on the player: the player is positioned over
+        whatever box this element reports, so widening this is the whole implementation — the
+        existing ResizeObserver re-measures and the layer follows.
+      */
+      .player-slot.theater {
+        width: 100vw;
+        max-width: 100vw;
+        margin-left: calc(50% - 50vw);
+        margin-right: calc(50% - 50vw);
+        border-radius: 0;
+      }
       .player-slot {
         aspect-ratio: 16 / 9;
         width: 100%;
@@ -561,6 +632,21 @@ import {
         border-radius: 8px;
         overflow: hidden;
       }
+      /* Progress along the bottom of the thumbnail — the whole reason the row exists. Sits on a
+         dark track so it reads on a poster of any brightness, rather than only on dark footage. */
+      .resume-bar {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 4px;
+        background: #0f172acc;
+      }
+      .resume-fill {
+        display: block;
+        height: 100%;
+        background: var(--accent, #38bdf8);
+      }
       .thumb img {
         width: 100%;
         height: 100%;
@@ -676,7 +762,9 @@ export class VideosComponent implements OnInit, OnDestroy {
   readonly activeRendition = signal<string | null>(null);
 
   /** Undefined until a video is selected — the player lives inside an `@if`. */
-  private readonly playerHost = inject(PlayerHostService);
+  /** Protected, not private: the template reads the up-next queue and the autoplay toggle off it. */
+  protected readonly playerHost = inject(PlayerHostService);
+  private readonly features = inject(FeatureService);
 
   /** The slot this page reserves; the hosted player is positioned over it. */
   private readonly playerSlot = viewChild<ElementRef<HTMLElement>>('playerSlot');
@@ -715,6 +803,63 @@ export class VideosComponent implements OnInit, OnDestroy {
 
   /** Whether anything in the library is still being prepared — gates the refresh hint. */
   readonly anyProcessing = computed(() => this.cards().some((card) => this.isProcessing(card)));
+
+  /**
+   * Set what plays after this recording: the rest of the library, in the order it is shown.
+   *
+   * <p>Library order rather than a recommendation, because there is no signal here worth ranking on
+   * — recordings are newest-first, and for a board archive "the next meeting down the list" is both
+   * the obvious answer and the correct one. Anything cleverer would be guessing.
+   *
+   * <p>Recomputed on every play rather than once, so a queue never outlives the library it was built
+   * from: refreshing, or a recording finishing processing, changes what should come next.
+   */
+  private refillQueue(current: VideoCard): void {
+    const rest = this.cards().filter(
+      (candidate) => candidate.video.id !== current.video.id && !this.isProcessing(candidate),
+    );
+    this.playerHost.queue.set(rest);
+  }
+
+  // ---- continue watching -------------------------------------------------------
+
+  /**
+   * This member's unfinished recordings, most recently watched first.
+   *
+   * <p>Its own signal rather than a slice of {@link cards}: the library list deliberately does not
+   * carry per-member resume positions (that would be a query per card — see
+   * VideoEngagementService.enrich), so the row has to come from the call that does.
+   */
+  readonly continueWatching = signal<VideoCard[]>([]);
+
+  /**
+   * How far through a recording this member is, as a percentage.
+   *
+   * <p>Clamped to 98 so the bar never renders as visually complete. A recording that looks finished
+   * has no reason to be in a "Continue watching" row, and the last stretch of a board meeting is
+   * usually procedural — someone at 99% has effectively finished and would read a full bar as a bug.
+   */
+  watchedPercent(card: VideoCard): number {
+    const total = card.video.durationSeconds ?? 0;
+    const at = card.engagement?.resumeAtSeconds ?? 0;
+    if (total <= 0 || at <= 0) return 0;
+    return Math.min(98, (at / total) * 100);
+  }
+
+  /**
+   * "1 viewer" / "23 viewers" / "1.2K viewers".
+   *
+   * <p>Viewers rather than views, because that is what the number is — one row per member. Calling
+   * it "views" would imply the YouTube meaning, where re-watching counts again, and overstate the
+   * audience of a recording a handful of people opened twice.
+   */
+  viewerLabel(viewers: number): string {
+    if (viewers === 1) return '1 viewer';
+    if (viewers < 1000) return `${viewers} viewers`;
+    // One decimal, trailing .0 dropped: "1K viewers", not "1.0K viewers".
+    const thousands = (viewers / 1000).toFixed(1).replace(/\.0$/, '');
+    return `${thousands}K viewers`;
+  }
 
   // ---- engagement ------------------------------------------------------------
 
@@ -763,6 +908,24 @@ export class VideosComponent implements OnInit, OnDestroy {
    */
   ngOnInit(): void {
     this.refresh(true);
+    this.loadContinueWatching();
+  }
+
+  /**
+   * Load the resume row.
+   *
+   * <p>Separate from {@link refresh} and allowed to fail quietly: it is an extra convenience above
+   * the library, so a failure should cost the row and nothing else. Failing the whole page because
+   * a nice-to-have query did would be the wrong trade.
+   */
+  private loadContinueWatching(): void {
+    // No flag, no request. The endpoint would 403 and the row would be empty either way, so the
+    // call is pure cost.
+    if (!this.features.enabled('VIDEO_WATCH_TRACKING')) return;
+    this.videos.continueWatching().subscribe({
+      next: (cards) => this.continueWatching.set(cards),
+      error: () => this.continueWatching.set([]),
+    });
   }
 
   /**
@@ -830,6 +993,7 @@ export class VideosComponent implements OnInit, OnDestroy {
   play(card: VideoCard): void {
     if (this.isProcessing(card)) return;
     this.selected.set(card);
+    this.refillQueue(card);
     this.segmentsOpen.set(false);
     this.segments.set([]);
     this.activeRendition.set(null);

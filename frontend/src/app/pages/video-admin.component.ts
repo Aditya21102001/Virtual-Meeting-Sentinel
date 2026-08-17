@@ -298,6 +298,67 @@ import {
             @if (transcriptNote()?.id === card.video.id) {
               <p class="muted note">{{ transcriptNote()?.message }}</p>
             }
+
+            <!--
+              Agenda editor. Collapsed by default so the card stays scannable — most of the time an
+              admin is here to check a transcode, not to write an agenda.
+            -->
+            <div class="row chapter-row">
+              <span class="muted">
+                {{ card.chapters.length ? card.chapters.length + ' chapter(s)' : 'No chapters' }}
+              </span>
+              <button class="link" (click)="toggleChapterEditor(card)">
+                {{ chapterEditor() === card.video.id ? 'Close' : (card.chapters.length ? 'Edit' : 'Add') }}
+                chapters
+              </button>
+            </div>
+
+            @if (chapterEditor() === card.video.id) {
+              <div class="chapter-editor">
+                @for (draft of chapterDrafts(); track draft.key; let i = $index) {
+                  <div class="chapter-line">
+                    <!--
+                      Time as free text, not <input type="number">: an agenda is read off the player
+                      as "31:05", and forcing that into raw seconds is arithmetic the person should
+                      not have to do. Parsed on save; see parseTimecode.
+                    -->
+                    <input
+                      class="chapter-at"
+                      type="text"
+                      inputmode="numeric"
+                      placeholder="0:00"
+                      [value]="draft.at"
+                      (input)="editDraft(i, 'at', $event)"
+                      aria-label="Chapter start time"
+                    />
+                    <input
+                      class="chapter-name"
+                      type="text"
+                      placeholder="Item 1 — Minutes"
+                      [value]="draft.title"
+                      (input)="editDraft(i, 'title', $event)"
+                      aria-label="Chapter title"
+                    />
+                    <button class="link" (click)="removeDraft(i)" aria-label="Remove this chapter">
+                      ✕
+                    </button>
+                  </div>
+                }
+                <div class="row">
+                  <button class="ghost" (click)="addDraft()">+ Add chapter</button>
+                  <button
+                    class="ghost"
+                    (click)="saveChapters(card)"
+                    [disabled]="chapterBusy() === card.video.id"
+                  >
+                    {{ chapterBusy() === card.video.id ? 'Saving…' : 'Save chapters' }}
+                  </button>
+                </div>
+                @if (chapterError()?.id === card.video.id) {
+                  <p class="error-box">{{ chapterError()?.message }}</p>
+                }
+              </div>
+            }
           }
 
           <!-- Rendition breakdown -->
@@ -554,6 +615,125 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   readonly confirming = signal<string | null>(null);
   /** Why the last action on a specific card failed, shown on that card. */
   readonly actionError = signal<{ id: string; message: string } | null>(null);
+
+  // ---- chapters ---------------------------------------------------------------
+
+  /** Which card's agenda editor is open. Only one at a time — they are tall. */
+  readonly chapterEditor = signal<string | null>(null);
+  readonly chapterBusy = signal<string | null>(null);
+  readonly chapterError = signal<{ id: string; message: string } | null>(null);
+
+  /**
+   * Rows being edited, as typed.
+   *
+   * <p>Times are held as the raw strings the moderator entered, not parsed numbers. Parsing on every
+   * keystroke would fight them mid-type — "1:0" is a valid prefix of "1:05" and an invalid time —
+   * so the text is kept verbatim and converted once, on save.
+   *
+   * <p>`key` exists only so `@for` has something stable to track: rows have no identity until they
+   * are saved, and tracking by index makes Angular reuse the wrong input when a row is removed from
+   * the middle, moving the caret into a different chapter.
+   */
+  readonly chapterDrafts = signal<{ key: number; at: string; title: string }[]>([]);
+  private nextDraftKey = 0;
+
+  toggleChapterEditor(card: VideoCard): void {
+    if (this.chapterEditor() === card.video.id) {
+      this.chapterEditor.set(null);
+      return;
+    }
+    this.chapterError.set(null);
+    this.chapterDrafts.set(
+      card.chapters.map((chapter) => ({
+        key: this.nextDraftKey++,
+        at: this.timecode(chapter.startSeconds),
+        title: chapter.title,
+      })),
+    );
+    // An empty agenda opens with one blank row, so the first action is typing rather than clicking.
+    if (!card.chapters.length) this.addDraft();
+    this.chapterEditor.set(card.video.id);
+  }
+
+  addDraft(): void {
+    this.chapterDrafts.update((rows) => [...rows, { key: this.nextDraftKey++, at: '', title: '' }]);
+  }
+
+  removeDraft(index: number): void {
+    this.chapterDrafts.update((rows) => rows.filter((_, i) => i !== index));
+  }
+
+  editDraft(index: number, field: 'at' | 'title', event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    this.chapterDrafts.update((rows) =>
+      rows.map((row, i) => (i === index ? { ...row, [field]: value } : row)),
+    );
+  }
+
+  saveChapters(card: VideoCard): void {
+    this.chapterError.set(null);
+
+    const parsed: { startSeconds: number; title: string }[] = [];
+    for (const row of this.chapterDrafts()) {
+      // A wholly blank row is someone who clicked "Add chapter" and changed their mind — dropping it
+      // is friendlier than making them delete it before the save will go through.
+      if (!row.at.trim() && !row.title.trim()) continue;
+
+      const seconds = this.parseTimecode(row.at);
+      if (seconds === null) {
+        this.chapterError.set({
+          id: card.video.id,
+          message: `"${row.at}" is not a time. Use 0:00, 12:40 or 1:02:05.`,
+        });
+        return;
+      }
+      if (!row.title.trim()) {
+        this.chapterError.set({
+          id: card.video.id,
+          message: `The chapter at ${row.at} needs a title.`,
+        });
+        return;
+      }
+      parsed.push({ startSeconds: seconds, title: row.title.trim() });
+    }
+
+    this.chapterBusy.set(card.video.id);
+    this.videos.saveChapters(card.video.id, parsed).subscribe({
+      next: () => {
+        this.chapterBusy.set(null);
+        this.chapterEditor.set(null);
+        this.refreshList();
+      },
+      error: (err) => {
+        this.chapterBusy.set(null);
+        // Server-side rules — duplicate starts, too many chapters — surface here rather than being
+        // duplicated client-side, so the two can never disagree about what is allowed.
+        this.chapterError.set({ id: card.video.id, message: this.serverMessage(err) });
+      },
+    });
+  }
+
+  /**
+   * "1:02:05" / "12:40" / "90" -> seconds. Null when it isn't a time.
+   *
+   * <p>Accepts bare seconds too, because that is what someone pasting from a script has.
+   */
+  parseTimecode(text: string): number | null {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+
+    const parts = trimmed.split(':');
+    if (parts.length > 3) return null;
+
+    let seconds = 0;
+    for (const part of parts) {
+      // Rejected rather than coerced: Number('') is 0 and Number('1e3') is 1000, so "::" and "1e3"
+      // would both parse to plausible-looking times that nobody typed.
+      if (!/^\d+$/.test(part.trim())) return null;
+      seconds = seconds * 60 + Number(part.trim());
+    }
+    return seconds;
+  }
 
   // ---- transcripts -----------------------------------------------------------
 

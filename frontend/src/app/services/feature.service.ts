@@ -9,6 +9,8 @@ export type FeatureKey =
   | 'VIDEO_LIBRARY'
   | 'VIDEO_ENGAGEMENT'
   | 'VIDEO_DOWNLOAD'
+  | 'VIDEO_CHAPTERS'
+  | 'VIDEO_WATCH_TRACKING'
   | 'LOUNGE_CHAT'
   | 'AI_DRAFTING'
   | 'MEETINGS'

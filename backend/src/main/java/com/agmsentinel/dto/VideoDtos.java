@@ -111,14 +111,52 @@ public final class VideoDtos {
             String transcriptUrl,
             boolean adaptive,
             /** Likes and comments. Null until resolved — see VideoEngagementService.enrich. */
-            VideoEngagement engagement) {
+            VideoEngagement engagement,
+            /**
+             * Agenda items, in playing order. Empty when nobody has marked any up.
+             *
+             * <p>On the card rather than on {@link VideoView} because chapters are not a property of
+             * the media file — they are authored per recording and edited independently of it, so a
+             * rename must not have to invalidate anything about the video row itself.
+             */
+            List<ChapterView> chapters) {
 
         /** Same card with its engagement counts filled in. */
         public VideoCard withEngagement(VideoEngagement resolved) {
             return new VideoCard(video, ticket, ticketExpiresInSeconds, streamUrl, posterUrl,
-                    spriteUrl, transcriptUrl, adaptive, resolved);
+                    spriteUrl, transcriptUrl, adaptive, resolved, chapters);
+        }
+
+        /** Same card with its agenda attached. */
+        public VideoCard withChapters(List<ChapterView> resolved) {
+            return new VideoCard(video, ticket, ticketExpiresInSeconds, streamUrl, posterUrl,
+                    spriteUrl, transcriptUrl, adaptive, engagement, resolved);
         }
     }
+
+    /**
+     * One chapter as the player needs it.
+     *
+     * <p>No end time: a chapter runs until the next one starts, and the last to the end of the
+     * recording. Sending both would be sending the same boundary twice, and the copies could
+     * disagree — see VideoChapter.
+     */
+    public record ChapterView(UUID id, double startSeconds, String title, int ordinal) {
+
+        public static ChapterView of(com.agmsentinel.model.VideoChapter chapter) {
+            return new ChapterView(chapter.getId(), chapter.getStartSeconds(),
+                                   chapter.getTitle(), chapter.getOrdinal());
+        }
+    }
+
+    /**
+     * One chapter as a moderator submits it. Ordinals are assigned server-side from the sorted start
+     * times, so a client never has to number anything and cannot number it wrongly.
+     */
+    public record ChapterInput(double startSeconds, String title) { }
+
+    /** A whole agenda, replacing whatever was there. See VideoChapterRepository.deleteByVideoId. */
+    public record SaveChaptersRequest(UUID id, List<ChapterInput> chapters) { }
 
     /**
      * Engagement on a recording, resolved per viewer.
@@ -126,7 +164,15 @@ public final class VideoDtos {
      * <p>{@code likedByMe} is why likes are rows rather than a counter: the button has to render
      * differently for the person who already pressed it, and a total cannot say who is in it.
      */
-    public record VideoEngagement(long likes, boolean likedByMe, long comments) { }
+    public record VideoEngagement(long likes, boolean likedByMe, long comments,
+                                 /**
+                                  * Distinct members who have watched this. One per person, not per
+                                  * press of play — see VideoWatch for why that is the honest figure
+                                  * for a board recording.
+                                  */
+                                 long viewers,
+                                 /** Where this member stopped, 0 if they have not watched it. */
+                                 double resumeAtSeconds) { }
 
     /** One comment as the browser sees it. {@code mine} drives whether Delete is offered. */
     public record CommentView(

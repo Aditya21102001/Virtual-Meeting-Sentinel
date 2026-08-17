@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.net.URLEncoder;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -40,7 +41,7 @@ public class VideoUrlFactory {
         VideoView view = VideoView.of(video);
         boolean playable = video.getStatus() == VideoStatus.READY;
         if (!playable) {
-            return new VideoCard(view, null, 0, null, null, null, null, false, null);
+            return new VideoCard(view, null, 0, null, null, null, null, false, null, List.of());
         }
 
         String ticket = tickets.issue(subject == null ? "anonymous" : subject, video.getId());
@@ -56,7 +57,9 @@ public class VideoUrlFactory {
                 video.getPosterRel() != null ? posterUrl(video.getId(), ticket) : null,
                 video.getSpriteRel() != null ? spriteUrl(video.getId(), ticket) : null,
                 video.getTranscriptRel() != null ? transcriptUrl(video.getId(), ticket) : null,
-                adaptive, null);
+                // Chapters, like engagement, are attached later by whoever has already loaded
+                // them — building URLs must not become a query per card. See VideoEngagementService.enrich.
+                adaptive, null, List.of());
     }
 
     public String masterUrl(UUID videoId, String ticket) {

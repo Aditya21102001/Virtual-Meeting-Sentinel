@@ -38,6 +38,31 @@ public enum Feature {
             "Offer a recording for download, in any available quality.",
             true, Set.of(Roles.ADMIN, Roles.MODERATOR, Roles.SHAREHOLDER)),
 
+    // ---- new: default OFF, so deploying them changes nothing until they are switched on ---------
+
+    VIDEO_CHAPTERS("Recording chapters",
+            "Named agenda points a viewer can jump to, with markers on the progress bar.",
+            false, Set.of(Roles.ADMIN, Roles.MODERATOR, Roles.SHAREHOLDER, Roles.ATTENDEE)),
+
+    /**
+     * OFF for a reason that is not caution but arithmetic.
+     *
+     * <p>Every playing recording reports its position to the server on a timer. That is a database
+     * WRITE per viewer per interval, against a pool of {@code DB_MAX_POOL_SIZE} (5 by default) on a
+     * free-tier Postgres — so a few hundred people watching at once produces sustained write traffic
+     * competing for the same five connections that serve every other request in the application.
+     *
+     * <p>Nothing else here writes on a timer; likes and comments are one write per deliberate human
+     * action. This is the first feature whose cost scales with how many people are simply watching,
+     * which is exactly the situation during a live AGM.
+     *
+     * <p>Switch it on outside a meeting first, watch connection wait time, and raise
+     * {@code DB_MAX_POOL_SIZE} before switching it on during one.
+     */
+    VIDEO_WATCH_TRACKING("View counts and resume",
+            "Record who watched what and how far, for view counts and Continue watching.",
+            false, Set.of(Roles.ADMIN, Roles.MODERATOR, Roles.SHAREHOLDER, Roles.ATTENDEE)),
+
     // ATTENDEE removed deliberately. The lounge shows the directory of registered users and carries
     // direct messages between them. An attendee token is SELF-ASSERTED — /api/auth/attendee is
     // public and issues one for whatever username the caller types — so granting it here handed the

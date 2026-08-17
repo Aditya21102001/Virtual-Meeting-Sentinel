@@ -114,6 +114,16 @@ export interface VideoEngagement {
   /** Drives whether the like button renders as pressed. */
   likedByMe: boolean;
   comments: number;
+  /**
+   * Distinct members who have watched this — one per person, not per press of play.
+   * For a board recording the honest question is how many shareholders saw it, once each.
+   */
+  viewers: number;
+  /**
+   * Where this member stopped, 0 if they have not watched it.
+   * Only resolved on the single-recording call; the library list sends 0 to stay one query.
+   */
+  resumeAtSeconds: number;
 }
 
 export interface CommentView {
@@ -147,6 +157,27 @@ export interface VideoCard {
   adaptive: boolean;
   /** Null on a card for a video that isn't READY yet. */
   engagement: VideoEngagement | null;
+  /** Agenda items in playing order. Empty when nobody has marked any up. */
+  chapters: VideoChapter[];
+}
+
+/**
+ * One named point in a recording — "Item 4 — Auditor's Report" at 31:05.
+ *
+ * No end time: a chapter runs until the next one starts, and the last to the end of the recording.
+ * The player derives the boundaries, so there is only ever one number per chapter to be wrong.
+ */
+export interface VideoChapter {
+  id: string;
+  startSeconds: number;
+  title: string;
+  ordinal: number;
+}
+
+/** A chapter as submitted for saving. Ordinals are assigned by the server from the start times. */
+export interface VideoChapterInput {
+  startSeconds: number;
+  title: string;
 }
 
 export interface VideoStorageStatus {
@@ -388,6 +419,56 @@ export class VideoService {
     return this.http
       .post<VideoCard>(`${this.admin}/delete-transcript`, { id }, { headers: this.headers() })
       .pipe(map((card) => this.normalizeMediaUrls(card)));
+  }
+
+  /**
+   * Replace a recording's whole agenda.
+   *
+   * The entire list every time, not one row at a time: editing an agenda means renaming, moving and
+   * deleting entries together, and a per-row API would let the markers on the progress bar disagree
+   * with the chapter list beside them. Ordering and numbering are the server's job, so rows can be
+   * sent in whatever order they were typed.
+   */
+  saveChapters(id: string, chapters: VideoChapterInput[]): Observable<VideoCard> {
+    return this.http
+      .post<VideoCard>(
+        `${this.admin}/save-chapters`,
+        { id, chapters },
+        { headers: this.headers() },
+      )
+      .pipe(map((card) => this.normalizeMediaUrls(card)));
+  }
+
+  /** Read the agenda back — for the editor, and to confirm a save actually landed. */
+  listChapters(id: string): Observable<VideoChapter[]> {
+    return this.http.post<VideoChapter[]>(
+      `${this.admin}/list-chapters`,
+      { id },
+      { headers: this.headers() },
+    );
+  }
+
+  /**
+   * Tell the server how far this member has watched.
+   *
+   * SILENT: fired on a timer during playback, so counting it would pin the global loading bar up for
+   * the whole recording. It also returns 204 — there is nothing for the caller to wait on, which is
+   * why nothing here surfaces an error: a lost progress report costs a few seconds of resume
+   * accuracy, and interrupting someone's viewing to tell them so would cost more.
+   */
+  reportProgress(id: string, positionSeconds: number, durationSeconds: number | null): Observable<void> {
+    return this.http.post<void>(
+      `${this.base}/report-progress`,
+      { id, positionSeconds, durationSeconds },
+      { headers: this.headers(), context: new HttpContext().set(SILENT, true) },
+    );
+  }
+
+  /** This member's unfinished recordings, most recently watched first. */
+  continueWatching(): Observable<VideoCard[]> {
+    return this.http
+      .post<VideoCard[]>(`${this.base}/continue-watching`, {}, { headers: this.headers() })
+      .pipe(map((cards) => cards.map((card) => this.normalizeMediaUrls(card))));
   }
 
   /**

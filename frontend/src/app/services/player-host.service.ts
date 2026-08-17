@@ -1,4 +1,4 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import type { VideoPlayerComponent } from '../components/video-player.component';
 import type { VideoCard } from './video.service';
@@ -66,6 +66,63 @@ export class PlayerHostService {
    * reach it with `viewChild`; now that the player is mounted elsewhere, this is the way through.
    */
   readonly player = signal<VideoPlayerComponent | null>(null);
+
+  /**
+   * What plays after the current recording, in order.
+   *
+   * <p>Held here rather than in the recordings page because the player outlives that page — the
+   * whole reason this service exists is that playback continues while the viewer navigates away, and
+   * a queue owned by a destroyed component would end with it. The page fills this in; the service
+   * only advances through it.
+   */
+  readonly queue = signal<VideoCard[]>([]);
+
+  /**
+   * Whether reaching the end starts the next recording.
+   *
+   * <p>Off by default, and that is a deliberate difference from YouTube. These are board meetings:
+   * rolling automatically from one AGM into an unrelated one is far more likely to be an annoyance
+   * than a convenience, so autoplay is something a viewer turns on.
+   */
+  readonly autoplayNext = signal(false);
+
+  /** The recording that would play next, or null when the queue is exhausted. */
+  readonly upNext = computed(() => this.queue()[0] ?? null);
+
+  /**
+   * Theater mode: a wider player, without leaving the page.
+   *
+   * <p>Lives here rather than in the player because the player does not control its own size — it is
+   * drawn over a slot the recordings page reserves, and this service positions it from that slot's
+   * measured box. Theater therefore has to be a property of the slot; the page widens it, the
+   * existing ResizeObserver notices, and the layer follows with no repositioning code at all.
+   *
+   * <p>Kept across recordings on purpose, unlike loop. Theater is a statement about how this person
+   * wants to watch, not about one recording, and having it reset on every video would be the
+   * annoyance rather than the safeguard.
+   */
+  readonly theater = signal(false);
+
+  /**
+   * Move to the next recording in the queue.
+   *
+   * <p>Shifting the queue rather than tracking an index: an index would drift the moment the
+   * library refreshed underneath it, and "what is left to play" is the only state anything here
+   * actually reads.
+   *
+   * @return whether there was anything to advance to
+   */
+  playNext(): boolean {
+    const [next, ...rest] = this.queue();
+    if (!next) return false;
+    this.queue.set(rest);
+    // startAt null, not 0: a recording reached from the queue is a fresh viewing, and the stored
+    // resume point for it should still apply if the viewer had started it before.
+    this.startAt.set(null);
+    this.card.set(next);
+    this.trace('playNext', { videoId: next.video.id, remaining: rest.length });
+    return true;
+  }
 
   private anchor: HTMLElement | null = null;
   /** The pending "floating window closed" listener, so it is never registered twice. */

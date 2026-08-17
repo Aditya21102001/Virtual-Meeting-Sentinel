@@ -13,11 +13,13 @@ import com.agmsentinel.security.RequiresFeature;
 import com.agmsentinel.model.VideoRendition;
 import com.agmsentinel.model.VideoSegment;
 import com.agmsentinel.security.PlaybackTicketService;
+import com.agmsentinel.service.VideoChapterService;
 import com.agmsentinel.service.VideoContentKeyService;
 import com.agmsentinel.service.VideoEngagementService;
 import com.agmsentinel.service.VideoLibraryService;
 import com.agmsentinel.service.VideoMediaStore;
 import com.agmsentinel.service.VideoUrlFactory;
+import com.agmsentinel.service.VideoWatchService;
 import org.springframework.core.io.Resource;
 import org.springframework.http.*;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
@@ -96,18 +98,24 @@ public class VideoController {
     private final VideoUrlFactory urls;
     private final PlaybackTicketService tickets;
     private final VideoEngagementService engagement;
+    private final VideoChapterService chapters;
+    private final VideoWatchService watches;
     private final VideoContentKeyService contentKeys;
 
     public VideoController(VideoLibraryService library, VideoMediaStore media,
                           VideoUrlFactory urls, PlaybackTicketService tickets,
                           VideoEngagementService engagement,
+                          VideoChapterService chapters,
+                          VideoWatchService watches,
                           VideoContentKeyService contentKeys) {
+        this.watches = watches;
         this.contentKeys = contentKeys;
         this.library = library;
         this.media = media;
         this.urls = urls;
         this.tickets = tickets;
         this.engagement = engagement;
+        this.chapters = chapters;
     }
 
     // ---- catalogue -----------------------------------------------------------
@@ -133,15 +141,52 @@ public class VideoController {
         String subject = currentSubject();
         // Counts are resolved in one batch after the cards are built, not per card — see
         // VideoEngagementService.enrich.
-        return engagement.enrich(
-                library.listVisible().stream().map(v -> urls.card(v, subject)).toList(), subject);
+        // Counts and agendas are each resolved in ONE batch over the whole page, so the number of
+        // queries does not grow with the number of recordings. See both enrich methods.
+        return chapters.enrich(engagement.enrich(
+                library.listVisible().stream().map(v -> urls.card(v, subject)).toList(), subject));
     }
 
     @PostMapping("/video-details")
     public VideoCard videoDetails(@RequestBody VideoRef req) {
         String subject = currentSubject();
         VideoCard card = urls.card(library.getPlayable(req.id()), subject);
-        return card.withEngagement(engagement.engagementOf(req.id(), subject));
+        return card.withEngagement(engagement.engagementOf(req.id(), subject))
+                   .withChapters(chapters.forVideo(req.id()));
+    }
+
+    /**
+     * Report how far this member has watched.
+     *
+     * <p>Called periodically during playback, so it is deliberately cheap and returns nothing —
+     * the client has no decision to make on the result, and a body would only invite it to wait for
+     * one. Anonymous viewers are ignored rather than rejected: playback works signed out and must
+     * keep working, it is simply not attributable.
+     */
+    public record WatchProgressRequest(UUID id, double positionSeconds, Double durationSeconds) { }
+
+    @RequiresFeature(Feature.VIDEO_WATCH_TRACKING)
+    @PostMapping("/report-progress")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void reportProgress(@RequestBody WatchProgressRequest req) {
+        watches.report(req.id(), currentSubject(), req.positionSeconds(), req.durationSeconds());
+    }
+
+    /**
+     * This member's unfinished recordings, most recently watched first — "Continue watching".
+     *
+     * <p>Returns full cards rather than ids so the row can render posters and durations without a
+     * second round-trip per entry.
+     */
+    @RequiresFeature(Feature.VIDEO_WATCH_TRACKING)
+    @PostMapping("/continue-watching")
+    public List<VideoCard> continueWatching() {
+        String subject = currentSubject();
+        List<VideoCard> cards = watches.continueWatching(subject).stream()
+                .flatMap(watch -> library.findPlayable(watch.getVideoId()).stream())
+                .map(video -> urls.card(video, subject))
+                .toList();
+        return chapters.enrich(engagement.enrich(cards, subject));
     }
 
     // ---- likes and comments --------------------------------------------------
