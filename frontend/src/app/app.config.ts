@@ -3,6 +3,7 @@ import { provideRouter } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { routes } from './app.routes';
 import { authInterceptor } from './services/auth.interceptor';
+import { coldStartInterceptor } from './services/cold-start.interceptor';
 import { loadingInterceptor } from './services/loading.interceptor';
 
 export const appConfig: ApplicationConfig = {
@@ -29,6 +30,12 @@ export const appConfig: ApplicationConfig = {
     // loadingInterceptor drives the bar at the top of the page. Ordered first so it counts a
     // request even when authInterceptor ends up redirecting on a dead session — otherwise a 401
     // during sign-out would leave the counter permanently above zero.
-    provideHttpClient(withInterceptors([loadingInterceptor, authInterceptor])),
+    // coldStartInterceptor is LAST so it observes the response every other interceptor has already
+    // seen, and it never modifies one — a sleeping backend must still surface as the same error to
+    // whoever made the request. It is also the only one that watches SILENT requests: polls hit a
+    // sleeping server first, before anyone has touched the page.
+    provideHttpClient(
+      withInterceptors([loadingInterceptor, authInterceptor, coldStartInterceptor]),
+    ),
   ],
 };

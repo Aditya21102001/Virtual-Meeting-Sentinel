@@ -21,6 +21,7 @@ import { VideoPlayerComponent } from "./components/video-player.component";
 import { PlayerHostService } from "./services/player-host.service";
 import { AuthService } from "./services/auth.service";
 import { FeatureService } from "./services/feature.service";
+import { ColdStartService } from "./services/cold-start.service";
 import { LoadingService } from "./services/loading.service";
 import { MeetingService } from "./services/meeting.service";
 
@@ -61,6 +62,32 @@ import { MeetingService } from "./services/meeting.service";
           <span class="blocking-spinner" aria-hidden="true"></span>
           <span>Working…</span>
         </div>
+      </div>
+    }
+    <!--
+      Cold start notice.
+
+      The API sleeps when idle on a free tier and takes up to a couple of minutes to answer again.
+      Every request fails in that window, and the failures look exactly like a broken application —
+      a login that does nothing, an empty library — so people retry, report an outage, and stop
+      trusting it, for behaviour that fixes itself if they wait.
+
+      A banner rather than a modal on purpose: it must not take the page away from someone whose
+      request is about to succeed, and anything already loaded stays usable while the server wakes.
+
+      role="status" and aria-live="polite" — announced once, without interrupting whatever a screen
+      reader is currently reading. assertive would talk over the user for a condition that resolves
+      itself.
+    -->
+    @if (coldStart.waking()) {
+      <div class="cold-start" role="status" aria-live="polite">
+        <span class="cold-spinner" aria-hidden="true"></span>
+        <span>
+          <strong>Waking the server up.</strong>
+          It sleeps when nobody is using it, so the first request after a quiet spell can take up to
+          a minute. Nothing is broken — this page will start working on its own.
+        </span>
+        <span class="cold-elapsed">{{ coldStart.elapsedSeconds() }}s</span>
       </div>
     }
     <a class="skip-link" href="#main">Skip to main content</a>
@@ -309,6 +336,45 @@ import { MeetingService } from "./services/meeting.service";
   styles: [
     `
       /* Fixed to the viewport, so it is visible wherever the page is scrolled to. */
+      /* ---- cold start notice ---- */
+      /* Sticky at the top rather than fixed: it must not cover the navigation on a short screen,
+         and anything already loaded stays reachable while the server wakes. */
+      .cold-start {
+        position: sticky;
+        top: 0;
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        background: #78350f;
+        color: #fef3c7;
+        font-size: 13px;
+        line-height: 1.4;
+        border-bottom: 1px solid #92400e;
+      }
+      .cold-start strong { color: #fffbeb; }
+      .cold-elapsed {
+        margin-left: auto;
+        font-variant-numeric: tabular-nums;
+        opacity: 0.85;
+        flex: none;
+      }
+      .cold-spinner {
+        flex: none;
+        width: 13px;
+        height: 13px;
+        border: 2px solid currentColor;
+        border-right-color: transparent;
+        border-radius: 50%;
+        animation: cold-spin 800ms linear infinite;
+      }
+      @keyframes cold-spin { to { transform: rotate(360deg); } }
+      /* The words carry the message; the spinner is decoration nobody should be forced to watch. */
+      @media (prefers-reduced-motion: reduce) {
+        .cold-spinner { animation: none; }
+      }
+
       .loading-bar {
         position: fixed;
         top: 0;
@@ -863,6 +929,8 @@ export class AppComponent {
 
   constructor(
     public loading: LoadingService,
+    /** Drives the "waking the server up" banner — see the template and ColdStartService. */
+    public coldStart: ColdStartService,
     public auth: AuthService,
     public features: FeatureService,
     public meetings: MeetingService,
