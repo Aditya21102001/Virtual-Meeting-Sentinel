@@ -1,6 +1,7 @@
 package com.agmsentinel.controller;
 
 import com.agmsentinel.service.AiClient;
+import com.agmsentinel.service.AiUnavailable;
 import com.agmsentinel.service.MeetingScope;
 import com.agmsentinel.service.QuestionService;
 import org.slf4j.Logger;
@@ -52,9 +53,9 @@ public class AdminController {
      * it would reach the browser as a bare 500 carrying no message the Setup page could display.
      * A 503 with a sentence is the difference between "something broke" and "wait and retry".
      *
-     * <p>The catch is deliberately broad: every way this call can fail means the same thing to the
-     * operator — the knowledge base could not be read right now — and none of them is worth a
-     * different screen.
+     * <p>The catch stays broad — one screen for every failure — but the MESSAGE is classified. The
+     * screen is the same; the next action is not. A rate limit, an absent endpoint and a cold start
+     * need three different responses from whoever is reading it.
      */
     @PostMapping("/knowledge-status")
     public ResponseEntity<?> knowledgeStatus() {
@@ -68,9 +69,12 @@ public class AdminController {
             // symptom hard to explain.
             log.warn("knowledge-status failed ({}): {}",
                      ex.getClass().getSimpleName(), ex.getMessage());
-            return ResponseEntity.status(503).body(Map.of("error",
-                    "The AI service is not responding yet. It sleeps when idle and takes "
-                    + "up to a minute to wake — try again shortly."));
+            // Classified rather than generic. The old single message said "it sleeps when idle" for
+            // every cause, which was wrong for a 429 (waiting cannot clear a rate limit) and wrong
+            // for a 404 (the endpoint was genuinely missing from a deployment that had drifted).
+            // Both were reported as cold starts, and both sent somebody to do the one thing that
+            // could not help. See AiUnavailable.
+            return ResponseEntity.status(503).body(Map.of("error", AiUnavailable.explain(ex)));
         }
     }
 
