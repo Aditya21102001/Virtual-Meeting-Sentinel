@@ -1,0 +1,11 @@
+{
+  // Specs compile against the same options as the app (tsconfig.json), plus the test globals.
+  // Kept separate so `vitest`/`describe`/`expect` types never leak into the application build —
+  // a spec-only symbol resolving in src/ would let a test helper ship to production.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist/out-tsc/spec",
+    "types": ["vitest/globals"]
+  },
+  "include": ["src/**/*.spec.ts", "src/**/*.d.ts"]
+}

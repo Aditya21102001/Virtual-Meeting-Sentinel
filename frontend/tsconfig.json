@@ -2,10 +2,10 @@
   "compileOnSave": false,
   "compilerOptions": {
     "outDir": "./dist/out-tsc",
-    // Stated rather than inferred. TypeScript works the common source directory out from the files
-    // it compiles, so adding or removing a file outside src/ would silently move the whole output
-    // layout — and newer TypeScript warns because that inference is going away. Every .ts in this
-    // project already lives under src/, so this pins today's behaviour rather than changing it.
+    // Stated rather than inferred. TypeScript works the common source directory out from the
+    // files it compiles, so adding or removing a file outside src/ would silently move the whole
+    // output layout. See "exclude" below: the vitest config and the build-info generator live
+    // outside src/ by necessity, and matching them here would break that rootDir.
     "rootDir": "./src",
     "strict": true,
     "noImplicitOverride": true,
@@ -21,12 +21,20 @@
     "importHelpers": true,
     "target": "ES2022",
     "module": "ES2022",
-    "lib": ["ES2022", "dom"]
+    "lib": [
+      "ES2022",
+      "dom"
+    ]
   },
   "angularCompilerOptions": {
     "enableI18nLegacyMessageIdFormat": false,
     "strictInjectionParameters": true,
     "strictInputAccessModifiers": true,
     "strictTemplates": true
-  }
+  },
+  "exclude": [
+    "vitest.config.ts",
+    "dist",
+    "scripts"
+  ]
 }

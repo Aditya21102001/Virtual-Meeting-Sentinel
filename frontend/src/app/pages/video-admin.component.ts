@@ -16,6 +16,7 @@ import {
   humanBytes,
   timecode,
 } from '../services/video.service';
+import { parseTimecode } from '../services/timecode';
 
 /**
  * Moderator screen for the video library: upload a recording, watch it segment, manage the result.
@@ -679,7 +680,7 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
       // is friendlier than making them delete it before the save will go through.
       if (!row.at.trim() && !row.title.trim()) continue;
 
-      const seconds = this.parseTimecode(row.at);
+      const seconds = parseTimecode(row.at);
       if (seconds === null) {
         this.chapterError.set({
           id: card.video.id,
@@ -713,27 +714,6 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
     });
   }
 
-  /**
-   * "1:02:05" / "12:40" / "90" -> seconds. Null when it isn't a time.
-   *
-   * <p>Accepts bare seconds too, because that is what someone pasting from a script has.
-   */
-  parseTimecode(text: string): number | null {
-    const trimmed = text.trim();
-    if (!trimmed) return null;
-
-    const parts = trimmed.split(':');
-    if (parts.length > 3) return null;
-
-    let seconds = 0;
-    for (const part of parts) {
-      // Rejected rather than coerced: Number('') is 0 and Number('1e3') is 1000, so "::" and "1e3"
-      // would both parse to plausible-looking times that nobody typed.
-      if (!/^\d+$/.test(part.trim())) return null;
-      seconds = seconds * 60 + Number(part.trim());
-    }
-    return seconds;
-  }
 
   // ---- transcripts -----------------------------------------------------------
 
