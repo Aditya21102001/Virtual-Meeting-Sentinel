@@ -183,7 +183,7 @@ import {
 
           <!-- Segment inspector: proves the recording really is stored as slices. -->
           @if (card.adaptive) {
-            <div class="inspector">
+            <div class="inspector" [class.busy]="segmentsLoading()">
               <button class="link" type="button" (click)="toggleSegments(card)">
                 {{ segmentsOpen() ? '▾' : '▸' }} Segment index
               </button>
@@ -202,7 +202,7 @@ import {
                   }
                 </div>
                 @if (segmentsLoading()) {
-                  <span class="muted">Loading…</span>
+                  <span class="muted busy-inline">Loading…</span>
                 } @else if (segments().length) {
                   <div class="seg-scroll">
                     <table class="seg-table">
@@ -247,7 +247,7 @@ import {
 
           <!-- Transcript: searchable, and every line is a seek target. -->
           @if (cues().length) {
-            <div class="inspector">
+            <div class="inspector" [class.busy]="segmentsLoading()">
               <button class="link" type="button" (click)="transcriptOpen.set(!transcriptOpen())">
                 {{ transcriptOpen() ? '▾' : '▸' }} Transcript
                 <span class="muted-inline">{{ cues().length }} lines</span>
@@ -277,7 +277,7 @@ import {
           }
 
           <!-- Comments -->
-          <div class="inspector">
+          <div class="inspector" [class.busy]="segmentsLoading()">
             <button class="link" type="button" (click)="toggleComments(card)">
               {{ commentsOpen() ? '▾' : '▸' }} Comments
               <span class="muted-inline">{{ card.engagement?.comments ?? 0 }}</span>
@@ -310,7 +310,7 @@ import {
               </div>
 
               @if (commentsLoading()) {
-                <span class="muted">Loading…</span>
+                <span class="muted busy-inline">Loading…</span>
               } @else if (!comments().length) {
                 <p class="muted note">No comments yet. Be the first.</p>
               } @else {
@@ -624,6 +624,44 @@ import {
         background: var(--accent);
         transition: width 0.25s;
       }
+      /*
+        Local busy state, replacing what the global overlay used to do.
+
+        The application-wide loading bar is modal: it covers everything while any counted request is
+        in flight, so expanding the segment inspector — a panel inside an already-loaded page — froze
+        the whole screen and the video with it. Those requests are now SILENT, and this is what shows
+        instead: the panel that is actually waiting dims and stops accepting clicks, and nothing else
+        on the page is affected.
+
+        Opacity and pointer-events rather than a CSS blur filter: a blur on a container forces the
+        browser to rasterise it every frame, which on a page with a playing <video> costs real
+        frames — the fix would be visible as stutter in the thing it is meant not to interrupt.
+      */
+      .busy {
+        opacity: 0.55;
+        pointer-events: none;
+        transition: opacity 120ms ease;
+      }
+      .busy-inline::after {
+        content: '';
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        margin-left: 7px;
+        border: 2px solid currentColor;
+        border-right-color: transparent;
+        border-radius: 50%;
+        vertical-align: -1px;
+        animation: busy-spin 700ms linear infinite;
+      }
+      @keyframes busy-spin {
+        to { transform: rotate(360deg); }
+      }
+      /* Respect a viewer who has asked for less motion; the text alone still says Loading. */
+      @media (prefers-reduced-motion: reduce) {
+        .busy-inline::after { animation: none; }
+      }
+
       .thumb {
         position: relative;
         display: block;

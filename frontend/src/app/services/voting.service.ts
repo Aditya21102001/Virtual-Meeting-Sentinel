@@ -115,7 +115,11 @@ export class VotingService {
     return this.http.post<ResolutionView>(
       `${this.base}/resolution-details`,
       { id },
-      { headers: this.headers() },
+      {
+        headers: this.headers(),
+        // SILENT: one resolution's detail expanding inside the open list.
+        context: new HttpContext().set(SILENT, true),
+      },
     );
   }
 

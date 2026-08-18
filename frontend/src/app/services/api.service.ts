@@ -431,7 +431,11 @@ export class ApiService {
     return this.http.post<Member[]>(
       `${environment.apiBase}/api/users/list-members`,
       {},
-      { headers: this.authHeaders() },
+      {
+        headers: this.authHeaders(),
+        // SILENT: the user table loading its own rows.
+        context: new HttpContext().set(SILENT, true),
+      },
     );
   }
 

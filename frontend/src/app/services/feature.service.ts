@@ -1,7 +1,8 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpContext } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Observable, tap } from 'rxjs';
 import { environment } from '../../environments/environment';
+import { SILENT } from './loading.service';
 import { AuthService } from './auth.service';
 
 /** Keys must match the backend `Feature` enum — it is the catalogue. */
@@ -78,7 +79,11 @@ export class FeatureService {
   /** Ask what this user may use. Safe to call repeatedly; the result replaces the cache. */
   refresh(): Observable<string[]> {
     return this.http
-      .post<string[]>(`${this.base}/my-features`, {}, { headers: this.headers() })
+      .post<string[]>(`${this.base}/my-features`, {}, {
+        headers: this.headers(),
+        // SILENT: bootstrap read on every page load; the app renders around it.
+        context: new HttpContext().set(SILENT, true),
+      })
       .pipe(tap((keys) => this.available.set(new Set(keys as FeatureKey[]))));
   }
 
@@ -96,11 +101,19 @@ export class FeatureService {
   // ---- administration (ADMIN only; the server enforces it) -------------------
 
   list(): Observable<FeatureView[]> {
-    return this.http.post<FeatureView[]>(`${this.base}/list-features`, {}, { headers: this.headers() });
+    return this.http.post<FeatureView[]>(`${this.base}/list-features`, {}, {
+        headers: this.headers(),
+        // SILENT: the feature admin table loading its own rows.
+        context: new HttpContext().set(SILENT, true),
+      });
   }
 
   assignableRoles(): Observable<string[]> {
-    return this.http.post<string[]>(`${this.base}/assignable-roles`, {}, { headers: this.headers() });
+    return this.http.post<string[]>(`${this.base}/assignable-roles`, {}, {
+        headers: this.headers(),
+        // SILENT: a dropdown's options, fetched beside the table.
+        context: new HttpContext().set(SILENT, true),
+      });
   }
 
   /**

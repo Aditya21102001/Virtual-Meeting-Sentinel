@@ -1,7 +1,8 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpContext } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Observable, tap } from 'rxjs';
 import { environment } from '../../environments/environment';
+import { SILENT } from './loading.service';
 import { AuthService } from './auth.service';
 
 export type MeetingStatus = 'DRAFT' | 'ACTIVE' | 'CLOSED';
@@ -133,7 +134,11 @@ export class MeetingService {
     return this.http.post<{ questions: number; topics: number }>(
       `${this.base}/unattributed-count`,
       {},
-      { headers: this.headers() },
+      {
+        headers: this.headers(),
+        // SILENT: a background count shown as a hint, not a page.
+        context: new HttpContext().set(SILENT, true),
+      },
     );
   }
 
@@ -155,7 +160,11 @@ export class MeetingService {
     return this.http.post<MeetingMemberView[]>(
       `${this.base}/list-members`,
       { id },
-      { headers: this.headers() },
+      {
+        headers: this.headers(),
+        // SILENT: the member list expanding inside an open meeting.
+        context: new HttpContext().set(SILENT, true),
+      },
     );
   }
 

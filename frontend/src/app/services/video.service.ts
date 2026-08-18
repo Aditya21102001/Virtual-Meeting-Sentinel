@@ -322,7 +322,11 @@ export class VideoService {
     return this.http.post<SegmentView[]>(
       `${this.base}/list-segments`,
       { id, rendition: rendition ?? null },
-      { headers: this.headers() },
+      {
+        headers: this.headers(),
+        // SILENT: the segment inspector expanding — the panel says Loading….
+        context: new HttpContext().set(SILENT, true),
+      },
     );
   }
 
@@ -340,7 +344,11 @@ export class VideoService {
     return this.http.post<SegmentLocation>(
       `${this.base}/find-segment-at`,
       { id, seconds, rendition: rendition ?? null },
-      { headers: this.headers() },
+      {
+        headers: this.headers(),
+        // SILENT: a seek lookup reported after the fact; the player never waits for it.
+        context: new HttpContext().set(SILENT, true),
+      },
     );
   }
 
@@ -351,7 +359,11 @@ export class VideoService {
     return this.http.post<VideoEngagement>(
       `${this.base}/toggle-like`,
       { id },
-      { headers: this.headers() },
+      {
+        headers: this.headers(),
+        // SILENT: a single click that must feel instant.
+        context: new HttpContext().set(SILENT, true),
+      },
     );
   }
 
@@ -359,7 +371,11 @@ export class VideoService {
     return this.http.post<CommentView[]>(
       `${this.base}/list-comments`,
       { id },
-      { headers: this.headers() },
+      {
+        headers: this.headers(),
+        // SILENT: the comments panel opening — the panel says Loading….
+        context: new HttpContext().set(SILENT, true),
+      },
     );
   }
 
@@ -372,7 +388,11 @@ export class VideoService {
     return this.http.post<CommentView>(
       `${this.base}/add-comment`,
       { id, body, atSeconds },
-      { headers: this.headers() },
+      {
+        headers: this.headers(),
+        // SILENT: an inline action with its own disabled/posting state.
+        context: new HttpContext().set(SILENT, true),
+      },
     );
   }
 
@@ -380,7 +400,11 @@ export class VideoService {
     return this.http.post<{ commentId: string; deleted: boolean }>(
       `${this.base}/delete-comment`,
       { commentId },
-      { headers: this.headers() },
+      {
+        headers: this.headers(),
+        // SILENT: an inline action on one comment.
+        context: new HttpContext().set(SILENT, true),
+      },
     );
   }
 
@@ -444,7 +468,11 @@ export class VideoService {
     return this.http.post<VideoChapter[]>(
       `${this.admin}/list-chapters`,
       { id },
-      { headers: this.headers() },
+      {
+        headers: this.headers(),
+        // SILENT: the chapter editor opening — the editor is already on screen.
+        context: new HttpContext().set(SILENT, true),
+      },
     );
   }
 
@@ -467,7 +495,11 @@ export class VideoService {
   /** This member's unfinished recordings, most recently watched first. */
   continueWatching(): Observable<VideoCard[]> {
     return this.http
-      .post<VideoCard[]>(`${this.base}/continue-watching`, {}, { headers: this.headers() })
+      .post<VideoCard[]>(`${this.base}/continue-watching`, {}, {
+        headers: this.headers(),
+        // SILENT: a row loaded in the background; failing it costs the row, not the page.
+        context: new HttpContext().set(SILENT, true),
+      })
       .pipe(map((cards) => cards.map((card) => this.normalizeMediaUrls(card))));
   }
 
@@ -495,7 +527,11 @@ export class VideoService {
       .post<DownloadOptions>(
         `${this.base}/download-options`,
         { id },
-        { headers: this.headers() },
+        {
+        headers: this.headers(),
+        // SILENT: the download chooser opening — the button says Loading….
+        context: new HttpContext().set(SILENT, true),
+      },
       )
       .pipe(
         map((plan) => ({
