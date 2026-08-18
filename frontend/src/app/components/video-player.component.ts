@@ -64,6 +64,7 @@ interface QualityOption {
       #shell
       [class.controls-hidden]="!controlsVisible()"
       [class.fullscreen]="isFullscreen()"
+      [class.theater]="theater()"
       tabindex="0"
       (keydown)="onKeydown($event)"
       (mousemove)="wakeControls()"
@@ -454,6 +455,23 @@ interface QualityOption {
         box-shadow: 0 0 0 2px var(--accent);
       }
       .player.fullscreen {
+        border-radius: 0;
+        aspect-ratio: auto;
+        height: 100%;
+      }
+      /*
+        Theater needs exactly what fullscreen needs, and for the same reason.
+
+        .player above is aspect-ratio 16/9 at width 100%. The host layer sizes itself from the
+        slot's measured box, and in theater that box is deliberately SHORTER than 16/9 so the player
+        fits on screen. Without this rule the player ignores that height, computes its own from its
+        width, and overflows the layer by hundreds of pixels — which put the controls off the bottom
+        and left the picture sitting over the page below it.
+
+        Dropping the ratio and filling the layer instead hands the sizing decision to the one place
+        that knows the viewport. object-fit: contain on the video letterboxes the difference.
+      */
+      .player.theater {
         border-radius: 0;
         aspect-ratio: auto;
         height: 100%;

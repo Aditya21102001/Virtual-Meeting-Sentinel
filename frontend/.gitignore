@@ -1,0 +1,4 @@
+
+# Generated at build time by scripts/write-build-info.mjs — never committed, so it can
+# never disagree with the commit it claims to describe.
+src/environments/build-info.ts

@@ -5,7 +5,9 @@
   "scripts": {
     "start": "ng serve",
     "build": "ng build",
-    "watch": "ng build --watch --configuration development"
+    "watch": "ng build --watch --configuration development",
+    "prebuild": "node scripts/write-build-info.mjs",
+    "prestart": "node scripts/write-build-info.mjs"
   },
   "private": true,
   "dependencies": {

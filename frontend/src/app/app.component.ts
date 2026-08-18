@@ -14,6 +14,8 @@ import {
   Router,
   NavigationError,
 } from "@angular/router";
+import { BUILD_INFO } from "../environments/build-info";
+import { environment } from "../environments/environment";
 import { HelpWidgetComponent } from "./components/help-widget.component";
 import { VideoPlayerComponent } from "./components/video-player.component";
 import { PlayerHostService } from "./services/player-host.service";
@@ -286,7 +288,23 @@ import { MeetingService } from "./services/meeting.service";
     @if (features.enabled("HELP_WIDGET")) {
       <app-help-widget></app-help-widget>
     }
-    <footer class="site-footer">Copyright © 2026 Aditya Yadav</footer>
+    <!--
+      Build stamp. Small, but it answers the question that cost the most time to answer any other
+      way: "is what I am looking at the version that was just deployed?" Grepping the bundle for a
+      symbol gets that wrong the moment the code sits in a lazy chunk rather than main.js.
+
+      Shown to everyone rather than admins only — the person reporting "it still does the old thing"
+      is usually not an admin, and their answer is the one worth having.
+    -->
+    <footer class="site-footer">
+      Copyright © 2026 Aditya Yadav
+      <span class="build-stamp" [title]="buildTooltip()">
+        · build {{ buildCommit }} · {{ buildLocal() }}
+        @if (apiVersion(); as api) {
+          · api {{ api }}
+        }
+      </span>
+    </footer>
   `,
   styles: [
     `
@@ -724,6 +742,52 @@ export class AppComponent {
   private readonly exposeSnapshot = effect(() => {
     (window as unknown as Record<string, unknown>)['__pipState'] = () =>
       this.playerHost.snapshot();
+  });
+
+  // ---- build stamp -------------------------------------------------------------
+
+  /** Commit this bundle was built from, stamped in by scripts/write-build-info.mjs. */
+  protected readonly buildCommit = BUILD_INFO.commit;
+
+  /**
+   * Build time in the viewer's own zone.
+   *
+   * <p>The stamp is stored as UTC ISO-8601 so two people in different offices are comparing the
+   * same instant, and rendered locally so each of them can tell at a glance whether it is older
+   * than the change they are looking for.
+   */
+  protected readonly buildLocal = computed(() => {
+    const at = new Date(BUILD_INFO.builtAt);
+    return Number.isNaN(at.getTime())
+      ? BUILD_INFO.builtAt
+      : at.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  });
+
+  protected readonly buildTooltip = computed(
+    () => `Frontend built ${BUILD_INFO.builtAt} from commit ${BUILD_INFO.commit}`,
+  );
+
+  /** What the backend reports about itself, or null until it answers. */
+  protected readonly apiVersion = signal<string | null>(null);
+
+  /**
+   * Ask the API what it is running.
+   *
+   * <p>Fails silently: the stamp is a diagnostic, and a footer that shows an error would be noise on
+   * every page for everyone. A backend that is asleep simply leaves the API half blank, which is
+   * itself informative.
+   */
+  private readonly loadApiVersion = effect(() => {
+    untracked(() => {
+      if (this.apiVersion() !== null) return;
+      fetch(`${environment.apiBase}/health`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body) => {
+          const version = body?.version ?? body?.commit;
+          if (version) this.apiVersion.set(String(version));
+        })
+        .catch(() => undefined);
+    });
   });
 
   private readonly publishPlayer = effect(() => {

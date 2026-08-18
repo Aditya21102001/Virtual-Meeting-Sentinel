@@ -2,9 +2,11 @@ package com.agmsentinel.controller;
 
 import com.agmsentinel.service.AiClient;
 import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -37,16 +39,42 @@ import java.util.Map;
 @RestController
 public class HealthController {
 
+    /**
+     * When this process came up.
+     *
+     * <p>A constant captured at class load, not a field written later: the point is to say how long
+     * this exact JVM has been serving, which is the fastest way to tell "the deploy landed" from
+     * "you are still talking to the old container". On a platform that redeploys without the
+     * version changing, this is the half that actually answers the question.
+     */
+    private static final Instant STARTED_AT = Instant.now();
+
     private final AiClient ai;
+
+    /** The Maven project version, injected by Spring Boot's build-info property. */
+    @Value("${spring.application.version:unknown}")
+    private String version;
 
     public HealthController(AiClient ai) {
         this.ai = ai;
     }
 
-    /** Alive. Deliberately answers without consulting anything that could be slow. */
+    /**
+     * Alive, and which build is answering. Deliberately consults nothing that could be slow.
+     *
+     * <p>The version is here for the same reason the frontend stamps its footer: telling a deployed
+     * build from a stale one otherwise meant probing for a behaviour change and inferring backwards,
+     * which gets the answer wrong as often as right. {@code version} is the Maven project version;
+     * {@code startedAt} is when this process came up, which is the more useful of the two on a host
+     * that redeploys without the version changing.
+     */
     @GetMapping({"/health", "/api/health"})
     public Map<String, Object> health() {
-        return Map.of("status", "UP");
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", "UP");
+        body.put("version", version);
+        body.put("startedAt", STARTED_AT.toString());
+        return body;
     }
 
     /**
