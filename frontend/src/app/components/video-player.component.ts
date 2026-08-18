@@ -14,6 +14,7 @@ import {
 import Hls, { ErrorData, Events, Level } from 'hls.js';
 import { createMediaLoader } from '../services/sealed-key-loader';
 import { PlaybackProgressService } from '../services/playback-progress.service';
+import { PlayerPreferencesService } from '../services/player-preferences.service';
 import { PlayerHostService } from '../services/player-host.service';
 import { FeatureService } from '../services/feature.service';
 import {
@@ -354,7 +355,7 @@ interface QualityOption {
               class="icon"
               type="button"
               [class.on]="captionsOn()"
-              (click)="captionsOn.set(!captionsOn())"
+              (click)="toggleCaptions()"
               [attr.aria-label]="captionsOn() ? 'Hide captions' : 'Show captions'"
               [attr.aria-pressed]="captionsOn()"
             >
@@ -979,9 +980,17 @@ export class VideoPlayerComponent implements OnDestroy {
   readonly buffering = signal(false);
   readonly currentTime = signal(0);
   readonly duration = signal(0);
-  readonly volume = signal(1);
-  readonly muted = signal(false);
-  readonly speed = signal(1);
+  /**
+   * Seeded from stored preferences, so volume, speed and captions survive a reload the way they do
+   * on any other player. Read once at construction rather than in an effect: these feed the media
+   * element's initial setup, which happens before any effect would first run.
+   */
+  private readonly prefs = inject(PlayerPreferencesService);
+  private readonly storedPrefs = this.prefs.load();
+
+  readonly volume = signal(this.storedPrefs.volume);
+  readonly muted = signal(this.storedPrefs.muted);
+  readonly speed = signal(this.storedPrefs.speed);
   readonly isFullscreen = signal(false);
   readonly controlsVisible = signal(true);
   readonly statsOpen = signal(false);
@@ -1146,8 +1155,14 @@ export class VideoPlayerComponent implements OnDestroy {
 
   /** Parsed caption cues, empty when the recording has no transcript. */
   readonly cues = signal<TranscriptCue[]>([]);
-  /** Whether to draw the caption line over the video. Off by default, like every player. */
-  readonly captionsOn = signal(false);
+  /**
+   * Whether to draw the caption line over the video.
+   *
+   * <p>Remembered between visits. Someone who needs captions needs them on every recording, and
+   * making them switch that on each time is the kind of small repeated friction that matters most
+   * to the people who rely on it.
+   */
+  readonly captionsOn = signal(this.storedPrefs.captions);
 
   /**
    * The cue covering the playhead.
@@ -1212,6 +1227,13 @@ export class VideoPlayerComponent implements OnDestroy {
     }
     return null;
   });
+
+  /** Toggle captions and remember the choice — see captionsOn. */
+  toggleCaptions(): void {
+    const next = !this.captionsOn();
+    this.captionsOn.set(next);
+    this.prefs.save({ captions: next });
+  }
 
   /** Jump to a chapter. Closing the list is deliberate: the point of the click was to watch. */
   jumpToChapter(startSeconds: number): void {
@@ -1356,6 +1378,7 @@ export class VideoPlayerComponent implements OnDestroy {
       return;
     }
     element.volume = this.volume();
+    element.muted = this.muted();
     element.playbackRate = this.speed();
 
     // Resolved BEFORE anything is fetched. That ordering is the whole trick — see startHls.
@@ -1745,15 +1768,18 @@ export class VideoPlayerComponent implements OnDestroy {
     const element = this.mediaRef().nativeElement;
     element.volume = value;
     element.muted = value === 0;
+    this.prefs.save({ volume: value, muted: element.muted });
   }
 
   toggleMute(): void {
     const element = this.mediaRef().nativeElement;
     element.muted = !element.muted;
+    this.prefs.save({ muted: element.muted });
   }
 
   setSpeed(rate: number): void {
     this.mediaRef().nativeElement.playbackRate = rate;
+    this.prefs.save({ speed: rate });
     this.openMenu.set(null);
   }
 

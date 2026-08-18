@@ -65,6 +65,12 @@ public class VideoWatchService {
     public void report(UUID videoId, String username, double positionSeconds, Double durationSeconds) {
         // The write this flag exists to control — see Feature.VIDEO_WATCH_TRACKING for the sums.
         if (!features.isEnabled(Feature.VIDEO_WATCH_TRACKING)) return;
+        // A missing id reached the repository as a null key and came back as a 500. This endpoint is
+        // called on a timer by every playing recording, so anything that can throw here throws often
+        // — and a 500 is both the wrong answer for a malformed request and noise that would bury a
+        // real fault. Ignored rather than rejected, for the same reason as an anonymous viewer:
+        // nothing the caller can do about it, and playback must not be disturbed by a lost report.
+        if (videoId == null) return;
         if (username == null || username.isBlank() || "anonymous".equals(username)) return;
 
         boolean completed = durationSeconds != null && durationSeconds > 0
