@@ -442,12 +442,30 @@ import {
         whatever box this element reports, so widening this is the whole implementation — the
         existing ResizeObserver re-measures and the layer follows.
       */
+      /*
+        Theater mode: full-bleed width, height capped to the viewport.
+
+        The height cap is the whole point. .player-slot below sets aspect-ratio 16/9, and at 100vw
+        on a 1920-wide screen that computes to a 1080px-tall box — taller than most viewports once
+        the browser chrome is counted. The player then ran off the bottom of the screen and its
+        controls were unreachable without scrolling, which is what "distorted" looked like. So the
+        aspect ratio is dropped here and the height becomes whichever is smaller: the 16/9 height
+        for this width, or what actually fits on screen. The video inside is object-fit: contain,
+        so the short case letterboxes instead of stretching.
+
+        100svh rather than 100vh: on mobile browsers 100vh is the height with the address bar
+        HIDDEN, so using it here puts the controls underneath that bar until the user scrolls.
+      */
       .player-slot.theater {
         width: 100vw;
         max-width: 100vw;
         margin-left: calc(50% - 50vw);
         margin-right: calc(50% - 50vw);
         border-radius: 0;
+        aspect-ratio: auto;
+        height: min(56.25vw, calc(100svh - 150px));
+        /* Never collapse to nothing on a very short window — below this it stops being a player. */
+        min-height: 220px;
       }
       .player-slot {
         aspect-ratio: 16 / 9;

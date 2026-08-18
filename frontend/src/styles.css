@@ -15,7 +15,18 @@ body {
   color: var(--text);
   -webkit-text-size-adjust: 100%;
 }
-.container { max-width: 900px; margin: 0 auto; padding: 24px; }
+/*
+  overflow-x: clip absorbs the full-bleed player in theater mode.
+
+  Theater breaks the player out of this 900px column with `width: 100vw` and a negative margin.
+  `100vw` counts the scrollbar, so on any desktop browser that shows one the slot is ~15px wider
+  than the document and the whole page gains a horizontal scrollbar — the layout appears to shift
+  sideways whenever theater is on.
+
+  `clip`, not `hidden`: `hidden` makes this a scroll container, which silently breaks
+  `position: sticky` for anything inside it. `clip` cuts the overflow without that side effect.
+*/
+.container { max-width: 900px; margin: 0 auto; padding: 24px; overflow-x: clip; }
 h1 { font-size: 22px; }
 .card { background: var(--card); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
 input, textarea, button {
