@@ -927,6 +927,23 @@ interface QualityOption {
           display: none;
         }
       }
+
+      /* Touch users do not have a hover gesture to bring an auto-hidden bar back. Keep the bar
+         available on mobile, and let the optional controls scroll instead of clipping the primary
+         play, seek, volume, and time controls off-screen. */
+      @media (pointer: coarse) {
+        .controls-hidden .controls {
+          opacity: 1;
+          pointer-events: auto;
+        }
+        .controls-hidden video {
+          cursor: auto;
+        }
+        .buttons {
+          overflow-x: auto;
+          scrollbar-width: thin;
+        }
+      }
     `,
   ],
 })

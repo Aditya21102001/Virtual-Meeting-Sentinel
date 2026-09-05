@@ -418,7 +418,9 @@ import { MeetingService } from "./services/meeting.service";
       .cold-start {
         position: sticky;
         top: 0;
-        z-index: 40;
+        /* Keep the explanation above the blocking loader; otherwise a slow Render response only
+           shows "Working...", which is exactly the ambiguity this notice is meant to remove. */
+        z-index: 210;
         display: flex;
         align-items: center;
         gap: 10px;
