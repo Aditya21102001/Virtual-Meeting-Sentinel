@@ -45,6 +45,9 @@ export class ColdStartService {
   /** Whether to show the notice. */
   readonly waking = computed(() => this.strikes() >= ColdStartService.STRIKES_BEFORE_TELLING);
 
+  /** Whether the backend has answered at least one request during this page session. */
+  readonly hasResponded = signal(false);
+
   /** Whole seconds since the first failure, for the "waiting Ns" line. */
   readonly elapsedSeconds = computed(() => {
     const from = this.since();
@@ -67,6 +70,7 @@ export class ColdStartService {
    * and the evidence is conclusive. A response of any kind means something is listening.
    */
   recordSuccess(): void {
+    this.hasResponded.set(true);
     if (this.strikes() === 0 && this.since() === null) return;
     this.strikes.set(0);
     this.since.set(null);

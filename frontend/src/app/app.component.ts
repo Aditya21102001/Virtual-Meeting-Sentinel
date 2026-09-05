@@ -28,7 +28,13 @@ import { MeetingService } from "./services/meeting.service";
 @Component({
   selector: "app-root",
   standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, HelpWidgetComponent, VideoPlayerComponent],
+  imports: [
+    RouterOutlet,
+    RouterLink,
+    RouterLinkActive,
+    HelpWidgetComponent,
+    VideoPlayerComponent,
+  ],
   template: `
     <!--
       First thing in the tab order and invisible until focused. Without it a keyboard user tabs
@@ -57,7 +63,12 @@ import { MeetingService } from "./services/meeting.service";
         See MAX_BLOCK_MS: a stuck blocker is an unusable application, and no indicator is worth
         that.
       -->
-      <div class="blocking-overlay" role="alert" aria-live="assertive" aria-busy="true">
+      <div
+        class="blocking-overlay"
+        role="alert"
+        aria-live="assertive"
+        aria-busy="true"
+      >
         <div class="blocking-card">
           <span class="blocking-spinner" aria-hidden="true"></span>
           <span>Working…</span>
@@ -79,13 +90,22 @@ import { MeetingService } from "./services/meeting.service";
       reader is currently reading. assertive would talk over the user for a condition that resolves
       itself.
     -->
-    @if (coldStart.waking()) {
+    @if (
+      coldStart.waking() || (loading.pending() && !coldStart.hasResponded())
+    ) {
       <div class="cold-start" role="status" aria-live="polite">
         <span class="cold-spinner" aria-hidden="true"></span>
         <span>
-          <strong>Waking the server up.</strong>
-          It sleeps when nobody is using it, so the first request after a quiet spell can take up to
-          a minute. Nothing is broken — this page will start working on its own.
+          @if (coldStart.waking()) {
+            <strong>Waking the server up.</strong>
+            It sleeps when nobody is using it, so the first request after a
+            quiet spell can take up to a minute. Nothing is broken — this page
+            will start working on its own.
+          } @else {
+            <strong>Connecting to the server.</strong>
+            The backend may be waking from sleep, so the first response can take
+            up to a minute.
+          }
         </span>
         <span class="cold-elapsed">{{ coldStart.elapsedSeconds() }}s</span>
       </div>
@@ -121,7 +141,9 @@ import { MeetingService } from "./services/meeting.service";
           (click)="toggle()"
           [attr.aria-expanded]="menuOpen()"
           aria-controls="nav-links"
-          [attr.aria-label]="menuOpen() ? 'Close navigation' : 'Open navigation'"
+          [attr.aria-label]="
+            menuOpen() ? 'Close navigation' : 'Open navigation'
+          "
         >
           {{ menuOpen() ? "✕" : "☰" }}
         </button>
@@ -142,7 +164,9 @@ import { MeetingService } from "./services/meeting.service";
         -->
 
         <!-- Taking part — everyone. -->
-        <a routerLink="/ask" routerLinkActive="active" (click)="close()">Ask a question</a>
+        <a routerLink="/ask" routerLinkActive="active" (click)="close()"
+          >Ask a question</a
+        >
         @if (auth.isAuthenticated()) {
           <!--
             Both conditions, and the second is not redundant. The flag says this deployment HAS the
@@ -150,10 +174,17 @@ import { MeetingService } from "./services/meeting.service";
             account, so an anonymous attendee was being shown a link that answered 403 on click.
           -->
           @if (features.enabled("LOUNGE_CHAT") && auth.hasRealAccount()) {
-            <a routerLink="/chat" routerLinkActive="active" (click)="close()">💬 Lounge</a>
+            <a routerLink="/chat" routerLinkActive="active" (click)="close()"
+              >💬 Lounge</a
+            >
           }
           @if (features.enabled("VIDEO_LIBRARY")) {
-            <a routerLink="/recordings" routerLinkActive="active" (click)="close()">🎬 Recordings</a>
+            <a
+              routerLink="/recordings"
+              routerLinkActive="active"
+              (click)="close()"
+              >🎬 Recordings</a
+            >
           }
           <!--
             Voting is every member's, not just the chair's — the same page is the ballot and the
@@ -161,7 +192,9 @@ import { MeetingService } from "./services/meeting.service";
             list, which only the server knows.
           -->
           @if (features.enabled("VOTING") && auth.hasRealAccount()) {
-            <a routerLink="/voting" routerLinkActive="active" (click)="close()">🗳️ Voting</a>
+            <a routerLink="/voting" routerLinkActive="active" (click)="close()"
+              >🗳️ Voting</a
+            >
           }
         }
 
@@ -178,7 +211,9 @@ import { MeetingService } from "./services/meeting.service";
               Run the meeting <span class="caret" aria-hidden="true"></span>
             </button>
             <div class="menu-items" [class.open]="openMenu() === 'run'">
-              <a routerLink="/board" routerLinkActive="active" (click)="close()">Moderator board</a>
+              <a routerLink="/board" routerLinkActive="active" (click)="close()"
+                >Moderator board</a
+              >
               <!--
                 One condition, not two nested ones. This used to be wrapped in a check for
                 RUN_OF_SHOW as well, left over from when a separate run-of-show page was planned;
@@ -186,13 +221,30 @@ import { MeetingService } from "./services/meeting.service";
                 of hiding Reports whenever RUN_OF_SHOW happened to be off.
               -->
               @if (features.enabled("MEETING_REPORTS")) {
-                <a routerLink="/reports" routerLinkActive="active" (click)="close()">Reports</a>
+                <a
+                  routerLink="/reports"
+                  routerLinkActive="active"
+                  (click)="close()"
+                  >Reports</a
+                >
               }
               @if (features.enabled("VIDEO_LIBRARY")) {
-                <a routerLink="/videos" routerLinkActive="active" (click)="close()">Video library</a>
+                <a
+                  routerLink="/videos"
+                  routerLinkActive="active"
+                  (click)="close()"
+                  >Video library</a
+                >
               }
-              <a routerLink="/setup" routerLinkActive="active" (click)="close()">Knowledge base</a>
-              <a routerLink="/members" routerLinkActive="active" (click)="close()">Members</a>
+              <a routerLink="/setup" routerLinkActive="active" (click)="close()"
+                >Knowledge base</a
+              >
+              <a
+                routerLink="/members"
+                routerLinkActive="active"
+                (click)="close()"
+                >Members</a
+              >
             </div>
           </div>
         }
@@ -218,10 +270,20 @@ import { MeetingService } from "./services/meeting.service";
             </button>
             <div class="menu-items" [class.open]="openMenu() === 'admin'">
               @if (auth.managesMeetings() && features.enabled("MEETINGS")) {
-                <a routerLink="/meetings" routerLinkActive="active" (click)="close()">Meetings</a>
+                <a
+                  routerLink="/meetings"
+                  routerLinkActive="active"
+                  (click)="close()"
+                  >Meetings</a
+                >
               }
               @if (auth.hasRole("ADMIN")) {
-                <a routerLink="/features" routerLinkActive="active" (click)="close()">Features</a>
+                <a
+                  routerLink="/features"
+                  routerLinkActive="active"
+                  (click)="close()"
+                  >Features</a
+                >
               }
             </div>
           </div>
@@ -231,7 +293,9 @@ import { MeetingService } from "./services/meeting.service";
 
         <!-- Always shown, signed in or not: the questions people most need answered are the ones
              they have when something is not working, and that includes signing in. -->
-        <a routerLink="/help" routerLinkActive="active" (click)="close()">Help</a>
+        <a routerLink="/help" routerLinkActive="active" (click)="close()"
+          >Help</a
+        >
 
         @if (auth.isAuthenticated()) {
           <div class="menu account" [class.flat]="menuOpen()">
@@ -246,14 +310,26 @@ import { MeetingService } from "./services/meeting.service";
               <span class="nav-user">{{ auth.username() }}</span>
               <span class="caret" aria-hidden="true"></span>
             </button>
-            <div class="menu-items right" [class.open]="openMenu() === 'account'">
+            <div
+              class="menu-items right"
+              [class.open]="openMenu() === 'account'"
+            >
               <span class="menu-heading">{{ roleLabel() }}</span>
-              <a routerLink="/security" routerLinkActive="active" (click)="close()">Security</a>
-              <button type="button" class="menu-action" (click)="logout()">Sign out</button>
+              <a
+                routerLink="/security"
+                routerLinkActive="active"
+                (click)="close()"
+                >Security</a
+              >
+              <button type="button" class="menu-action" (click)="logout()">
+                Sign out
+              </button>
             </div>
           </div>
         } @else {
-          <a routerLink="/login" routerLinkActive="active" (click)="close()">Login</a>
+          <a routerLink="/login" routerLinkActive="active" (click)="close()"
+            >Login</a
+          >
         }
       </div>
     </nav>
@@ -353,7 +429,9 @@ import { MeetingService } from "./services/meeting.service";
         line-height: 1.4;
         border-bottom: 1px solid #92400e;
       }
-      .cold-start strong { color: #fffbeb; }
+      .cold-start strong {
+        color: #fffbeb;
+      }
       .cold-elapsed {
         margin-left: auto;
         font-variant-numeric: tabular-nums;
@@ -369,10 +447,16 @@ import { MeetingService } from "./services/meeting.service";
         border-radius: 50%;
         animation: cold-spin 800ms linear infinite;
       }
-      @keyframes cold-spin { to { transform: rotate(360deg); } }
+      @keyframes cold-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
       /* The words carry the message; the spinner is decoration nobody should be forced to watch. */
       @media (prefers-reduced-motion: reduce) {
-        .cold-spinner { animation: none; }
+        .cold-spinner {
+          animation: none;
+        }
       }
 
       .loading-bar {
@@ -395,13 +479,19 @@ import { MeetingService } from "./services/meeting.service";
         animation: loading-sweep 1.1s ease-in-out infinite;
       }
       @keyframes loading-sweep {
-        0% { transform: translateX(-100%); }
-        100% { transform: translateX(350%); }
+        0% {
+          transform: translateX(-100%);
+        }
+        100% {
+          transform: translateX(350%);
+        }
       }
       /* Without motion the sweep would be a static stripe that reads as a decoration. A steady
          full-width bar still says "something is happening" without moving. */
       @media (prefers-reduced-motion: reduce) {
-        .caret { transition: none; }
+        .caret {
+          transition: none;
+        }
         .blocking-spinner {
           animation: none;
           border-right-color: var(--accent);
@@ -444,7 +534,9 @@ import { MeetingService } from "./services/meeting.service";
         animation: blocking-spin 0.8s linear infinite;
       }
       @keyframes blocking-spin {
-        to { transform: rotate(360deg); }
+        to {
+          transform: rotate(360deg);
+        }
       }
 
       .nav {
@@ -494,11 +586,18 @@ import { MeetingService } from "./services/meeting.service";
         animation: live-pulse 2s ease-in-out infinite;
       }
       @keyframes live-pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.3; }
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
       }
       @media (prefers-reduced-motion: reduce) {
-        .live-dot { animation: none; }
+        .live-dot {
+          animation: none;
+        }
       }
       .brand {
         color: var(--accent);
@@ -552,7 +651,7 @@ import { MeetingService } from "./services/meeting.service";
         cursor: pointer;
       }
       .menu-trigger:hover,
-      .menu-trigger[aria-expanded='true'] {
+      .menu-trigger[aria-expanded="true"] {
         color: var(--accent);
       }
       .caret {
@@ -563,7 +662,7 @@ import { MeetingService } from "./services/meeting.service";
         transform: rotate(45deg) translate(-2px, -2px);
         transition: transform 0.15s ease;
       }
-      .menu-trigger[aria-expanded='true'] .caret {
+      .menu-trigger[aria-expanded="true"] .caret {
         transform: rotate(-135deg) translate(-2px, -2px);
       }
 
@@ -723,7 +822,7 @@ import { MeetingService } from "./services/meeting.service";
           text-transform: uppercase;
           letter-spacing: 0.04em;
           opacity: 0.7;
-          pointer-events: none;   /* a section heading, not a control */
+          pointer-events: none; /* a section heading, not a control */
         }
         .menu.flat .caret {
           display: none;
@@ -753,7 +852,7 @@ export class AppComponent {
    * <p>One signal rather than a boolean per menu: only one can be open at a time, and separate
    * flags make "close the others" a rule somebody has to remember on every new menu.
    */
-  readonly openMenu = signal<'run' | 'admin' | 'account' | null>(null);
+  readonly openMenu = signal<"run" | "admin" | "account" | null>(null);
 
   /**
    * The signed-in state the session data was last loaded for, or null before the first run.
@@ -784,7 +883,8 @@ export class AppComponent {
    * <p>That page used `viewChild` when it owned the player. It does not own it any more, so the
    * instance travels through the service instead — see PlayerHostService.player.
    */
-  private readonly hostedPlayer = viewChild<VideoPlayerComponent>('hostedPlayer');
+  private readonly hostedPlayer =
+    viewChild<VideoPlayerComponent>("hostedPlayer");
 
   /**
    * Publish the hosted player so the recordings page can reach it.
@@ -806,7 +906,7 @@ export class AppComponent {
    * harmless, so it is always available rather than hidden behind the debug flag.
    */
   private readonly exposeSnapshot = effect(() => {
-    (window as unknown as Record<string, unknown>)['__pipState'] = () =>
+    (window as unknown as Record<string, unknown>)["__pipState"] = () =>
       this.playerHost.snapshot();
   });
 
@@ -826,11 +926,15 @@ export class AppComponent {
     const at = new Date(BUILD_INFO.builtAt);
     return Number.isNaN(at.getTime())
       ? BUILD_INFO.builtAt
-      : at.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+      : at.toLocaleString(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        });
   });
 
   protected readonly buildTooltip = computed(
-    () => `Frontend built ${BUILD_INFO.builtAt} from commit ${BUILD_INFO.commit}`,
+    () =>
+      `Frontend built ${BUILD_INFO.builtAt} from commit ${BUILD_INFO.commit}`,
   );
 
   /** What the backend reports about itself, or null until it answers. */
@@ -885,21 +989,23 @@ export class AppComponent {
    * every field on this class. Something that survives the reload is the only thing that can tell
    * "we just tried this" from "first attempt".
    */
-  private static readonly RELOAD_MARKER = 'agm_chunk_reload_for';
+  private static readonly RELOAD_MARKER = "agm_chunk_reload_for";
 
   /** First letter of the username, for the account button. */
-  readonly initial = computed(() => (this.auth.username() ?? '?').charAt(0).toUpperCase());
+  readonly initial = computed(() =>
+    (this.auth.username() ?? "?").charAt(0).toUpperCase(),
+  );
 
   /** "Admin · Meeting manager" — what this person is, for the account menu. */
   readonly roleLabel = computed(() => {
     const roles = this.auth.roles();
-    if (!roles.length) return 'Signed in';
+    if (!roles.length) return "Signed in";
     return roles
-      .map((r) => r.charAt(0) + r.slice(1).toLowerCase().replace(/_/g, ' '))
-      .join(' · ');
+      .map((r) => r.charAt(0) + r.slice(1).toLowerCase().replace(/_/g, " "))
+      .join(" · ");
   });
 
-  toggleMenu(which: 'run' | 'admin' | 'account'): void {
+  toggleMenu(which: "run" | "admin" | "account"): void {
     this.openMenu.update((current) => (current === which ? null : which));
   }
 
@@ -910,15 +1016,15 @@ export class AppComponent {
    * catch clicks also swallows the first click on whatever is underneath, so dismissing a menu
    * costs an extra click every time.
    */
-  @HostListener('document:click', ['$event'])
+  @HostListener("document:click", ["$event"])
   onDocumentClick(event: MouseEvent): void {
     if (this.openMenu() === null) return;
     const target = event.target as HTMLElement | null;
-    if (!target?.closest('.menu')) this.openMenu.set(null);
+    if (!target?.closest(".menu")) this.openMenu.set(null);
   }
 
   /** Escape closes the menu, then the mobile drawer — the order people expect. */
-  @HostListener('document:keydown.escape')
+  @HostListener("document:keydown.escape")
   onEscape(): void {
     if (this.openMenu() !== null) {
       this.openMenu.set(null);
@@ -954,9 +1060,9 @@ export class AppComponent {
     this.router.events.subscribe((event) => {
       if (!(event instanceof NavigationError)) return;
 
-      const reason = String(event.error?.message ?? event.error ?? '');
+      const reason = String(event.error?.message ?? event.error ?? "");
       const isStaleChunk =
-        event.error?.name === 'ChunkLoadError' ||
+        event.error?.name === "ChunkLoadError" ||
         /failed to fetch dynamically imported module|error loading dynamically imported module|loading chunk .* failed|importing a module script failed/i.test(
           reason,
         );
@@ -987,7 +1093,7 @@ export class AppComponent {
       const signedIn = this.auth.isAuthenticated();
 
       untracked(() => {
-        if (signedIn === this.sessionLoadedFor) return;   // nothing changed; do no work
+        if (signedIn === this.sessionLoadedFor) return; // nothing changed; do no work
         this.sessionLoadedFor = signedIn;
 
         if (!signedIn) {
