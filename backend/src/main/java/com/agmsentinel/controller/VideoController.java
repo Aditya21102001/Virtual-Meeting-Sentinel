@@ -13,6 +13,7 @@ import com.agmsentinel.security.RequiresFeature;
 import com.agmsentinel.model.VideoRendition;
 import com.agmsentinel.model.VideoSegment;
 import com.agmsentinel.security.PlaybackTicketService;
+import com.agmsentinel.service.HlsSegmentDecryptor;
 import com.agmsentinel.service.VideoChapterService;
 import com.agmsentinel.service.VideoContentKeyService;
 import com.agmsentinel.service.VideoEngagementService;
@@ -32,6 +33,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.io.IOException;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -380,11 +382,45 @@ public class VideoController {
                     "That rendition has no segments to join.");
         }
         String prefix = siblingOf(chosen.getPlaylistRel(), "");
-        return attachment(downloadName(video, "-" + chosen.getName() + ".ts"),
-                MP2T, chosen.getTotalBytes(),
-                out -> {
+
+        // Decrypt on the way out when the recording is encrypted.
+        //
+        // Joining the segments raw was correct before segment encryption existed, and silently wrong
+        // afterwards: the response succeeded, the browser saved a .ts, and the file was ciphertext
+        // that no player could open. A download that failed would have been better than one that
+        // looked like it worked.
+        byte[] contentKey = video.getContentKey() == null ? null
+                : contentKeys.unwrap(video.getContentKey());
+
+        if (contentKey == null) {
+            return attachment(downloadName(video, "-" + chosen.getName() + ".ts"),
+                    MP2T, chosen.getTotalBytes(),
+                    out -> {
+                        for (VideoSegment segment : segments) {
+                            media.copyTo(video, prefix + segment.getFilename(), out);
+                        }
+                    });
+        }
+
+        // No Content-Length. Decryption strips PKCS#7 padding, so the plaintext is a few bytes
+        // shorter per segment than getTotalBytes() reports — and a response that under-delivers its
+        // declared length is a truncated download in every client. Chunked is the honest answer.
+        return ResponseEntity.ok()
+                .contentType(MP2T)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment()
+                                .filename(downloadName(video, "-" + chosen.getName() + ".ts"),
+                                          StandardCharsets.UTF_8).build().toString())
+                .cacheControl(CacheControl.noStore())
+                .body(out -> {
                     for (VideoSegment segment : segments) {
-                        media.copyTo(video, prefix + segment.getFilename(), out);
+                        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                        media.copyTo(video, prefix + segment.getFilename(), buffer);
+                        // The segment's own sequence number is its IV — see HlsSegmentDecryptor for
+                        // why, and why each segment is decrypted on its own rather than as one stream.
+                        HlsSegmentDecryptor.decryptTo(contentKey,
+                                HlsSegmentDecryptor.ivForSequence(segment.getSeq()),
+                                buffer.toByteArray(), out);
                     }
                 });
     }

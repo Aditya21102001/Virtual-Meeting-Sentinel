@@ -583,6 +583,97 @@ with an error page.
 
 ---
 
+## 10a. Chapters, watch tracking and the rest of the player
+
+Added after the sections above. Each is behind a switch, and two of them are off by default for
+reasons worth knowing.
+
+### Chapters
+
+Named points a viewer jumps to — "Item 4 — Auditor's Report" at 31:05. What makes a two-hour AGM
+navigable rather than something people scrub through and abandon.
+
+`video_chapters` holds a start time, a title and an ordinal per row. **Only a start time**: a chapter
+ends where the next begins, so an end would be a second copy of the same fact and the two could
+disagree. Ordinals are assigned server-side from the sorted starts, so a client can submit rows in
+whatever order they were typed and cannot number them wrongly.
+
+Saved **wholesale**, never diffed. Editing an agenda means renaming, moving and deleting entries in
+one sitting, and matching those against existing ids would be work whose only reward is preserving
+identifiers nothing refers to. Delete-then-insert inside one transaction, so the player can never see
+markers that disagree with its own chapter list.
+
+The player derives each chapter's end and draws dividers on the scrubber, an overlay list, the current
+chapter beside the clock, and the chapter name in the hover preview. **No segment mapping is involved
+or needed** — cues and chapters are matched by time, and HLS presents one continuous timeline
+regardless of how many `.ts` files it stitched together.
+
+Behind `VIDEO_CHAPTERS`, **off by default**. Gated at the query rather than the response: with the
+flag off the library page costs nothing, where gating only the output would still have added a
+round-trip per page load.
+
+### Watch tracking, view counts and Continue watching
+
+`video_views` holds one row per member per recording: how many sittings, where they stopped, whether
+they finished.
+
+**One row per person, not per play.** For a board recording the honest question is how many
+shareholders watched it, once each — a number that climbs on every re-open measures curiosity about
+the page. `viewCount` records repeats for anyone who wants them without inflating the headline.
+Anonymous viewers are excluded by construction (`username` is not nullable), which undercounts rather
+than over — the safer error for a figure that may reach a compliance report.
+
+Completion **latches**: having finished a recording once is not undone by re-opening it and stopping
+halfway. Resume position lives here as well as in `localStorage`, which is what lets a shareholder
+start on a laptop and finish on a phone.
+
+Behind `VIDEO_WATCH_TRACKING`, **off by default, and this one is not caution**. Every playing
+recording reports its position on a timer, so it is a database WRITE per viewer per interval against
+`DB_MAX_POOL_SIZE` (5 by default). Nothing else in the application writes on a timer — likes and
+comments are one write per deliberate human action. This is the first feature whose cost scales with
+how many people are simply *watching*, which is exactly the situation during a live AGM. Enable it
+outside a meeting first, watch connection wait time, and raise the pool before enabling it during one.
+
+### Theater mode
+
+A wider player without leaving the page. Lives on the **slot**, not the player: the player is drawn
+over a box the recordings page reserves and `PlayerHostService` measures, so widening the slot is the
+whole implementation — the existing `ResizeObserver` repositions the layer with no new code.
+
+Two defects worth recording, because both read as correct CSS:
+
+- `.player-slot` sets `aspect-ratio: 16/9`. At `width: 100vw` on a 1920-wide screen that computes a
+  **1080px-tall** box, taller than most viewports once browser chrome is counted, so the controls fell
+  below the fold. Theater now drops the ratio and caps height at `min(56.25vw, calc(100svh - 150px))`.
+  `100svh` not `100vh`: on mobile `100vh` is the height with the address bar *hidden*.
+- `.player` itself *also* sets `aspect-ratio: 16/9; width: 100%`, so it ignored the layer's height and
+  overflowed it by hundreds of pixels. `.player.fullscreen` already had the escape
+  (`aspect-ratio: auto; height: 100%`); theater needed the same rule and did not have it.
+
+`100vw` includes the scrollbar, so `.container` carries `overflow-x: clip` — `clip` rather than
+`hidden`, because `hidden` makes it a scroll container and silently breaks `position: sticky` inside.
+
+### Loop, autoplay-next and the up-next queue
+
+Loop is per-recording and resets between them: it is a decision about the thing being watched now, and
+carrying it forward would trap someone in a replay they never asked for. Theater persists for the
+opposite reason — it is a statement about how this person wants to watch.
+
+Autoplay-next is **off by default**, deliberately unlike YouTube. Rolling automatically from one AGM
+into an unrelated one is far more likely to be an annoyance than a convenience. The queue lives in
+`PlayerHostService` rather than the recordings page, because the player outlives that page — a queue
+owned by a destroyed component would end with it.
+
+### Remembered preferences
+
+Volume, mute, speed and captions persist across sessions in `vms.player-prefs.v1`. Separate from
+`PlaybackProgressService`, which remembers *where you were* in each recording and prunes over time —
+a viewer's volume must not be forgotten because they watched too many videos. Every value is clamped
+on read: `volume = NaN` throws on assignment, and a stored speed of 16 is both unplayable and
+unreachable from the menu, leaving no way back except clearing site data.
+
+---
+
 ## 11. Configuration
 
 All optional — the defaults run locally with no setup.

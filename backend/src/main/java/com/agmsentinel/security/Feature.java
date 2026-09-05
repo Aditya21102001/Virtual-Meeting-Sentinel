@@ -63,6 +63,19 @@ public enum Feature {
             "Record who watched what and how far, for view counts and Continue watching.",
             false, Set.of(Roles.ADMIN, Roles.MODERATOR, Roles.SHAREHOLDER, Roles.ATTENDEE)),
 
+    /**
+     * OFF, and the furthest from ready of anything in this list — see docs/LIVE_CAPTIONS.md.
+     *
+     * <p>Declared before the feature exists on purpose. Live captioning is the first thing here that
+     * would send audio off the box continuously and bill per chunk: roughly twenty transcription
+     * calls a minute per presenter, sustained for the length of a meeting, against a free tier that
+     * a real AGM would exhaust partway through. A capability with that shape should not be able to
+     * arrive switched on because somebody merged the last piece of it.
+     */
+    LIVE_CAPTIONS("Live captions",
+            "Caption a presenter's microphone during a meeting, in near real time.",
+            false, Set.of(Roles.ADMIN, Roles.MODERATOR, Roles.SHAREHOLDER, Roles.ATTENDEE)),
+
     // ATTENDEE removed deliberately. The lounge shows the directory of registered users and carries
     // direct messages between them. An attendee token is SELF-ASSERTED — /api/auth/attendee is
     // public and issues one for whatever username the caller types — so granting it here handed the

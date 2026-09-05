@@ -38,6 +38,11 @@ class FeatureCoverageTest {
      * reviewer sees — the failure this test exists to catch looks exactly like a missing entry here.
      */
     private static final Set<Feature> ENFORCED_ELSEWHERE = EnumSet.of(
+            // Declared ahead of the feature it will guard — see docs/LIVE_CAPTIONS.md. There are no
+            // live-caption routes yet, so there is nothing to annotate; the flag exists first
+            // precisely so the capability cannot arrive switched on. Remove this entry the moment
+            // the first endpoint lands, and this test will hold it to that.
+            Feature.LIVE_CAPTIONS,
             // Checked in VideoProcessingWorker: transcription happens on a background worker after
             // an upload, not on a request, so there is no route to annotate.
             Feature.AUTO_TRANSCRIPTION);

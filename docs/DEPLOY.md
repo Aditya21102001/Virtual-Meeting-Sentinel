@@ -57,12 +57,33 @@ Do it in this order — each step produces a URL/secret the next step needs.
    | `SPRING_DATASOURCE_URL` | your Neon **JDBC** URL |
    | `SPRING_DATASOURCE_USERNAME` | Neon user |
    | `SPRING_DATASOURCE_PASSWORD` | Neon password |
-   | `AI_SERVICE_URL` | `https://<you>-agm-sentinel-ai.hf.space` |
+   | `AI_SERVICE_URL` | the AI service's own URL — **whatever host it actually runs on**. See the warning below. |
    | `JWT_SECRET` | a long random string |
    | `APP_FRONTEND_URL` | your Vercel URL, e.g. `https://<app>.vercel.app` (for the Google redirect back) |
    | `PORT` | `8080` |
 4. Expose port `8080`, health check path `/actuator/health`. Deploy.
 5. Note the URL: `https://<app>-<you>.koyeb.app`.
+
+> **`AI_SERVICE_URL` must point at the AI service you are really running.**
+>
+> This is worth its own warning because getting it wrong is almost undiagnosable from the symptoms.
+> When it pointed at a Hugging Face Space that had been retired in favour of a Render deployment, the
+> platform in front of the dead Space answered **HTTP 429** in ~70 ms. That surfaced as
+> `{"ai":"DOWN","reason":"TooManyRequests"}` — which reads as a rate limit or a cold start, so the
+> obvious responses are to wait, to retry, or to go looking at model quotas. None of them help, and
+> the admin screen retried it thirteen times over five minutes on every page load.
+>
+> Meanwhile the real AI service was healthy the whole time. Four separate features appeared broken —
+> chat, drafting, semantic search and automatic captions — from this one variable.
+>
+> **How to check in one request:** `curl <AI_SERVICE_URL>/health`. A healthy service answers
+> `{"status":"ok"}`. Then compare it with `curl <BACKEND_URL>/health/ai`, which is the backend's own
+> view of the same service. If the first is healthy and the second says `DOWN`, the URL is wrong —
+> nothing else produces that combination.
+>
+> A response time far BELOW a normal round trip is the tell. A cold start takes tens of seconds; a
+> genuine rate limit from your model provider still costs a real network hop. Tens of milliseconds
+> means something refused at an edge before reaching your service at all.
 
 ### 3b. Video library — storage and FFmpeg
 
@@ -148,10 +169,22 @@ and Fast2SMS (India, UPI top-up) are the closest.
 
 Free backends sleep after ~15 min idle. Add HTTP monitors, interval 5–10 min:
 
-- `https://<you>-agm-sentinel-ai.hf.space/health`
-- `https://<app>-<you>.koyeb.app/actuator/health`
+- `<AI_SERVICE_URL>/health`
+- `<BACKEND_URL>/health`
 
 Now the services stay awake during demos and interviews.
+
+**Two caveats on keep-warm pings.**
+
+They wake a service that is *asleep*. They cannot start one that has been **paused** — free Hugging
+Face Spaces pause after extended inactivity and need a manual restart or an authenticated API call, so
+a monitor pinging a paused Space achieves nothing while reporting that it tried. Render wakes on
+request, which is one reason to keep both services on the same platform.
+
+The backend also pre-warms the AI service itself when somebody signs in — see `AiWarmupService`. That
+covers the common case (a person arrives, the AI service is cold, they reach chat a minute later) but
+it cannot help while the backend itself is asleep, which is exactly what the external monitor is for.
+The two are complementary, not alternatives.
 
 ---
 
@@ -168,13 +201,63 @@ Now the services stay awake during demos and interviews.
 
 ---
 
+## Troubleshooting — failures that look like something else
+
+Every entry here cost real time because the symptom pointed away from the cause.
+
+### "The AI service is asleep" but it never wakes
+
+Covered in the `AI_SERVICE_URL` warning in §3. Short version: compare `<AI_SERVICE_URL>/health`
+against `<BACKEND_URL>/health/ai`. Healthy first, `DOWN` second means the URL is wrong.
+
+### Automatic captions do nothing, and look like a missing API key
+
+`transcribe.py` once requested `response_format="vtt"` from Groq. That is **OpenAI's** Whisper
+contract; Groq rejects it:
+
+```
+400 - `response_format` must be one of [json text verbose_json]
+```
+
+The request was refused before reaching a model, so captions could not work with **any** key — while
+the failure was indistinguishable from having no key at all. It now asks for `verbose_json` and
+assembles the WebVTT locally, which also removes the dependency on a provider-specific output format.
+
+**How to test without uploading a video:**
+
+```bash
+curl -X POST <AI_SERVICE_URL>/transcribe -F "file=@some.mp3"
+```
+
+A complaint about `response_format` means the service is running old code. A complaint about the audio
+file means the parameters are right.
+
+### Chat and drafting return 500
+
+Check the model name in `ai-service/app/config.py` (`groq_model`). Hosted providers retire model
+identifiers, and a decommissioned name produces a 400 that surfaces as a 500 — the same misleading
+shape as the caption bug above. Compare it against the provider's current list.
+
+### Captions exist but there is no CC button
+
+The button renders only when the recording has cues (`@if (cues().length)`). No transcript means no
+button, by design — a toggle that controls nothing is worse than none. Check `hasTranscript` on the
+card.
+
+### Automatic captions are configured but a recording still has none
+
+They run **after a transcode**, and only for a recording with no transcript. An existing recording
+does not gain them retroactively — use **Re-process**.
+
+---
+
 ## Free-tier limits (know them before the interview)
 
 | Service   | Limit                      | Impact                                     |
 | --------- | -------------------------- | ------------------------------------------ |
 | Groq      | generous req/min free      | fine for demo; back off if rate-limited    |
 | Neon      | 0.5 GB, autosuspend        | plenty; wakes on connect                   |
-| HF Spaces | 2 vCPU/16GB, idle sleep    | cold start ~20–40s (model is prebaked)     |
+| HF Spaces | 2 vCPU/16GB, idle sleep **and eventual pause** | cold start ~20–40s; a *paused* Space cannot be woken by traffic at all |
 | Koyeb     | 1 free service, idle sleep | cold start ~30s (mitigated by UptimeRobot) |
 | Vercel    | 100 GB bandwidth/mo        | irrelevant for a portfolio                 |
 | Video storage | no free persistent volume | needs a volume/NAS, **or** `VIDEO_STORAGE_MODE=database` — see §3b; without either, recordings are lost on redeploy |

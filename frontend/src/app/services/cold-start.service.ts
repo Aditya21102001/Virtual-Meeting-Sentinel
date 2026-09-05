@@ -23,7 +23,6 @@ import { Injectable, computed, signal } from "@angular/core";
  */
 @Injectable({ providedIn: "root" })
 export class ColdStartService {
-
   /**
    * Consecutive cold-start-shaped failures.
    *
@@ -43,7 +42,9 @@ export class ColdStartService {
   private static readonly STRIKES_BEFORE_TELLING = 2;
 
   /** Whether to show the notice. */
-  readonly waking = computed(() => this.strikes() >= ColdStartService.STRIKES_BEFORE_TELLING);
+  readonly waking = computed(
+    () => this.strikes() >= ColdStartService.STRIKES_BEFORE_TELLING,
+  );
 
   /** Whether the backend has answered at least one request during this page session. */
   readonly hasResponded = signal(false);
@@ -51,7 +52,9 @@ export class ColdStartService {
   /** Whole seconds since the first failure, for the "waiting Ns" line. */
   readonly elapsedSeconds = computed(() => {
     const from = this.since();
-    return from === null ? 0 : Math.max(0, Math.round((this.now() - from) / 1000));
+    return from === null
+      ? 0
+      : Math.max(0, Math.round((this.now() - from) / 1000));
   });
 
   /** A request failed in a way consistent with the server being asleep. */
