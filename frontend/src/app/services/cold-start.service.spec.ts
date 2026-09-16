@@ -59,6 +59,16 @@ describe('ColdStartService', () => {
     expect(service.elapsedSeconds()).toBe(0);
   });
 
+  it('clears when the server answers with an application error', () => {
+    const service = new ColdStartService();
+
+    service.beginWaiting();
+    service.recordSuccess();
+
+    expect(service.waking()).toBe(false);
+    expect(service.elapsedSeconds()).toBe(0);
+  });
+
   it('a success with nothing outstanding changes no state', () => {
     const service = new ColdStartService();
 

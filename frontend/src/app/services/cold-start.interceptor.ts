@@ -29,6 +29,9 @@ export const coldStartInterceptor: HttpInterceptorFn = (req, next) => {
     catchError((error: unknown) => {
       if (error instanceof HttpErrorResponse && isAsleep(error.status)) {
         coldStart.recordFailure();
+      } else {
+        // An application response, including a 4xx/5xx, proves the server is awake.
+        coldStart.recordSuccess();
       }
       return throwError(() => error);
     }),

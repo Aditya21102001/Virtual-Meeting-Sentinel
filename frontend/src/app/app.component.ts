@@ -98,13 +98,13 @@ import { MeetingService } from "./services/meeting.service";
         <span>
           @if (coldStart.waking()) {
             <strong>Waking the server up.</strong>
-            It sleeps when nobody is using it, so the first request after a
-            quiet spell can take up to a minute. Nothing is broken — this page
-            will start working on its own.
+            Render's free tier spins down when nobody is using it, so the first
+            request after a quiet spell can take up to a minute. Nothing is
+            broken — this page will start working on its own.
           } @else {
             <strong>Connecting to the server.</strong>
-            The backend may be waking from sleep, so the first response can take
-            up to a minute.
+            The backend may be waking from Render's free tier, so the first
+            response can take up to a minute.
           }
         </span>
         <span class="cold-elapsed">{{ coldStart.elapsedSeconds() }}s</span>
