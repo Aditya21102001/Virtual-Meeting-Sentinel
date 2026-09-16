@@ -1,6 +1,7 @@
 import { HttpInterceptorFn } from '@angular/common/http';
 import { inject } from '@angular/core';
 import { finalize, timeout } from 'rxjs';
+import { ColdStartService } from './cold-start.service';
 import { LoadingService, SILENT } from './loading.service';
 
 /**
@@ -22,6 +23,7 @@ export const loadingInterceptor: HttpInterceptorFn = (req, next) => {
   if (req.context.get(SILENT)) return next(req);
 
   const loading = inject(LoadingService);
+  inject(ColdStartService).beginWaiting();
   loading.start();
   return next(req).pipe(
     // A hard ceiling on every counted request.

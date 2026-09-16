@@ -84,6 +84,16 @@ describe('ColdStartService', () => {
     expect(service.elapsedSeconds()).toBe(6);
   });
 
+  it('counts elapsed time while a cold-start request is still waiting', () => {
+    vi.useFakeTimers();
+    const service = new ColdStartService();
+
+    service.beginWaiting();
+    vi.advanceTimersByTime(4000);
+
+    expect(service.elapsedSeconds()).toBe(4);
+  });
+
   it('stops ticking once the server answers', () => {
     vi.useFakeTimers();
     const service = new ColdStartService();

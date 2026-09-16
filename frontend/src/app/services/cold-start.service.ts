@@ -59,11 +59,15 @@ export class ColdStartService {
 
   /** A request failed in a way consistent with the server being asleep. */
   recordFailure(): void {
-    if (this.since() === null) this.since.set(Date.now());
+    this.beginWaiting();
     this.strikes.update((n) => n + 1);
-    if (!this.timer) {
-      this.timer = setInterval(() => this.now.set(Date.now()), 1000);
-    }
+  }
+
+  /** Start the clock while a request is still waiting for a sleeping server to answer. */
+  beginWaiting(): void {
+    if (this.since() !== null) return;
+    this.since.set(Date.now());
+    this.timer = setInterval(() => this.now.set(Date.now()), 1000);
   }
 
   /**
