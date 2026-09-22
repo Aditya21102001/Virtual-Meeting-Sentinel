@@ -445,6 +445,22 @@ import { MeetingService } from "./services/meeting.service";
         opacity: 0.85;
         flex: none;
       }
+      .cold-retry {
+        flex: none;
+        margin-left: auto;
+        padding: 6px 10px;
+        border: 1px solid currentColor;
+        border-radius: 5px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .cold-retry:focus-visible {
+        outline: 2px solid currentColor;
+        outline-offset: 2px;
+      }
       .cold-spinner {
         flex: none;
         width: 13px;
@@ -778,6 +794,16 @@ import { MeetingService } from "./services/meeting.service";
       /* On phones/tablets the brand + hamburger share one bar and the links drop
        into a vertical menu toggled by the button. */
       @media (max-width: 760px) {
+        .cold-start {
+          align-items: flex-start;
+          font-size: 12px;
+        }
+        .cold-start > span:nth-child(2) {
+          min-width: 0;
+        }
+        .cold-retry {
+          margin-left: 0;
+        }
         .nav-bar {
           padding: 12px 16px;
         }

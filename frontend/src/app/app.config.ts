@@ -27,14 +27,11 @@ export const appConfig: ApplicationConfig = {
     provideRouter(routes),
     // authInterceptor: on a dead session (401/403 with a stored token) it clears the
     // session and redirects to /login instead of failing silently.
-    // loadingInterceptor drives the bar at the top of the page. Ordered first so it counts a
-    // request even when authInterceptor ends up redirecting on a dead session — otherwise a 401
-    // during sign-out would leave the counter permanently above zero.
-    // coldStartInterceptor is LAST so it observes the response every other interceptor has already
-    // seen. It owns bounded retries for safe requests and observes SILENT requests too: polls hit
-    // a sleeping server first, before anyone has touched the page.
+    // coldStartInterceptor is outermost so it also observes timeout errors produced by the loading
+    // interceptor. It owns bounded retries for safe requests and observes SILENT requests too.
+    // loadingInterceptor still counts requests before authInterceptor can redirect a dead session.
     provideHttpClient(
-      withInterceptors([loadingInterceptor, authInterceptor, coldStartInterceptor]),
+      withInterceptors([coldStartInterceptor, loadingInterceptor, authInterceptor]),
     ),
   ],
 };

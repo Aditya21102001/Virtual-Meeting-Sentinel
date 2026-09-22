@@ -17,7 +17,7 @@ import { BackendStatusService, SKIP_BACKEND_RETRY } from "./backend-status";
  */
 export const coldStartInterceptor: HttpInterceptorFn = (req, next) => {
   const backendStatus = inject(BackendStatusService);
-  const safeToRetry = req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS";
+  const safeToRetry = isRetryableBackendMethod(req.method);
   const skipRetry = req.context.get(SKIP_BACKEND_RETRY);
 
   return next(req).pipe(
@@ -67,7 +67,12 @@ function isAsleep(status: number): boolean {
 
 function isUnavailable(error: unknown): boolean {
   return error instanceof TimeoutError ||
+    (error instanceof TypeError) ||
     (error instanceof HttpErrorResponse && isAsleep(error.status));
+}
+
+export function isRetryableBackendMethod(method: string): boolean {
+  return method === "GET" || method === "HEAD" || method === "OPTIONS";
 }
 
 function timerDelay(milliseconds: number) {
