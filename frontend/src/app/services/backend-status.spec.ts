@@ -1,21 +1,19 @@
 import "@angular/compiler";
-import { HttpClientTestingModule, HttpTestingController } from "@angular/common/http/testing";
-import { TestBed } from "@angular/core/testing";
+import { of } from "rxjs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackendStatusService, SKIP_BACKEND_RETRY } from "./backend-status";
 
 describe("BackendStatusService", () => {
   let service: BackendStatusService;
-  let http: HttpTestingController;
+  let http: { get: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
-    TestBed.configureTestingModule({ imports: [HttpClientTestingModule] });
-    service = TestBed.inject(BackendStatusService);
-    http = TestBed.inject(HttpTestingController);
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
+    http = { get: vi.fn(() => of({ status: "ok" })) };
+    service = new BackendStatusService(http as never);
   });
 
   afterEach(() => {
-    http.verify();
     vi.useRealTimers();
   });
 
@@ -35,8 +33,7 @@ describe("BackendStatusService", () => {
     vi.useFakeTimers();
     service.markUnavailable();
     vi.advanceTimersByTime(0);
-    const request = http.expectOne((candidate) => candidate.url.endsWith("/health"));
-    request.flush({ status: "ok" });
+    expect(http.get).toHaveBeenCalledOnce();
     expect(service.status()).toBe("ready");
     expect(service.showNotice()).toBe(false);
   });
@@ -46,8 +43,8 @@ describe("BackendStatusService", () => {
     service.markUnavailable();
     service.retryNow();
     vi.advanceTimersByTime(0);
-    const request = http.expectOne((candidate) => candidate.url.endsWith("/health"));
-    expect(request.request.context.get(SKIP_BACKEND_RETRY)).toBe(true);
-    request.flush({ status: "ok" });
+    expect(http.get).toHaveBeenCalledTimes(1);
+    const requestOptions = http.get.mock.calls[0][1];
+    expect(requestOptions.context.get(SKIP_BACKEND_RETRY)).toBe(true);
   });
 });
