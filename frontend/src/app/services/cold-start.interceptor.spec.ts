@@ -1,5 +1,6 @@
 import "@angular/compiler";
 import { isRetryableBackendMethod } from "./cold-start.interceptor";
+import { describe, expect, it } from "vitest";
 
 describe("cold-start retry policy", () => {
   it("retries only idempotent request methods", () => {
