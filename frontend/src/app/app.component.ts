@@ -21,7 +21,7 @@ import { VideoPlayerComponent } from "./components/video-player.component";
 import { PlayerHostService } from "./services/player-host.service";
 import { AuthService } from "./services/auth.service";
 import { FeatureService } from "./services/feature.service";
-import { ColdStartService } from "./services/cold-start.service";
+import { BackendStatusService } from "./services/backend-status";
 import { LoadingService } from "./services/loading.service";
 import { MeetingService } from "./services/meeting.service";
 
@@ -90,24 +90,29 @@ import { MeetingService } from "./services/meeting.service";
       reader is currently reading. assertive would talk over the user for a condition that resolves
       itself.
     -->
-    @if (
-      coldStart.waking() || (loading.pending() && !coldStart.hasResponded())
-    ) {
+    @if (backendStatus.showNotice()) {
       <div class="cold-start" role="status" aria-live="polite">
         <span class="cold-spinner" aria-hidden="true"></span>
         <span>
-          @if (coldStart.waking()) {
+          @if (backendStatus.status() === "warming") {
             <strong>Waking the server up…</strong>
             It sleeps after 15 minutes idle to stay free. Waking it usually takes
             a minute or two — nothing is lost, and anything that failed will be
             retried automatically.
+          } @else if (backendStatus.status() === "offline") {
+            <strong>You are offline</strong>
+            Your device reports no network connection. Nothing will load until it returns.
           } @else {
-            <strong>Connecting to the server.</strong>
-            The backend may be waking from Render's free tier, so the first
-            response can take up to a minute.
+            <strong>Cannot reach the server</strong>
+            It has not answered for several minutes, which is longer than a cold start takes.
+            Something is probably actually wrong.
           }
         </span>
-        <span class="cold-elapsed">{{ coldStart.elapsedSeconds() }}s</span>
+        @if (backendStatus.status() === "unreachable") {
+          <button type="button" class="cold-retry" (click)="backendStatus.retryNow()">
+            Try again
+          </button>
+        }
       </div>
     }
     <a class="skip-link" href="#main">Skip to main content</a>
@@ -1037,8 +1042,8 @@ export class AppComponent {
 
   constructor(
     public loading: LoadingService,
-    /** Drives the "waking the server up" banner — see the template and ColdStartService. */
-    public coldStart: ColdStartService,
+    /** Drives the global backend availability notice. */
+    public backendStatus: BackendStatusService,
     public auth: AuthService,
     public features: FeatureService,
     public meetings: MeetingService,

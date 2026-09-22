@@ -1,4 +1,4 @@
-import { HttpErrorResponse, HttpInterceptorFn } from "@angular/common/http";
+import { HttpErrorResponse, HttpInterceptorFn, HttpResponse } from "@angular/common/http";
 import { inject } from "@angular/core";
 import { TimeoutError, catchError, retry, tap, throwError } from "rxjs";
 import { BackendStatusService, SKIP_BACKEND_RETRY } from "./backend-status";
@@ -35,7 +35,7 @@ export const coldStartInterceptor: HttpInterceptorFn = (req, next) => {
       next: (event) => {
         // Any response at all means something is listening. Progress events count: bytes are
         // flowing, so the connection was accepted.
-        if (event) backendStatus.markSuccess();
+        if (event instanceof HttpResponse) backendStatus.markSuccess();
       },
     }),
     catchError((error: unknown) => {
