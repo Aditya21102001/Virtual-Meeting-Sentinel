@@ -70,6 +70,7 @@ export class BackendStatusService {
     this.startedAt.set(Date.now());
     this.state.set("warming");
     this.stopPolling();
+    this.polling = true;
     this.pollHealth();
   }
 
