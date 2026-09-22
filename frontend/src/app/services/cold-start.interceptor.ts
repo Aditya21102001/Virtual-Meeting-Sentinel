@@ -1,7 +1,7 @@
 import { HttpErrorResponse, HttpInterceptorFn } from "@angular/common/http";
 import { inject } from "@angular/core";
-import { catchError, tap, throwError } from "rxjs";
-import { ColdStartService } from "./cold-start.service";
+import { TimeoutError, catchError, retry, tap, throwError } from "rxjs";
+import { BackendStatusService, SKIP_BACKEND_RETRY } from "./backend-status";
 
 /**
  * Watches every response for the shape a sleeping backend produces, and tells {@link ColdStartService}.
@@ -16,22 +16,34 @@ import { ColdStartService } from "./cold-start.service";
  * discard the earliest and clearest evidence.
  */
 export const coldStartInterceptor: HttpInterceptorFn = (req, next) => {
-  const coldStart = inject(ColdStartService);
+  const backendStatus = inject(BackendStatusService);
+  const safeToRetry = req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS";
+  const skipRetry = req.context.get(SKIP_BACKEND_RETRY);
 
   return next(req).pipe(
+    retry({
+      count: safeToRetry && !skipRetry ? 7 : 0,
+      delay: (error, retryCount) => {
+        if (!isUnavailable(error)) {
+          return throwError(() => error);
+        }
+        backendStatus.markUnavailable();
+        return timerDelay(Math.min(60000, 1000 * 2 ** (retryCount - 1)));
+      },
+    }),
     tap({
       next: (event) => {
         // Any response at all means something is listening. Progress events count: bytes are
         // flowing, so the connection was accepted.
-        if (event) coldStart.recordSuccess();
+        if (event) backendStatus.markSuccess();
       },
     }),
     catchError((error: unknown) => {
-      if (error instanceof HttpErrorResponse && isAsleep(error.status)) {
-        coldStart.recordFailure();
+      if (isUnavailable(error)) {
+        backendStatus.markUnavailable();
       } else {
         // An application response, including a 4xx/5xx, proves the server is awake.
-        coldStart.recordSuccess();
+        backendStatus.markSuccess();
       }
       return throwError(() => error);
     }),
@@ -51,4 +63,13 @@ export const coldStartInterceptor: HttpInterceptorFn = (req, next) => {
  */
 function isAsleep(status: number): boolean {
   return status === 0 || status === 502 || status === 503 || status === 504;
+}
+
+function isUnavailable(error: unknown): boolean {
+  return error instanceof TimeoutError ||
+    (error instanceof HttpErrorResponse && isAsleep(error.status));
+}
+
+function timerDelay(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }

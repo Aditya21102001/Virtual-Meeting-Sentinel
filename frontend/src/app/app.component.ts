@@ -97,10 +97,10 @@ import { MeetingService } from "./services/meeting.service";
         <span class="cold-spinner" aria-hidden="true"></span>
         <span>
           @if (coldStart.waking()) {
-            <strong>Waking the server up.</strong>
-            Render's free tier spins down when nobody is using it, so the first
-            request after a quiet spell can take up to a minute. Nothing is
-            broken — this page will start working on its own.
+            <strong>Waking the server up…</strong>
+            It sleeps after 15 minutes idle to stay free. Waking it usually takes
+            a minute or two — nothing is lost, and anything that failed will be
+            retried automatically.
           } @else {
             <strong>Connecting to the server.</strong>
             The backend may be waking from Render's free tier, so the first

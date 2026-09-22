@@ -31,9 +31,8 @@ export const appConfig: ApplicationConfig = {
     // request even when authInterceptor ends up redirecting on a dead session — otherwise a 401
     // during sign-out would leave the counter permanently above zero.
     // coldStartInterceptor is LAST so it observes the response every other interceptor has already
-    // seen, and it never modifies one — a sleeping backend must still surface as the same error to
-    // whoever made the request. It is also the only one that watches SILENT requests: polls hit a
-    // sleeping server first, before anyone has touched the page.
+    // seen. It owns bounded retries for safe requests and observes SILENT requests too: polls hit
+    // a sleeping server first, before anyone has touched the page.
     provideHttpClient(
       withInterceptors([loadingInterceptor, authInterceptor, coldStartInterceptor]),
     ),
