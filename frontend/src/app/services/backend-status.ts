@@ -15,12 +15,14 @@ export const SKIP_BACKEND_RETRY = new HttpContextToken<boolean>(() => false);
 
 const POLL_INTERVAL_MS = 10000;
 const COLD_START_WINDOW_MS = 180000;
+const PENDING_NOTICE_DELAY_MS = 1000;
 
 @Injectable({ providedIn: "root" })
 export class BackendStatusService {
   private readonly state = signal<BackendState>("unknown");
   private readonly startedAt = signal<number | null>(null);
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingTimer: ReturnType<typeof setTimeout> | null = null;
   private polling = false;
 
   readonly status = this.state.asReadonly();
@@ -41,9 +43,26 @@ export class BackendStatusService {
   }
 
   markSuccess(): void {
+    if (this.pendingTimer !== null) {
+      clearTimeout(this.pendingTimer);
+      this.pendingTimer = null;
+    }
     this.state.set("ready");
     this.startedAt.set(null);
     this.stopPolling();
+  }
+
+  /** Show the non-blocking notice if a request is still pending after the fast path. */
+  beginWaiting(): void {
+    if (this.state() !== "unknown" || this.pendingTimer !== null) return;
+    this.pendingTimer = setTimeout(() => {
+      this.pendingTimer = null;
+      if (this.state() === "unknown") {
+        this.startedAt.set(Date.now());
+        this.state.set("warming");
+        this.startPolling();
+      }
+    }, PENDING_NOTICE_DELAY_MS);
   }
 
   markUnavailable(): void {
