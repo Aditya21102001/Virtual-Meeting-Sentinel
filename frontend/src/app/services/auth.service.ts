@@ -366,7 +366,8 @@ export class AuthService {
 
   // ---- public config (which login methods to show) -----------------------
   config(): Observable<AuthConfig> {
-    return this.http.post<AuthConfig>(`${this.base}/api/auth/login-options`, {});
+    // Read-only endpoint: GET lets the global cold-start interceptor retry it safely.
+    return this.http.get<AuthConfig>(`${this.base}/api/auth/login-options`);
   }
 
   // ---- passwordless OTP login (email / SMS) ------------------------------

@@ -38,7 +38,7 @@ public class AuthController {
     }
 
     /** Tells the SPA which login methods to show (Google button, OTP demo hint). */
-    @PostMapping("/login-options")
+    @RequestMapping(value = "/login-options", method = {RequestMethod.GET, RequestMethod.POST})
     public AuthConfig loginOptions() {
         return new AuthConfig(googleClientId != null && !googleClientId.isBlank(), otpDemoMode);
     }
