@@ -49,7 +49,7 @@ import { MeetingService } from "./services/meeting.service";
       "loading" on every request would be far more disruptive than useful. Screens that need to
       announce a wait do so themselves with role="status".
     -->
-    @if (loading.visible()) {
+    @if (loading.visible() && !backendStatus.showNotice()) {
       <div class="loading-bar" aria-hidden="true"><span></span></div>
       <!--
         Blocks interaction while a request the user is waiting on is outstanding, so a form cannot
