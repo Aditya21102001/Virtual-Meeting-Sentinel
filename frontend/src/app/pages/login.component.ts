@@ -2,6 +2,7 @@ import { Component, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../services/auth.service';
+import { environment } from '../../environments/environment';
 
 @Component({
   selector: 'app-login',
@@ -187,7 +188,9 @@ export class LoginComponent implements OnInit {
   readonly busy = signal(false);
   readonly error = signal('');
   readonly methods = signal<string[]>([]);
-  readonly googleEnabled = signal(false);
+  // Production has Google configured. Start visible so a Render cold start cannot hide the option;
+  // the login-options response still disables it when a deployment does not have credentials.
+  readonly googleEnabled = signal(environment.production);
   // OTP state
   readonly otpChannel = signal<'email' | 'sms'>('email');
   readonly otpDest = signal('');
