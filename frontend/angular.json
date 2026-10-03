@@ -36,12 +36,7 @@
               ],
               "optimization": true,
               "outputHashing": "all",
-              "sourceMap": {
-                "scripts": true,
-                "styles": true,
-                "hidden": false,
-                "vendor": false
-              }
+              "sourceMap": false
             },
             "development": {
               "optimization": false,

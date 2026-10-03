@@ -28,6 +28,10 @@ export const routes: Routes = [
   { path: 'welcome', component: WelcomeComponent },
   { path: 'ask', component: AttendeeComponent },
   { path: 'login', component: LoginComponent },
+  {
+    path: 'pricing',
+    loadComponent: () => import('./pages/pricing.component').then((m) => m.PricingComponent),
+  },
   // Help. Deliberately unguarded: "why can't I sign in" is a help question, and putting the answer
   // behind a sign-in would be a locked door with the key inside. Content is filtered by role and by
   // which features are on, so a signed-out reader simply sees the general topics. Lazy, because

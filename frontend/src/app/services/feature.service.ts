@@ -67,8 +67,19 @@ export class FeatureService {
     'VIDEO_LIBRARY',
     'VIDEO_ENGAGEMENT',
     'VIDEO_DOWNLOAD',
+    'VIDEO_CHAPTERS',
     'LOUNGE_CHAT',
     'AI_DRAFTING',
+    'MEETINGS',
+    'VOTING',
+    'QUORUM',
+    'CLUSTER_UPVOTE',
+    'CLUSTER_CURATION',
+    'RUN_OF_SHOW',
+    'MEETING_REPORTS',
+    'ATTENDEE_BOARD',
+    'HELP_WIDGET',
+    'SEMANTIC_SEARCH',
   ]);
 
   private headers(): Record<string, string> {

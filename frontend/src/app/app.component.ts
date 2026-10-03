@@ -24,6 +24,7 @@ import { FeatureService } from "./services/feature.service";
 import { BackendStatusService } from "./services/backend-status";
 import { LoadingService } from "./services/loading.service";
 import { MeetingService } from "./services/meeting.service";
+import { DemoMeetingService } from "./services/demo-meeting.service";
 
 @Component({
   selector: "app-root",
@@ -128,7 +129,15 @@ import { MeetingService } from "./services/meeting.service";
           on screen rather than a page away. role="status" so a change is announced rather than
           only noticed.
         -->
-        @if (features.enabled("MEETINGS")) {
+        @if (demoMeeting.isDemoActive()) {
+          <span class="live-meeting demo" role="status">
+            <span class="live-dot demo" aria-hidden="true"></span>
+            <span class="live-label">
+              <strong>Demo AGM:</strong> Apex Global FY26
+            </span>
+            <button type="button" class="exit-demo-pill" (click)="demoMeeting.resetDemo()" title="Exit Interactive Demo Mode">✕ Exit</button>
+          </span>
+        } @else if (features.enabled("MEETINGS")) {
           @if (meetings.active(); as live) {
             <span class="live-meeting" role="status">
               <span class="live-dot" aria-hidden="true"></span>
@@ -176,6 +185,9 @@ import { MeetingService } from "./services/meeting.service";
         }
         <a routerLink="/ask" routerLinkActive="active" (click)="close()"
           >Ask a question</a
+        >
+        <a routerLink="/pricing" routerLinkActive="active" (click)="close()"
+          >💎 Plans &amp; ROI</a
         >
         @if (auth.isAuthenticated()) {
           <!--
@@ -604,6 +616,31 @@ import { MeetingService } from "./services/meeting.service";
         background: transparent;
         color: var(--muted);
         border-color: #33415588;
+      }
+      .live-meeting.demo {
+        background: rgba(16, 185, 129, 0.12);
+        color: #10b981;
+        border-color: rgba(16, 185, 129, 0.4);
+      }
+      .live-dot.demo {
+        background: #10b981;
+        box-shadow: 0 0 8px #10b981;
+      }
+      .exit-demo-pill {
+        margin-left: 8px;
+        background: rgba(239, 68, 68, 0.15);
+        border: 1px solid rgba(239, 68, 68, 0.35);
+        color: #ef4444;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 6px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .exit-demo-pill:hover {
+        background: rgba(239, 68, 68, 0.35);
+        color: #fff;
       }
       .live-dot {
         flex: 0 0 auto;
@@ -1079,6 +1116,7 @@ export class AppComponent {
     public features: FeatureService,
     public meetings: MeetingService,
     public playerHost: PlayerHostService,
+    public demoMeeting: DemoMeetingService,
     private router: Router,
   ) {
     // Recover from a lazy chunk that no longer exists.

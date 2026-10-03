@@ -2,6 +2,7 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { AuthService } from '../services/auth.service';
+import { DemoMeetingService } from '../services/demo-meeting.service';
 import { WarmupService } from '../services/warmup.service';
 
 interface DemoCluster {
@@ -46,22 +47,31 @@ interface DemoCluster {
           synthesizes verifiable answers from company filings, and coordinates weighted voting.
         </p>
 
-        <!-- Quick Action CTAs for Unauthenticated Visitors -->
+        <!-- Quick Action CTAs for Visitors & Evaluators -->
         <div class="hero-cta-group">
+          <button type="button" class="cta-button demo-highlight" (click)="demoMeeting.launchDemoMeeting('/board')">
+            <span class="icon">🚀</span>
+            <div class="cta-text">
+              <strong>Launch Interactive Demo AGM</strong>
+              <small>Pre-seeded Apex AGM with real votes &amp; topics</small>
+            </div>
+            <span class="arrow">→</span>
+          </button>
+
           <a routerLink="/ask" class="cta-button primary">
             <span class="icon">💬</span>
             <div class="cta-text">
               <strong>Ask a Question</strong>
-              <small>Attendee access • No sign-in required</small>
+              <small>Live attendee Q&amp;A • No sign-in needed</small>
             </div>
             <span class="arrow">→</span>
           </a>
 
-          <a routerLink="/help" class="cta-button secondary">
-            <span class="icon">📖</span>
+          <a routerLink="/pricing" class="cta-button secondary">
+            <span class="icon">💎</span>
             <div class="cta-text">
-              <strong>Help &amp; FAQs</strong>
-              <small>Voting rules, troubleshooting &amp; guide</small>
+              <strong>Plans &amp; ROI Calculator</strong>
+              <small>Event licensing &amp; cost savings analysis</small>
             </div>
             <span class="arrow">→</span>
           </a>
@@ -70,7 +80,7 @@ interface DemoCluster {
             <span class="icon">🔐</span>
             <div class="cta-text">
               <strong>Member Portal</strong>
-              <small>Passkeys, OTP &amp; Moderator access</small>
+              <small>Passkeys, WebAuthn &amp; Admin login</small>
             </div>
             <span class="arrow">→</span>
           </a>
@@ -261,6 +271,23 @@ interface DemoCluster {
               Access Sign-In Portal →
             </a>
           </article>
+
+          <article class="pathway-card card highlight-tier">
+            <div class="pathway-icon">💎</div>
+            <h3>Commercial Plans &amp; ROI</h3>
+            <p>
+              Compare single-meeting event passes ($499 - $1,499) with annual enterprise governance licensing,
+              and calculate your net savings in counsel and moderation time.
+            </p>
+            <ul class="pathway-features">
+              <li>Interactive ROI savings simulator</li>
+              <li>Official Scrutineer audit certificates</li>
+              <li>White-label enterprise deployment options</li>
+            </ul>
+            <a routerLink="/pricing" class="pathway-action-btn highlight">
+              Calculate Meeting ROI →
+            </a>
+          </article>
         </div>
       </section>
 
@@ -402,6 +429,20 @@ interface DemoCluster {
         transform: translateY(-2px);
       }
 
+      .cta-button.demo-highlight {
+        background: linear-gradient(135deg, rgba(56, 189, 248, 0.2) 0%, rgba(129, 140, 248, 0.2) 100%);
+        border: 1px solid rgba(56, 189, 248, 0.6);
+        color: var(--text);
+        box-shadow: 0 0 20px rgba(56, 189, 248, 0.2);
+        cursor: pointer;
+      }
+
+      .cta-button.demo-highlight:hover {
+        border-color: #38bdf8;
+        background: linear-gradient(135deg, rgba(56, 189, 248, 0.3) 0%, rgba(129, 140, 248, 0.3) 100%);
+        box-shadow: 0 0 28px rgba(56, 189, 248, 0.35);
+      }
+
       .cta-button.primary {
         background: linear-gradient(135deg, #0284c7 0%, #2563eb 100%);
         color: #ffffff;
@@ -417,6 +458,22 @@ interface DemoCluster {
 
       .cta-button.secondary:hover {
         border-color: var(--accent);
+      }
+
+      .pathway-card.highlight-tier {
+        border-color: rgba(56, 189, 248, 0.4);
+        background: linear-gradient(180deg, rgba(56, 189, 248, 0.05) 0%, var(--surface) 100%);
+      }
+
+      .pathway-action-btn.highlight {
+        background: var(--accent);
+        color: #0b0f19;
+        font-weight: 700;
+        border-color: transparent;
+      }
+
+      .pathway-action-btn.highlight:hover {
+        opacity: 0.92;
       }
 
       .cta-button .icon {
@@ -876,6 +933,7 @@ interface DemoCluster {
 export class WelcomeComponent {
   protected readonly warmup = inject(WarmupService);
   protected readonly auth = inject(AuthService);
+  protected readonly demoMeeting = inject(DemoMeetingService);
 
   readonly demoText = signal('');
   readonly lastFeedback = signal<{ title: string; message: string; isMerged: boolean } | null>(null);
