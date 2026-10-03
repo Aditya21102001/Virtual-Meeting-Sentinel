@@ -118,7 +118,7 @@ import { MeetingService } from "./services/meeting.service";
     <a class="skip-link" href="#main">Skip to main content</a>
     <nav class="nav" aria-label="Main">
       <div class="nav-bar">
-        <a class="brand" routerLink="/ask" (click)="close()"
+        <a class="brand" routerLink="/welcome" (click)="close()"
           >🛡️ VIRTUAL MEETING Sentinel</a
         >
 
@@ -169,6 +169,11 @@ import { MeetingService } from "./services/meeting.service";
         -->
 
         <!-- Taking part — everyone. -->
+        @if (!auth.isAuthenticated()) {
+          <a routerLink="/welcome" routerLinkActive="active" (click)="close()"
+            >Overview</a
+          >
+        }
         <a routerLink="/ask" routerLinkActive="active" (click)="close()"
           >Ask a question</a
         >

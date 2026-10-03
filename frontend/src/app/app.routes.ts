@@ -1,4 +1,5 @@
-import { Routes } from '@angular/router';
+import { inject } from '@angular/core';
+import { Router, Routes } from '@angular/router';
 import { AttendeeComponent } from './pages/attendee.component';
 import { ModeratorComponent } from './pages/moderator.component';
 import { AdminComponent } from './pages/admin.component';
@@ -6,6 +7,8 @@ import { LoginComponent } from './pages/login.component';
 import { SecurityComponent } from './pages/security.component';
 import { ChatComponent } from './pages/chat.component';
 import { MembersComponent } from './pages/members.component';
+import { WelcomeComponent } from './pages/welcome.component';
+import { AuthService } from './services/auth.service';
 import {
   adminGuard,
   authGuard,
@@ -14,7 +17,22 @@ import {
 } from './services/auth.guard';
 
 export const routes: Routes = [
-  { path: '', redirectTo: 'ask', pathMatch: 'full' },
+  {
+    path: '',
+    pathMatch: 'full',
+    canActivate: [
+      () => {
+        const auth = inject(AuthService);
+        const router = inject(Router);
+        if (auth.isAuthenticated()) {
+          return router.parseUrl(auth.isModerator() ? '/board' : '/ask');
+        }
+        return router.parseUrl('/welcome');
+      },
+    ],
+    children: [],
+  },
+  { path: 'welcome', component: WelcomeComponent },
   { path: 'ask', component: AttendeeComponent },
   { path: 'login', component: LoginComponent },
   // Help. Deliberately unguarded: "why can't I sign in" is a help question, and putting the answer

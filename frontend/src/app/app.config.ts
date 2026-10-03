@@ -1,10 +1,11 @@
-import { ApplicationConfig, provideZonelessChangeDetection } from '@angular/core';
+import { ApplicationConfig, inject, provideAppInitializer, provideZonelessChangeDetection } from '@angular/core';
 import { provideRouter } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { routes } from './app.routes';
 import { authInterceptor } from './services/auth.interceptor';
 import { coldStartInterceptor } from './services/cold-start.interceptor';
 import { loadingInterceptor } from './services/loading.interceptor';
+import { WarmupService } from './services/warmup.service';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -33,5 +34,8 @@ export const appConfig: ApplicationConfig = {
     provideHttpClient(
       withInterceptors([coldStartInterceptor, loadingInterceptor, authInterceptor]),
     ),
+    provideAppInitializer(() => {
+      inject(WarmupService).warmUp();
+    }),
   ],
 };
