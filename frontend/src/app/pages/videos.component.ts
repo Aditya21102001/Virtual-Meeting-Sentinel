@@ -12,6 +12,8 @@ import {
 } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
+import { AuthService } from '../services/auth.service';
+import { NavigationHistoryService } from '../services/navigation-history.service';
 import { PlayerHostService } from '../services/player-host.service';
 import { FeatureService } from '../services/feature.service';
 import {
@@ -36,6 +38,11 @@ import {
   imports: [DatePipe],
   template: `
     <div class="container">
+      <div style="margin-bottom:8px">
+        <button type="button" class="back-link" (click)="goBack()" [attr.aria-label]="backLabel()">
+          ← {{ backLabel() }}
+        </button>
+      </div>
       <h1>Meeting recordings</h1>
       <p class="muted">
         Recordings stream on demand — the player fetches the few seconds around the playhead, so a
@@ -821,6 +828,24 @@ export class VideosComponent implements OnInit, OnDestroy {
   /** Protected, not private: the template reads the up-next queue and the autoplay toggle off it. */
   protected readonly playerHost = inject(PlayerHostService);
   private readonly features = inject(FeatureService);
+  protected readonly auth = inject(AuthService);
+  protected readonly navHistory = inject(NavigationHistoryService);
+
+  backLabel(): string {
+    if (this.navHistory.canGoBack()) {
+      return 'Back to previous page';
+    }
+    return this.auth.isModerator()
+      ? 'Back to Board'
+      : (this.auth.isShareholder() ? 'Back to Lounge' : 'Back to Meeting');
+  }
+
+  goBack(): void {
+    const fallback = this.auth.isModerator()
+      ? '/board'
+      : (this.auth.isShareholder() ? '/chat' : '/ask');
+    this.navHistory.back(fallback);
+  }
 
   /** The slot this page reserves; the hosted player is positioned over it. */
   private readonly playerSlot = viewChild<ElementRef<HTMLElement>>('playerSlot');

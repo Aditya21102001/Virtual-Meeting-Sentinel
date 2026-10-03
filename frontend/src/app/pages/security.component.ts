@@ -1,6 +1,7 @@
 import { Component, OnInit, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { AuthService, MfaStatus, TotpInit } from '../services/auth.service';
+import { NavigationHistoryService } from '../services/navigation-history.service';
 
 @Component({
   selector: 'app-security',
@@ -8,6 +9,11 @@ import { AuthService, MfaStatus, TotpInit } from '../services/auth.service';
   imports: [FormsModule],
   template: `
     <div class="container" style="max-width:560px">
+      <div style="margin-bottom:8px">
+        <button type="button" class="back-link" (click)="goBack()" [attr.aria-label]="backLabel()">
+          ← {{ backLabel() }}
+        </button>
+      </div>
       <h1>Security & MFA</h1>
       <p class="muted">Signed in as <strong>{{ auth.username() }}</strong>. Enroll one or more
         second factors — they'll be required at your next sign-in.</p>
@@ -221,7 +227,26 @@ export class SecurityComponent implements OnInit {
   readonly busy = signal(false);
   readonly msg = signal('');
 
-  constructor(public auth: AuthService) {}
+  constructor(
+    public auth: AuthService,
+    public navHistory: NavigationHistoryService,
+  ) {}
+
+  backLabel(): string {
+    if (this.navHistory.canGoBack()) {
+      return 'Back to previous page';
+    }
+    return this.auth.isModerator()
+      ? 'Back to Board'
+      : (this.auth.isShareholder() ? 'Back to Lounge' : 'Back to Meeting');
+  }
+
+  goBack(): void {
+    const fallback = this.auth.isModerator()
+      ? '/board'
+      : (this.auth.isShareholder() ? '/chat' : '/ask');
+    this.navHistory.back(fallback);
+  }
 
   ngOnInit(): void { this.refresh(); }
 

@@ -2,6 +2,7 @@ import { Component, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../services/auth.service';
+import { NavigationHistoryService } from '../services/navigation-history.service';
 import { environment } from '../../environments/environment';
 
 @Component({
@@ -10,6 +11,11 @@ import { environment } from '../../environments/environment';
   imports: [FormsModule],
   template: `
     <div class="container" style="max-width:460px">
+      <div style="margin-bottom:8px">
+        <button type="button" class="back-link" (click)="goBack()" [attr.aria-label]="backLabel()">
+          ← {{ backLabel() }}
+        </button>
+      </div>
       <h1>{{ heading() }}</h1>
 
       <!-- ===== password login / register ===== -->
@@ -198,7 +204,12 @@ export class LoginComponent implements OnInit {
   readonly demoCode = signal<string | null>(null);
   private mfaToken = '';
 
-  constructor(private auth: AuthService, private router: Router, private route: ActivatedRoute) {}
+  constructor(
+    private auth: AuthService,
+    private router: Router,
+    private route: ActivatedRoute,
+    public navHistory: NavigationHistoryService,
+  ) {}
 
   ngOnInit(): void {
     // Google OAuth redirect lands here with ?token=... — complete the session.
@@ -233,6 +244,31 @@ export class LoginComponent implements OnInit {
       case 'setpwd': return 'Set a new password';
       default: return 'Moderator sign in';
     }
+  }
+
+  backLabel(): string {
+    if (this.mode() !== 'login' && this.mode() !== 'register' && this.mode() !== 'setpwd') {
+      return 'Back to sign in';
+    }
+    if (this.mode() === 'register') {
+      return 'Back to sign in';
+    }
+    if (this.navHistory.canGoBack()) {
+      return 'Back to previous page';
+    }
+    return 'Back to Overview';
+  }
+
+  goBack(): void {
+    if (this.mode() !== 'login' && this.mode() !== 'register' && this.mode() !== 'setpwd') {
+      this.backToLogin();
+      return;
+    }
+    if (this.mode() === 'register') {
+      this.mode.set('login');
+      return;
+    }
+    this.navHistory.back('/welcome');
   }
 
   googleUrl(): string { return this.auth.googleLoginUrl(); }

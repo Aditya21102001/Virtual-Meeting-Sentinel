@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { ApiService, IngestResult } from '../services/api.service';
 import { AuthService } from '../services/auth.service';
 import { FeatureService } from '../services/feature.service';
+import { NavigationHistoryService } from '../services/navigation-history.service';
 import { RoomService, TopicView } from '../services/room.service';
 
 @Component({
@@ -11,6 +12,11 @@ import { RoomService, TopicView } from '../services/room.service';
   imports: [FormsModule],
   template: `
     <div class="container">
+      <div style="margin-bottom:8px">
+        <button type="button" class="back-link" (click)="goBack()" [attr.aria-label]="backLabel()">
+          ← {{ backLabel() }}
+        </button>
+      </div>
       <h1>Ask a question</h1>
       <p class="muted">
         Submit as many as you like. Duplicate/near-duplicate questions are automatically
@@ -160,7 +166,24 @@ export class AttendeeComponent implements OnInit, OnDestroy {
     private auth: AuthService,
     protected features: FeatureService,
     private room: RoomService,
+    public navHistory: NavigationHistoryService,
   ) {}
+
+  backLabel(): string {
+    if (this.navHistory.canGoBack()) {
+      return 'Back to previous page';
+    }
+    return this.auth.isAuthenticated()
+      ? (this.auth.isModerator() ? 'Back to Board' : 'Back to Lounge')
+      : 'Back to Overview';
+  }
+
+  goBack(): void {
+    const fallback = this.auth.isAuthenticated()
+      ? (this.auth.isModerator() ? '/board' : '/chat')
+      : '/welcome';
+    this.navHistory.back(fallback);
+  }
 
   ngOnDestroy(): void {
     if (this.topicsTimer) clearInterval(this.topicsTimer);

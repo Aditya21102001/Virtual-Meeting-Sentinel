@@ -8,6 +8,7 @@ import {
   MeetingService,
   MeetingView,
 } from '../services/meeting.service';
+import { NavigationHistoryService } from '../services/navigation-history.service';
 
 /**
  * Meeting management, and mapping users to meetings.
@@ -22,6 +23,11 @@ import {
   imports: [DatePipe],
   template: `
     <div class="container meetings-page">
+      <div style="margin-bottom:8px">
+        <button type="button" class="back-link" (click)="navHistory.back('/board')" [attr.aria-label]="navHistory.canGoBack() ? 'Back to previous page' : 'Back to Board'">
+          ← {{ navHistory.canGoBack() ? 'Back to previous page' : 'Back to Board' }}
+        </button>
+      </div>
       <header class="page-head">
         <h1>Meetings</h1>
         <p class="muted sub">
@@ -588,6 +594,7 @@ export class MeetingsComponent implements OnInit {
   private readonly auth = inject(AuthService);
   /** Only for the registered-user roster that autocompletes the username field. */
   private readonly api = inject(ApiService);
+  protected readonly navHistory = inject(NavigationHistoryService);
 
   readonly meetings = signal<MeetingView[]>([]);
   readonly loading = signal(true);

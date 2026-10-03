@@ -87,6 +87,35 @@ button.link {
 button.link:hover:not(:disabled) { color: #7dd3fc; }
 button.link.danger { color: #fca5a5; }
 
+/* Back / return navigation link — clean, accessible affordance to move smoothly to previous page */
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  text-decoration: none;
+  transition: all 0.15s ease;
+  margin-bottom: 12px;
+  user-select: none;
+  width: auto;
+}
+.back-link:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: #334155;
+}
+.back-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Keyboard focus must stay visible on every variant — the fill-less ones lose the default ring
    against a dark background. */
 button:focus-visible,

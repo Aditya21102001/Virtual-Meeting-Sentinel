@@ -2,6 +2,7 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AuthService } from '../services/auth.service';
 import { FeatureKey, FeatureService } from '../services/feature.service';
+import { NavigationHistoryService } from '../services/navigation-history.service';
 
 /**
  * One question and its answer.
@@ -38,6 +39,11 @@ import { FaqEntry, FaqSection, HELP_SECTIONS } from '../components/help-content'
   imports: [RouterLink],
   template: `
     <div class="container help-page">
+      <div style="margin-bottom:8px">
+        <button type="button" class="back-link" (click)="navHistory.back(fallbackUrl())" [attr.aria-label]="backLabel()">
+          ← {{ backLabel() }}
+        </button>
+      </div>
       <header class="page-head">
         <h1>Help &amp; support</h1>
         <p class="muted sub">
@@ -298,8 +304,26 @@ import { FaqEntry, FaqSection, HELP_SECTIONS } from '../components/help-content'
 export class HelpComponent {
   readonly auth = inject(AuthService);
   readonly features = inject(FeatureService);
+  readonly navHistory = inject(NavigationHistoryService);
 
   readonly query = signal('');
+
+  fallbackUrl(): string {
+    if (this.auth.isAuthenticated()) {
+      return this.auth.isModerator() ? '/board' : '/ask';
+    }
+    return '/welcome';
+  }
+
+  backLabel(): string {
+    if (this.navHistory.canGoBack()) {
+      return 'Back to previous page';
+    }
+    if (this.auth.isAuthenticated()) {
+      return this.auth.isModerator() ? 'Back to Board' : 'Back to Meeting';
+    }
+    return 'Back to Overview';
+  }
 
   /**
    * The whole catalogue.

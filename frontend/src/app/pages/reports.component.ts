@@ -1,6 +1,7 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { MeetingService, MeetingView } from '../services/meeting.service';
+import { NavigationHistoryService } from '../services/navigation-history.service';
 import { MeetingReport, ReportService } from '../services/report.service';
 
 /**
@@ -25,6 +26,11 @@ import { MeetingReport, ReportService } from '../services/report.service';
   imports: [DecimalPipe, DatePipe],
   template: `
     <div class="container report-page">
+      <div style="margin-bottom:8px">
+        <button type="button" class="back-link" (click)="navHistory.back('/board')" [attr.aria-label]="navHistory.canGoBack() ? 'Back to previous page' : 'Back to Board'">
+          ← {{ navHistory.canGoBack() ? 'Back to previous page' : 'Back to Board' }}
+        </button>
+      </div>
       <header class="page-head">
         <h1>Meeting report</h1>
         <p class="muted sub">
@@ -296,6 +302,7 @@ import { MeetingReport, ReportService } from '../services/report.service';
 export class ReportsComponent implements OnInit {
   private readonly reports = inject(ReportService);
   private readonly meetingService = inject(MeetingService);
+  readonly navHistory = inject(NavigationHistoryService);
 
   readonly meetings = signal<MeetingView[]>([]);
   readonly selectedId = signal('');

@@ -17,6 +17,7 @@ import {
   timecode,
 } from '../services/video.service';
 import { parseTimecode } from '../services/timecode';
+import { NavigationHistoryService } from '../services/navigation-history.service';
 
 /**
  * Moderator screen for the video library: upload a recording, watch it segment, manage the result.
@@ -32,6 +33,11 @@ import { parseTimecode } from '../services/timecode';
   imports: [FormsModule],
   template: `
     <div class="container">
+      <div style="margin-bottom:8px">
+        <button type="button" class="back-link" (click)="navHistory.back('/board')" [attr.aria-label]="navHistory.canGoBack() ? 'Back to previous page' : 'Back to Board'">
+          ← {{ navHistory.canGoBack() ? 'Back to previous page' : 'Back to Board' }}
+        </button>
+      </div>
       <h1>Video library</h1>
       <p class="muted">
         Upload a meeting recording. It is stored on the NAS and split into an adaptive ladder of
@@ -588,6 +594,7 @@ export class VideoAdminComponent implements OnInit, OnDestroy {
   // inject() rather than constructor injection: the signal fields below read `videos` in their
   // initialisers, which run before a constructor parameter property would be assigned.
   private readonly videos = inject(VideoService);
+  protected readonly navHistory = inject(NavigationHistoryService);
 
   readonly humanBytes = humanBytes;
   readonly timecode = timecode;

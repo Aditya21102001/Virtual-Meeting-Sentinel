@@ -1,5 +1,6 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FeatureService, FeatureView } from '../services/feature.service';
+import { NavigationHistoryService } from '../services/navigation-history.service';
 
 /**
  * Switch features on and off, and choose which roles may use them. ADMIN only.
@@ -23,6 +24,11 @@ import { FeatureService, FeatureView } from '../services/feature.service';
   standalone: true,
   template: `
     <div class="container features-page">
+      <div style="margin-bottom:8px">
+        <button type="button" class="back-link" (click)="navHistory.back('/board')" [attr.aria-label]="navHistory.canGoBack() ? 'Back to previous page' : 'Back to Board'">
+          ← {{ navHistory.canGoBack() ? 'Back to previous page' : 'Back to Board' }}
+        </button>
+      </div>
       <header class="page-head">
         <h1>Features</h1>
         <p class="muted sub">
@@ -298,6 +304,7 @@ import { FeatureService, FeatureView } from '../services/feature.service';
 })
 export class FeaturesComponent implements OnInit {
   private readonly service = inject(FeatureService);
+  protected readonly navHistory = inject(NavigationHistoryService);
 
   readonly features = signal<FeatureView[]>([]);
   readonly roles = signal<string[]>([]);

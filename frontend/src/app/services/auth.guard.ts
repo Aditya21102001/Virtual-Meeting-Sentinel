@@ -1,5 +1,5 @@
 import { inject } from '@angular/core';
-import { CanActivateFn, Router, RouterStateSnapshot } from '@angular/router';
+import { CanActivateFn, RedirectCommand, Router, RouterStateSnapshot } from '@angular/router';
 import { AuthService } from './auth.service';
 
 /**
@@ -9,9 +9,14 @@ import { AuthService } from './auth.service';
  * `/recordings?v=…&t=…`, get bounced to `/login`, and after signing in land on the default page with
  * the recording and timestamp gone. Carrying the attempted URL through is what makes a link work for
  * someone who was not already signed in — which is the only case a shared link exists for.
+ *
+ * <p>Using {@link RedirectCommand} with `replaceUrl: true` replaces the guarded route in history
+ * so that clicking the browser Back button from `/login` smoothly returns to the previous page
+ * without re-triggering the guard.
  */
-function toLogin(router: Router, state: RouterStateSnapshot) {
-  return router.createUrlTree(['/login'], { queryParams: { returnUrl: state.url } });
+function toLogin(router: Router, state: RouterStateSnapshot): RedirectCommand {
+  const tree = router.createUrlTree(['/login'], { queryParams: { returnUrl: state.url } });
+  return new RedirectCommand(tree, { replaceUrl: true });
 }
 
 /** Protects moderator-only routes; redirects to /login when not signed in as a moderator. */

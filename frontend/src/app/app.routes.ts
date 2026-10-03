@@ -1,5 +1,5 @@
 import { inject } from '@angular/core';
-import { Router, Routes } from '@angular/router';
+import { Routes } from '@angular/router';
 import { AttendeeComponent } from './pages/attendee.component';
 import { ModeratorComponent } from './pages/moderator.component';
 import { AdminComponent } from './pages/admin.component';
@@ -20,17 +20,10 @@ export const routes: Routes = [
   {
     path: '',
     pathMatch: 'full',
-    canActivate: [
-      () => {
-        const auth = inject(AuthService);
-        const router = inject(Router);
-        if (auth.isAuthenticated()) {
-          return router.parseUrl(auth.isModerator() ? '/board' : '/ask');
-        }
-        return router.parseUrl('/welcome');
-      },
-    ],
-    children: [],
+    redirectTo: () => {
+      const auth = inject(AuthService);
+      return auth.isAuthenticated() ? (auth.isModerator() ? 'board' : 'ask') : 'welcome';
+    },
   },
   { path: 'welcome', component: WelcomeComponent },
   { path: 'ask', component: AttendeeComponent },
