@@ -229,11 +229,29 @@ export class AttendeeComponent implements OnInit, OnDestroy {
       this.startTopicPolling();
       return;
     }
-    this.api.attendeeLogin(this.attendeeId).subscribe((r) => {
-      this.api.setToken(r.token);
-      // Only after the token is set: the board needs one, and firing before it arrives would just
-      // be a guaranteed 401 on first paint.
-      this.startTopicPolling();
+    this.obtainAttendeeToken();
+  }
+
+  private obtainAttendeeToken(onReady?: () => void): void {
+    if (this.auth.isAuthenticated() || this.api.hasToken()) {
+      onReady?.();
+      return;
+    }
+
+    this.api.attendeeLogin(this.attendeeId).subscribe({
+      next: (r) => {
+        this.api.setToken(r.token);
+        this.startTopicPolling();
+        onReady?.();
+      },
+      error: () => {
+        // Cold start or temporary failure: retry automatically in 4s if not yet obtained
+        setTimeout(() => {
+          if (!this.api.hasToken() && !this.auth.isAuthenticated()) {
+            this.obtainAttendeeToken();
+          }
+        }, 4000);
+      },
     });
   }
 
@@ -245,24 +263,35 @@ export class AttendeeComponent implements OnInit, OnDestroy {
    */
   private startTopicPolling(): void {
     this.loadTopics();
-    this.topicsTimer = setInterval(() => this.loadTopics(), 15000);
+    if (!this.topicsTimer) {
+      this.topicsTimer = setInterval(() => this.loadTopics(), 15000);
+    }
   }
 
   submit(): void {
+    const questionText = this.text().trim();
+    if (!questionText || this.busy()) return;
     this.busy.set(true);
-    this.api.submitQuestion(this.text().trim(), this.attendeeId, this.weight()).subscribe({
-      next: (res) => {
-        this.last.set(res);
-        this.text.set('');
-        this.busy.set(false);
-        // Straight away rather than on the next tick: the question they just asked should appear
-        // in the list, and a fifteen-second wait would read as it having been dropped.
-        this.loadTopics();
-      },
-      error: () => {
-        this.busy.set(false);
-        alert('Could not submit — the server may be waking up (free tier). Try again in a moment.');
-      },
-    });
+
+    const doSubmit = () => {
+      this.api.submitQuestion(questionText, this.attendeeId, this.weight()).subscribe({
+        next: (res) => {
+          this.last.set(res);
+          this.text.set('');
+          this.busy.set(false);
+          this.loadTopics();
+        },
+        error: () => {
+          this.busy.set(false);
+          alert('Could not submit — the server may be waking up (free tier). Try again in a moment.');
+        },
+      });
+    };
+
+    if (!this.auth.isAuthenticated() && !this.api.hasToken()) {
+      this.obtainAttendeeToken(() => doSubmit());
+    } else {
+      doSubmit();
+    }
   }
 }

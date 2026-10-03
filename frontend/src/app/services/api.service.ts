@@ -243,6 +243,10 @@ export class ApiService {
     this.token = token;
   }
 
+  hasToken(): boolean {
+    return !!this.token;
+  }
+
   private authHeaders(): Record<string, string> {
     return this.token ? { Authorization: `Bearer ${this.token}` } : {};
   }
