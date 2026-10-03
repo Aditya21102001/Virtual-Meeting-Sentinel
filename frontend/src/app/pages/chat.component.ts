@@ -78,9 +78,27 @@ import { Citation, parseCitation } from '../services/api.service';
               </div>
             }
             @if (chat.messages().length === 0) {
-              <p class="muted" style="text-align:center;margin-top:40px">
-                {{ peer === AI_PEER ? 'Ask the assistant anything about the company.' : 'Say hello 👋' }}
-              </p>
+              <div class="ai-prompt-starter">
+                <p class="muted" style="text-align:center;margin-bottom:12px">
+                  {{ peer === AI_PEER ? '✨ Ask the AI Copilot anything about the 2026 Annual Report or live AGM motions:' : 'Say hello 👋' }}
+                </p>
+                @if (peer === AI_PEER) {
+                  <div class="ai-chips">
+                    <button type="button" class="ai-chip" (click)="askSample('When will the FY2026 dividend of $2.40 be paid out and what is the record date?')">
+                      💰 Dividend Payout &amp; Record Date
+                    </button>
+                    <button type="button" class="ai-chip" (click)="askSample('What are the execution terms and funding source for the $500M share buyback?')">
+                      📈 $500M Buyback Terms
+                    </button>
+                    <button type="button" class="ai-chip" (click)="askSample('What are the projected CapEx and gross margin impacts of the AI server deployment?')">
+                      ⚡ AI Server CapEx &amp; Margins
+                    </button>
+                    <button type="button" class="ai-chip" (click)="askSample('What are the statutory quorum and majority requirements for the AGM resolutions?')">
+                      ⚖ Quorum &amp; Voting Thresholds
+                    </button>
+                  </div>
+                }
+              </div>
             }
           </div>
 
@@ -166,6 +184,28 @@ import { Citation, parseCitation } from '../services/api.service';
     .composer button { flex-shrink:0; }
     .empty { flex:1; display:flex; align-items:center; justify-content:center; padding:24px; text-align:center; }
 
+    /* ---- AI Copilot Prompt Suggestions ---- */
+    .ai-prompt-starter { margin: 24px auto; max-width: 480px; width: 100%; text-align: center; }
+    .ai-chips { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+    .ai-chip {
+      background: rgba(124, 58, 237, 0.12);
+      border: 1px solid rgba(124, 58, 237, 0.35);
+      color: #ddd6fe;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      text-align: left;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .ai-chip:hover {
+      background: rgba(124, 58, 237, 0.25);
+      border-color: #8b5cf6;
+      color: #fff;
+      transform: translateY(-1px);
+    }
+
     /* ---- Mobile: one pane at a time (list OR open thread) ---- */
     @media (max-width: 760px) {
       .lounge { flex-direction:column; gap:0; margin:0; padding:0;
@@ -214,6 +254,11 @@ export class ChatComponent implements OnInit, OnDestroy {
   onType(value: string): void {
     this.draft.set(value);
     this.chat.sendTyping();
+  }
+
+  async askSample(question: string): Promise<void> {
+    this.draft.set(question);
+    await this.send();
   }
 
   async send(): Promise<void> {

@@ -85,6 +85,63 @@ import { DemoMeetingService, EnrichedClusterView } from "../services/demo-meetin
         </div>
       </section>
 
+      <!-- Live Stage Floor / Active Run of Show Cockpit -->
+      @if (features.enabled("RUN_OF_SHOW")) {
+        @if (stageFloorTopic(); as onStage) {
+          <section class="card stage-floor-card" role="region" aria-label="Floor Topic On Stage">
+            <div class="stage-header-row">
+              <div class="stage-status-group">
+                <span class="pulse-red-dot"></span>
+                <span class="stage-kicker">Active On Stage (Floor Discussion)</span>
+                <span class="stage-timer">⏱️ {{ minutes(stageSeconds()) }}</span>
+              </div>
+              <div class="stage-actions">
+                @if (features.enabled("ATTENDEE_BOARD")) {
+                  <button
+                    type="button"
+                    class="stage-pub-btn"
+                    [class.published]="isPublished(onStage)"
+                    (click)="togglePublished(onStage)"
+                  >
+                    {{ isPublished(onStage) ? '👁 Published to Attendee Room' : 'Publish Verified Answer to Room' }}
+                  </button>
+                }
+                <button type="button" class="stage-advance-btn" (click)="endTopic(onStage)">
+                  🏁 Finish &amp; Advance Topic
+                </button>
+              </div>
+            </div>
+
+            <h2 class="stage-question">{{ onStage.representative_question }}</h2>
+
+            @if (onStage.draft) {
+              <div class="stage-draft-box">
+                <div class="stage-draft-lbl">✨ RAG-Grounded Executive Guidance</div>
+                <p class="stage-draft-text">{{ onStage.draft }}</p>
+                @if (onStage.citations && onStage.citations.length > 0) {
+                  <div class="stage-cites">
+                    <span class="stage-cites-lbl">Verified Citations:</span>
+                    @for (cite of onStage.citations; track cite.source) {
+                      <span class="stage-cite-pill">📄 {{ cite.source }}</span>
+                    }
+                  </div>
+                }
+              </div>
+            }
+          </section>
+        } @else if (nextQueueTopic(); as next) {
+          <section class="card next-topic-banner">
+            <div class="next-banner-content">
+              <span class="next-kicker">⏭️ Up Next in Run of Show</span>
+              <span class="next-title">"{{ next.representative_question }}"</span>
+            </div>
+            <button type="button" class="next-start-btn" (click)="startTopic(next)">
+              🎙️ Call to Floor (Start Topic)
+            </button>
+          </section>
+        }
+      }
+
       @if (error()) {
         <div
           class="card"
@@ -635,12 +692,196 @@ import { DemoMeetingService, EnrichedClusterView } from "../services/demo-meetin
         text-decoration: none;
         font-weight: 600;
       }
+
+      /* ---- Live Stage Floor Cockpit ---- */
+      .stage-floor-card {
+        background: linear-gradient(135deg, rgba(239, 68, 68, 0.08), rgba(245, 158, 11, 0.04));
+        border: 2px solid rgba(239, 68, 68, 0.4);
+        box-shadow: 0 8px 32px rgba(239, 68, 68, 0.12);
+        margin-bottom: 24px;
+        border-radius: 14px;
+      }
+      .stage-header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .stage-status-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .pulse-red-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #ef4444;
+        animation: pulseRed 1.2s ease-in-out infinite;
+      }
+      @keyframes pulseRed {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.3; transform: scale(1.3); }
+      }
+      .stage-kicker {
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #ef4444;
+      }
+      .stage-timer {
+        font-size: 13px;
+        font-weight: 700;
+        background: rgba(0, 0, 0, 0.3);
+        padding: 3px 8px;
+        border-radius: 6px;
+        color: #f59e0b;
+      }
+      .stage-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .stage-pub-btn {
+        background: rgba(99, 102, 241, 0.15);
+        border: 1px solid #6366f1;
+        color: #e0e7ff;
+        border-radius: 8px;
+        padding: 6px 12px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .stage-pub-btn.published {
+        background: rgba(16, 185, 129, 0.2);
+        border-color: #10b981;
+        color: #10b981;
+      }
+      .stage-advance-btn {
+        background: #ef4444;
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        padding: 6px 14px;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .stage-advance-btn:hover {
+        background: #dc2626;
+      }
+      .stage-question {
+        margin: 0 0 14px;
+        font-size: 19px;
+        font-weight: 700;
+        line-height: 1.4;
+      }
+      .stage-draft-box {
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px;
+      }
+      .stage-draft-lbl {
+        font-size: 11px;
+        font-weight: 700;
+        color: #a78bfa;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 6px;
+      }
+      .stage-draft-text {
+        font-size: 14px;
+        line-height: 1.6;
+        margin: 0 0 10px;
+        color: var(--text);
+      }
+      .stage-cites {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      .stage-cites-lbl {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .stage-cite-pill {
+        font-size: 11px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid var(--border);
+        padding: 2px 8px;
+        border-radius: 4px;
+        color: #67e8f9;
+      }
+      .next-topic-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        padding: 14px 18px;
+        background: rgba(245, 158, 11, 0.06);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-radius: 12px;
+        margin-bottom: 24px;
+      }
+      .next-banner-content {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .next-kicker {
+        font-size: 11px;
+        font-weight: 700;
+        color: #f59e0b;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .next-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text);
+      }
+      .next-start-btn {
+        background: #f59e0b;
+        color: #000;
+        font-weight: 700;
+        border: none;
+        border-radius: 8px;
+        padding: 8px 16px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      .next-start-btn:hover {
+        background: #d97706;
+      }
     `,
   ],
 })
 export class ModeratorComponent implements OnInit, OnDestroy {
   protected readonly demoMeeting = inject(DemoMeetingService);
   readonly filterMode = signal<'ALL' | 'CRITICAL' | 'HOT'>('ALL');
+
+  readonly stageSeconds = signal(0);
+  private stageTimer: ReturnType<typeof setInterval> | null = null;
+
+  readonly stageFloorTopic = computed(() =>
+    this.effectiveBoard().find((c) => this.runState(c)?.underDiscussion),
+  );
+
+  readonly nextQueueTopic = computed(() =>
+    this.effectiveBoard().find(
+      (c) =>
+        !this.runState(c)?.underDiscussion &&
+        (this.runState(c)?.secondsSpent === null || this.runState(c)?.secondsSpent === undefined),
+    ),
+  );
 
   /** Effective board: live clusters if present, or demo clusters if demo is active or board is empty */
   readonly effectiveBoard = computed(() => {
@@ -915,6 +1156,39 @@ export class ModeratorComponent implements OnInit, OnDestroy {
   }
 
   startTopic(c: ClusterView): void {
+    this.stageSeconds.set(0);
+
+    if (c.cluster_id.startsWith('cl-apex') || this.demoMeeting.isDemoActive()) {
+      const current = new Map(this.roomTopics());
+      for (const [id, topic] of current.entries()) {
+        if (topic.underDiscussion) {
+          current.set(id, { ...topic, underDiscussion: false });
+        }
+      }
+      const existing: TopicView = current.get(c.cluster_id) ?? {
+        clusterId: c.cluster_id,
+        question: c.representative_question,
+        asked: c.size,
+        supported: 15,
+        supportedByMe: false,
+        underDiscussion: false,
+        answer: c.draft,
+        answered: !!c.draft,
+        published: false,
+        runOrder: 1,
+        startedAt: null,
+        secondsSpent: null,
+      };
+      current.set(c.cluster_id, {
+        ...existing,
+        underDiscussion: true,
+        runOrder: 1,
+        startedAt: new Date().toISOString(),
+      });
+      this.roomTopics.set(current);
+      return;
+    }
+
     this.roomBusy.set(c.cluster_id);
     this.room.startTopic(c.cluster_id).subscribe({
       next: (topics) => {
@@ -929,6 +1203,20 @@ export class ModeratorComponent implements OnInit, OnDestroy {
   }
 
   endTopic(c: ClusterView): void {
+    if (c.cluster_id.startsWith('cl-apex') || this.demoMeeting.isDemoActive()) {
+      const current = new Map(this.roomTopics());
+      const existing = current.get(c.cluster_id);
+      if (existing) {
+        current.set(c.cluster_id, {
+          ...existing,
+          underDiscussion: false,
+          secondsSpent: this.stageSeconds() || 120,
+        });
+      }
+      this.roomTopics.set(current);
+      return;
+    }
+
     this.roomBusy.set(c.cluster_id);
     this.room.endTopic(c.cluster_id).subscribe({
       next: (topics) => {
@@ -944,6 +1232,32 @@ export class ModeratorComponent implements OnInit, OnDestroy {
 
   togglePublished(c: ClusterView): void {
     const next = !this.isPublished(c);
+
+    if (c.cluster_id.startsWith('cl-apex') || this.demoMeeting.isDemoActive()) {
+      const current = new Map(this.roomTopics());
+      const existing = current.get(c.cluster_id);
+      if (existing) {
+        current.set(c.cluster_id, { ...existing, published: next });
+      } else {
+        current.set(c.cluster_id, {
+          clusterId: c.cluster_id,
+          question: c.representative_question,
+          asked: c.size,
+          supported: 15,
+          supportedByMe: false,
+          underDiscussion: false,
+          published: next,
+          answer: c.draft,
+          answered: !!c.draft,
+          runOrder: null,
+          startedAt: null,
+          secondsSpent: null,
+        });
+      }
+      this.roomTopics.set(current);
+      return;
+    }
+
     this.roomBusy.set(c.cluster_id);
     this.room.publishAnswer(c.cluster_id, next).subscribe({
       next: () => {
@@ -969,6 +1283,13 @@ export class ModeratorComponent implements OnInit, OnDestroy {
     this.loadSnapshot(); // initial snapshot
     this.loadRoom();     // the run-of-show layer over it
     this.board.connect(); // then live pushes over STOMP
+
+    // Stage floor live elapsed timer
+    this.stageTimer = setInterval(() => {
+      if (this.stageFloorTopic()) {
+        this.stageSeconds.update((s) => s + 1);
+      }
+    }, 1000);
 
     // Fallback poll: live WebSocket pushes can drop (esp. behind free-tier proxies), and a
     // just-asked question needs a moment to cluster. Re-fetch every 45s so new questions
@@ -1064,6 +1385,10 @@ export class ModeratorComponent implements OnInit, OnDestroy {
     if (this.pollHandle) {
       clearInterval(this.pollHandle);
       this.pollHandle = undefined;
+    }
+    if (this.stageTimer) {
+      clearInterval(this.stageTimer);
+      this.stageTimer = null;
     }
     this.board.disconnect();
   }

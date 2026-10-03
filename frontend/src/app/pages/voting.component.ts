@@ -1,6 +1,7 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { AuthService } from '../services/auth.service';
+import { DemoMeetingService } from '../services/demo-meeting.service';
 import { FeatureService } from '../services/feature.service';
 import { MeetingService } from '../services/meeting.service';
 import { NavigationHistoryService } from '../services/navigation-history.service';
@@ -77,9 +78,13 @@ import {
       @if (!meetingId()) {
         <div class="card empty">
           <p class="muted">
-            No meeting is live. A meeting has to be activated before motions can be put to it — ask
-            a meeting manager to activate one.
+            No meeting is currently active on the server.
           </p>
+          <div style="margin-top:16px">
+            <button type="button" class="primary" (click)="demoMeeting.launchDemoMeeting('/voting')">
+              🚀 Launch Interactive Demo AGM (Live Ballot &amp; Quorum)
+            </button>
+          </div>
         </div>
       } @else {
         <!--
@@ -697,6 +702,7 @@ export class VotingComponent implements OnInit, OnDestroy {
   private readonly features = inject(FeatureService);
   private readonly auth = inject(AuthService);
   protected readonly navHistory = inject(NavigationHistoryService);
+  protected readonly demoMeeting = inject(DemoMeetingService);
 
   backLabel(): string {
     if (this.navHistory.canGoBack()) {
@@ -725,8 +731,12 @@ export class VotingComponent implements OnInit, OnDestroy {
   readonly newType = signal<ResolutionType>('ORDINARY');
 
   readonly isModerator = computed(() => this.auth.isModerator());
-  readonly meetingId = computed(() => this.meetings.active()?.id ?? null);
-  readonly meetingTitle = computed(() => this.meetings.active()?.title ?? '');
+  readonly meetingId = computed(
+    () => this.meetings.active()?.id ?? (this.demoMeeting.isDemoActive() ? this.demoMeeting.demoMeeting.id : null),
+  );
+  readonly meetingTitle = computed(
+    () => this.meetings.active()?.title ?? (this.demoMeeting.isDemoActive() ? this.demoMeeting.demoMeeting.title : ''),
+  );
   readonly openCount = computed(() => this.resolutions().filter((r) => r.open).length);
 
   readonly choices: VoteChoice[] = ['FOR', 'AGAINST', 'ABSTAIN'];
@@ -743,8 +753,12 @@ export class VotingComponent implements OnInit, OnDestroy {
     this.meetings.refreshActive().subscribe({
       next: () => this.reload(),
       error: () => {
-        this.loading.set(false);
-        this.error.set('Could not find out which meeting is live.');
+        if (this.demoMeeting.isDemoActive()) {
+          this.reload();
+        } else {
+          this.loading.set(false);
+          this.error.set('Could not find out which meeting is live.');
+        }
       },
     });
     this.timer = setInterval(() => this.reload(true), 5000);
@@ -763,6 +777,15 @@ export class VotingComponent implements OnInit, OnDestroy {
   private reload(quiet = false): void {
     const id = this.meetingId();
     if (!id) {
+      this.loading.set(false);
+      return;
+    }
+
+    if (id === this.demoMeeting.demoMeeting.id) {
+      if (this.resolutions().length === 0) {
+        this.resolutions.set([...this.demoMeeting.demoResolutions]);
+      }
+      this.quorum.set(this.demoMeeting.demoQuorum);
       this.loading.set(false);
       return;
     }
@@ -790,6 +813,70 @@ export class VotingComponent implements OnInit, OnDestroy {
   }
 
   cast(resolution: ResolutionView, choice: VoteChoice): void {
+    if (resolution.meetingId === this.demoMeeting.demoMeeting.id) {
+      this.busy.set(true);
+      setTimeout(() => {
+        this.busy.set(false);
+        const updatedList = this.resolutions().map((r) => {
+          if (r.id === resolution.id) {
+            const prevChoice = r.myChoice;
+            const updated = { ...r, myChoice: choice };
+            if (updated.result) {
+              const tally = { ...updated.result };
+              const weightDelta = 100000;
+              if (!prevChoice) {
+                if (choice === 'FOR') {
+                  tally.forWeight += weightDelta;
+                  tally.forCount += 1;
+                } else if (choice === 'AGAINST') {
+                  tally.againstWeight += weightDelta;
+                  tally.againstCount += 1;
+                } else if (choice === 'ABSTAIN') {
+                  tally.abstainWeight += weightDelta;
+                  tally.abstainCount += 1;
+                }
+              } else if (prevChoice !== choice) {
+                if (prevChoice === 'FOR') {
+                  tally.forWeight -= weightDelta;
+                  tally.forCount -= 1;
+                } else if (prevChoice === 'AGAINST') {
+                  tally.againstWeight -= weightDelta;
+                  tally.againstCount -= 1;
+                } else if (prevChoice === 'ABSTAIN') {
+                  tally.abstainWeight -= weightDelta;
+                  tally.abstainCount -= 1;
+                }
+                if (choice === 'FOR') {
+                  tally.forWeight += weightDelta;
+                  tally.forCount += 1;
+                } else if (choice === 'AGAINST') {
+                  tally.againstWeight += weightDelta;
+                  tally.againstCount += 1;
+                } else if (choice === 'ABSTAIN') {
+                  tally.abstainWeight += weightDelta;
+                  tally.abstainCount += 1;
+                }
+              }
+              tally.decisiveWeight = tally.forWeight + tally.againstWeight;
+              tally.forPercent =
+                tally.decisiveWeight > 0
+                  ? Math.round((tally.forWeight / tally.decisiveWeight) * 10000) / 100
+                  : 0;
+              tally.carried =
+                updated.type === 'SPECIAL'
+                  ? tally.forWeight > 0 && tally.forWeight * 4 >= tally.decisiveWeight * 3
+                  : tally.forWeight > tally.againstWeight;
+              updated.result = tally;
+            }
+            return updated;
+          }
+          return r;
+        });
+        this.resolutions.set(updatedList);
+      }, 300);
+      return;
+    }
+
     this.busy.set(true);
     this.error.set('');
     this.voting.vote(resolution.id, choice).subscribe({
@@ -811,6 +898,41 @@ export class VotingComponent implements OnInit, OnDestroy {
   create(): void {
     const id = this.meetingId();
     if (!id) return;
+
+    if (id === this.demoMeeting.demoMeeting.id) {
+      const newRes: ResolutionView = {
+        id: 'res-demo-' + (this.resolutions().length + 1),
+        meetingId: id,
+        seq: this.resolutions().length + 1,
+        title: this.newTitle().trim(),
+        text: this.newText().trim() || null,
+        type: this.newType(),
+        status: 'OPEN',
+        open: true,
+        requiredMajorityPercent: this.newType() === 'SPECIAL' ? 75.0 : 50.0,
+        liveResultsVisible: true,
+        result: {
+          forWeight: 0,
+          againstWeight: 0,
+          abstainWeight: 0,
+          decisiveWeight: 0,
+          forCount: 0,
+          againstCount: 0,
+          abstainCount: 0,
+          forPercent: 0,
+          carried: false,
+        },
+        myChoice: null,
+        openedAt: new Date().toISOString(),
+        closedAt: null,
+      };
+      this.resolutions.update((list) => [...list, newRes]);
+      this.newTitle.set('');
+      this.newText.set('');
+      this.newType.set('ORDINARY');
+      return;
+    }
+
     this.busy.set(true);
     this.voting.create(id, this.newTitle().trim(), this.newText().trim(), this.newType()).subscribe({
       next: () => {
@@ -828,12 +950,29 @@ export class VotingComponent implements OnInit, OnDestroy {
   }
 
   open(resolution: ResolutionView): void {
+    if (resolution.meetingId === this.demoMeeting.demoMeeting.id) {
+      this.resolutions.update((list) =>
+        list.map((r) =>
+          r.id === resolution.id ? { ...r, status: 'OPEN', open: true, openedAt: new Date().toISOString() } : r,
+        ),
+      );
+      return;
+    }
     this.act(this.voting.open(resolution.id));
   }
 
   close(resolution: ResolutionView): void {
     // Deliberately confirmed: closing fixes the result and cannot be undone.
     if (!confirm(`Close voting on "${resolution.title}"? The result becomes final.`)) return;
+
+    if (resolution.meetingId === this.demoMeeting.demoMeeting.id) {
+      this.resolutions.update((list) =>
+        list.map((r) =>
+          r.id === resolution.id ? { ...r, status: 'CLOSED', open: false, closedAt: new Date().toISOString() } : r,
+        ),
+      );
+      return;
+    }
     this.act(this.voting.close(resolution.id));
   }
 

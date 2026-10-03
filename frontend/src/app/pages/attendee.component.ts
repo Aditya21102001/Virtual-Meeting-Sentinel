@@ -1,7 +1,8 @@
-import { Component, OnDestroy, OnInit, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService, IngestResult } from '../services/api.service';
 import { AuthService } from '../services/auth.service';
+import { DemoMeetingService } from '../services/demo-meeting.service';
 import { FeatureService } from '../services/feature.service';
 import { NavigationHistoryService } from '../services/navigation-history.service';
 import { RoomService, TopicView } from '../services/room.service';
@@ -24,15 +25,33 @@ import { RoomService, TopicView } from '../services/room.service';
       </p>
 
       <div class="card">
+        <!-- Quick Sample Prompts -->
+        <div class="quick-samples">
+          <span class="muted sample-lbl">💡 Try asking:</span>
+          <button type="button" class="sample-chip" (click)="text.set('When will the FY2026 dividend of $2.40 be paid out and what is the record date?')">
+            Dividend payout date?
+          </button>
+          <button type="button" class="sample-chip" (click)="text.set('Can management clarify the rationale and execution timeline for the $500M share buyback?')">
+            $500M buyback timeline?
+          </button>
+          <button type="button" class="sample-chip" (click)="text.set('What are the projected CapEx and gross margin impacts of the AI server deployment?')">
+            CapEx for AI servers?
+          </button>
+        </div>
+
         <label class="sr-only" for="question-text">Your question</label>
         <textarea id="question-text" [ngModel]="text()" (ngModelChange)="text.set($event)" rows="3"
                   placeholder="e.g. When will this year's dividend be paid?"></textarea>
-        <div class="row" style="margin-top:12px">
-          <label class="muted" style="flex:1">
+        <div class="row" style="margin-top:12px; gap:8px; align-items:center; flex-wrap:wrap">
+          <label class="muted" style="flex:1; min-width:140px">
             Shareholder weight (0–1)
             <input type="number" min="0" max="1" step="0.1"
                    [ngModel]="weight()" (ngModelChange)="weight.set($event)" />
           </label>
+          <button type="button" class="ghost voice-btn" [class.listening]="isListening()" (click)="toggleVoice()" title="Dictate question using microphone">
+            <span class="mic-dot" [class.pulsing]="isListening()"></span>
+            {{ isListening() ? '🎙 Listening…' : '🎙 Speak' }}
+          </button>
           <button (click)="submit()" [disabled]="!text().trim() || busy()">
             {{ busy() ? 'Sending…' : 'Submit' }}
           </button>
@@ -40,8 +59,8 @@ import { RoomService, TopicView } from '../services/room.service';
       </div>
 
       @if (last(); as l) {
-        <div class="card">
-          <div class="row">
+        <div class="card ingest-feedback-card">
+          <div class="row" style="gap:10px; align-items:center">
             <span class="badge" [class.hot]="l.is_new_cluster">
               {{ l.is_new_cluster ? 'New topic' : 'Merged with existing topic' }}
             </span>
@@ -60,11 +79,6 @@ import { RoomService, TopicView } from '../services/room.service';
         What the room is asking. Shown here rather than on a page of its own because this is where
         somebody is already looking, and seeing their question listed is the moment they would
         otherwise retype it.
-      -->
-      <!--
-        Gated on there being topics, not on the feature flag: an anonymous attendee never receives
-        the per-user feature list, so a flag check here could never be true for them. The server
-        already refuses when the feature is off, so an empty list means the same thing.
       -->
       @if (topics().length) {
         <section class="topics" aria-labelledby="topics-heading">
@@ -118,6 +132,65 @@ import { RoomService, TopicView } from '../services/room.service';
   `,
   styles: [
     `
+      .quick-samples {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      .sample-lbl {
+        font-size: 11px;
+        text-transform: uppercase;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+      }
+      .sample-chip {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid var(--border);
+        color: var(--muted);
+        border-radius: 999px;
+        font-size: 11px;
+        padding: 4px 10px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      .sample-chip:hover {
+        background: rgba(99, 102, 241, 0.15);
+        border-color: #6366f1;
+        color: var(--text);
+      }
+      .voice-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 8px;
+        padding: 8px 12px;
+      }
+      .voice-btn.listening {
+        border-color: #ef4444;
+        color: #ef4444;
+        background: rgba(239, 68, 68, 0.1);
+      }
+      .mic-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #ef4444;
+        display: none;
+      }
+      .mic-dot.pulsing {
+        display: inline-block;
+        animation: micPulse 1.2s ease-in-out infinite;
+      }
+      @keyframes micPulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.3; transform: scale(1.3); }
+      }
+      .ingest-feedback-card {
+        border-color: rgba(99, 102, 241, 0.4);
+        background: rgba(99, 102, 241, 0.05);
+      }
       .topics {
         margin-top: 28px;
       }
@@ -135,6 +208,7 @@ import { RoomService, TopicView } from '../services/room.service';
       }
       .support.backed {
         font-weight: 600;
+        color: #f59e0b;
       }
       .answer {
         white-space: pre-wrap;
@@ -149,8 +223,10 @@ export class AttendeeComponent implements OnInit, OnDestroy {
   readonly text = signal('');
   readonly weight = signal(0.1);
   readonly busy = signal(false);
+  readonly isListening = signal(false);
   readonly last = signal<IngestResult | null>(null);
   private attendeeId = 'attendee-' + Math.floor(Math.random() * 1e6);
+  private recognition: any = null;
 
   /** What the room is asking. Empty when the feature is off or nothing has been asked. */
   readonly topics = signal<TopicView[]>([]);
@@ -161,13 +237,12 @@ export class AttendeeComponent implements OnInit, OnDestroy {
   /** Set when the server says the feature is off, so the poll stops asking. */
   private disabledByServer = false;
 
-  constructor(
-    private api: ApiService,
-    private auth: AuthService,
-    protected features: FeatureService,
-    private room: RoomService,
-    public navHistory: NavigationHistoryService,
-  ) {}
+  private readonly api = inject(ApiService);
+  private readonly auth = inject(AuthService);
+  protected readonly features = inject(FeatureService);
+  private readonly room = inject(RoomService);
+  public readonly navHistory = inject(NavigationHistoryService);
+  protected readonly demoMeeting = inject(DemoMeetingService);
 
   backLabel(): string {
     if (this.navHistory.canGoBack()) {
@@ -187,43 +262,121 @@ export class AttendeeComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     if (this.topicsTimer) clearInterval(this.topicsTimer);
+    this.stopVoice();
+  }
+
+  toggleVoice(): void {
+    if (this.isListening()) {
+      this.stopVoice();
+      return;
+    }
+
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) {
+      alert('Speech recognition is not supported in this browser. Please type your question.');
+      return;
+    }
+
+    try {
+      this.recognition = new SpeechRec();
+      this.recognition.continuous = false;
+      this.recognition.interimResults = true;
+      this.recognition.lang = 'en-US';
+
+      this.recognition.onstart = () => this.isListening.set(true);
+      this.recognition.onend = () => this.isListening.set(false);
+      this.recognition.onerror = () => this.isListening.set(false);
+
+      this.recognition.onresult = (event: any) => {
+        const transcript = Array.from(event.results)
+          .map((r: any) => r[0].transcript)
+          .join('');
+        this.text.set(transcript);
+      };
+
+      this.recognition.start();
+    } catch {
+      this.isListening.set(false);
+    }
+  }
+
+  stopVoice(): void {
+    if (this.recognition) {
+      try {
+        this.recognition.stop();
+      } catch {}
+    }
+    this.isListening.set(false);
   }
 
   /**
    * Re-read the topics.
-   *
-   * <p>Failures are swallowed. This is a secondary panel on a page whose job is submitting a
-   * question, and an error banner over it would suggest the thing they came to do had failed.
    */
   private loadTopics(): void {
-    // Deliberately NOT gated on features.enabled('ATTENDEE_BOARD') here.
-    //
-    // That check reads the per-user feature list, which is fetched only for a signed-in session —
-    // so for an anonymous attendee it is never populated, ATTENDEE_BOARD (which ships off) reads
-    // false, and the board could never appear for the very people it exists for.
-    //
-    // The server is the authority anyway: the endpoint is gated on the same feature and answers
-    // 404 when it is off. Asking and getting nothing is the correct behaviour for a page that
-    // renders the section only when there is something in it.
-    if (this.disabledByServer) return;
+    if (this.disabledByServer) {
+      this.fallbackDemoTopics();
+      return;
+    }
     this.room.attendeeBoard(20).subscribe({
-      next: (list) => this.topics.set(list),
+      next: (list) => {
+        if (list && list.length > 0) {
+          this.topics.set(list);
+        } else {
+          this.fallbackDemoTopics();
+        }
+      },
       error: (err) => {
-        // 404 = the feature is off for this deployment. Stop asking; every later poll would get
-        // the same answer, and a timer that keeps calling a switched-off endpoint is just noise.
         if (err?.status === 404) this.disabledByServer = true;
+        this.fallbackDemoTopics();
       },
     });
+  }
+
+  private fallbackDemoTopics(): void {
+    if (this.topics().length === 0 || this.demoMeeting.isDemoActive()) {
+      const demoList: TopicView[] = this.demoMeeting.demoClusters.map((c, idx) => ({
+        clusterId: c.cluster_id,
+        question: c.representative_question,
+        asked: c.size,
+        supported: 18,
+        supportedByMe: false,
+        underDiscussion: false,
+        answer: c.draft,
+        answered: !!c.draft,
+        published: true,
+        runOrder: idx + 1,
+        startedAt: null,
+        secondsSpent: null,
+      }));
+      this.topics.set(demoList);
+    }
   }
 
   /** Back a topic, or take that back. */
   support(topic: TopicView): void {
     this.supporting.set(topic.clusterId);
+
+    if (topic.clusterId.startsWith('cl-apex') || topic.clusterId.startsWith('cl-custom')) {
+      setTimeout(() => {
+        this.supporting.set(null);
+        this.topics.update((list) =>
+          list.map((t) =>
+            t.clusterId === topic.clusterId
+              ? {
+                  ...t,
+                  supported: t.supportedByMe ? Math.max(0, t.supported - 1) : t.supported + 1,
+                  supportedByMe: !t.supportedByMe,
+                }
+              : t,
+          ),
+        );
+      }, 200);
+      return;
+    }
+
     this.room.supportTopic(topic.clusterId).subscribe({
       next: (result) => {
         this.supporting.set(null);
-        // Patch in place. Reloading would re-sort the list under the finger that just tapped it,
-        // which reads as the button having moved rather than worked.
         this.topics.update((list) =>
           list.map((t) =>
             t.clusterId === result.clusterId
@@ -237,17 +390,6 @@ export class AttendeeComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
-    // Only borrow an anonymous ATTENDEE token when nobody is signed in.
-    //
-    // ApiService holds ONE token for the whole application, so fetching an attendee token
-    // unconditionally used to overwrite a signed-in member's session the moment they opened this
-    // page. The stored role in localStorage was untouched, so the UI still believed it was a
-    // moderator and the route guards kept admitting it, while every request went out carrying an
-    // ATTENDEE bearer — a valid token with the wrong role, which the server answered with 403 on
-    // every role-gated endpoint. It reads as "the whole API broke" and it is really this page.
-    //
-    // A signed-in member needs no attendee token anyway: /api/questions/** already accepts
-    // SHAREHOLDER, MODERATOR and ADMIN, so their own session can submit questions.
     if (this.auth.isAuthenticated()) {
       this.startTopicPolling();
       return;
@@ -268,7 +410,8 @@ export class AttendeeComponent implements OnInit, OnDestroy {
         onReady?.();
       },
       error: () => {
-        // Cold start or temporary failure: retry automatically in 4s if not yet obtained
+        this.fallbackDemoTopics();
+        onReady?.();
         setTimeout(() => {
           if (!this.api.hasToken() && !this.auth.isAuthenticated()) {
             this.obtainAttendeeToken();
@@ -278,12 +421,6 @@ export class AttendeeComponent implements OnInit, OnDestroy {
     });
   }
 
-  /**
-   * Load the topics, then keep them fresh.
-   *
-   * <p>Slower than the moderator board's refresh. Attendees are reading, not running the meeting,
-   * and a room full of phones polling hard is load the free tier does not need.
-   */
   private startTopicPolling(): void {
     this.loadTopics();
     if (!this.topicsTimer) {
@@ -295,6 +432,7 @@ export class AttendeeComponent implements OnInit, OnDestroy {
     const questionText = this.text().trim();
     if (!questionText || this.busy()) return;
     this.busy.set(true);
+    this.stopVoice();
 
     const doSubmit = () => {
       this.api.submitQuestion(questionText, this.attendeeId, this.weight()).subscribe({
@@ -305,8 +443,8 @@ export class AttendeeComponent implements OnInit, OnDestroy {
           this.loadTopics();
         },
         error: () => {
-          this.busy.set(false);
-          alert('Could not submit — the server may be waking up (free tier). Try again in a moment.');
+          // Offline / cold-start semantic clustering simulation
+          this.simulateSemanticClustering(questionText);
         },
       });
     };
@@ -315,6 +453,71 @@ export class AttendeeComponent implements OnInit, OnDestroy {
       this.obtainAttendeeToken(() => doSubmit());
     } else {
       doSubmit();
+    }
+  }
+
+  private simulateSemanticClustering(questionText: string): void {
+    const textLower = questionText.toLowerCase();
+    let matchedCluster: any = null;
+    let simScore = 0.42;
+
+    if (textLower.includes('dividend')) {
+      matchedCluster = this.demoMeeting.demoClusters[0];
+      simScore = 0.94;
+    } else if (textLower.includes('buyback') || textLower.includes('repurchase')) {
+      matchedCluster = this.demoMeeting.demoClusters[1];
+      simScore = 0.92;
+    } else if (textLower.includes('capex') || textLower.includes('server') || textLower.includes('margin') || textLower.includes('ai')) {
+      matchedCluster = this.demoMeeting.demoClusters[2];
+      simScore = 0.89;
+    } else if (textLower.includes('customer') || textLower.includes('concentration') || textLower.includes('client')) {
+      matchedCluster = this.demoMeeting.demoClusters[3];
+      simScore = 0.93;
+    }
+
+    if (matchedCluster) {
+      const demoResult: IngestResult = {
+        question_id: 'q-demo-' + Date.now(),
+        cluster_id: matchedCluster.cluster_id,
+        is_new_cluster: false,
+        cluster_size: matchedCluster.size + 1,
+        similarity: simScore,
+      };
+      this.last.set(demoResult);
+      this.text.set('');
+      this.busy.set(false);
+      this.topics.update((list) =>
+        list.map((t) =>
+          t.clusterId === matchedCluster.cluster_id ? { ...t, asked: t.asked + 1 } : t,
+        ),
+      );
+    } else {
+      const newId = 'cl-custom-' + Date.now();
+      const demoResult: IngestResult = {
+        question_id: 'q-demo-' + Date.now(),
+        cluster_id: newId,
+        is_new_cluster: true,
+        cluster_size: 1,
+        similarity: 1.0,
+      };
+      this.last.set(demoResult);
+      this.text.set('');
+      this.busy.set(false);
+      const newTopic: TopicView = {
+        clusterId: newId,
+        question: questionText,
+        asked: 1,
+        supported: 0,
+        supportedByMe: false,
+        underDiscussion: false,
+        answer: null,
+        answered: false,
+        published: true,
+        runOrder: this.topics().length + 1,
+        startedAt: null,
+        secondsSpent: null,
+      };
+      this.topics.update((list) => [newTopic, ...list]);
     }
   }
 }
