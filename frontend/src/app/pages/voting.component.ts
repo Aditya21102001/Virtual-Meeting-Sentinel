@@ -1,4 +1,4 @@
-import { DatePipe, DecimalPipe } from '@angular/common';
+﻿import { DatePipe, DecimalPipe } from '@angular/common';
 import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { AuthService } from '../services/auth.service';
 import { DemoMeetingService } from '../services/demo-meeting.service';
@@ -92,6 +92,18 @@ import {
           decisions to be valid. Shown even when unmet — especially then, since a vote taken without
           quorum does not count however lopsided it was.
         -->
+                @if (demoMeeting.isDemoActive()) {
+          <div class="card demo-sandbox-badge" style="background: rgba(99, 102, 241, 0.12); border-left: 4px solid #6366f1; margin-bottom: 16px;">
+            <div class="row" style="gap: 10px; align-items: center; justify-content: space-between;">
+              <span>
+                <strong>Demo Sandbox Mode:</strong> You are evaluating the interactive Apex Global AGM simulation. Votes and quorum are simulated in-memory.
+              </span>
+              <button type="button" class="ghost" (click)="demoMeeting.resetDemo()" style="color: #6366f1; text-decoration: underline;">
+                Switch to Live Meetings
+              </button>
+            </div>
+          </div>
+        }
         @if (quorum(); as q) {
           <section class="card quorum" [class.met]="q.met" aria-labelledby="quorum-heading">
             <div
@@ -781,7 +793,7 @@ export class VotingComponent implements OnInit, OnDestroy {
       return;
     }
 
-    if (id === this.demoMeeting.demoMeeting.id) {
+    if (this.demoMeeting.isDemoActive() && id === this.demoMeeting.demoMeeting.id) {
       if (this.resolutions().length === 0) {
         this.resolutions.set([...this.demoMeeting.demoResolutions]);
       }
@@ -813,7 +825,7 @@ export class VotingComponent implements OnInit, OnDestroy {
   }
 
   cast(resolution: ResolutionView, choice: VoteChoice): void {
-    if (resolution.meetingId === this.demoMeeting.demoMeeting.id) {
+    if (this.demoMeeting.isDemoActive() && resolution.meetingId === this.demoMeeting.demoMeeting.id) {
       this.busy.set(true);
       setTimeout(() => {
         this.busy.set(false);
@@ -899,7 +911,7 @@ export class VotingComponent implements OnInit, OnDestroy {
     const id = this.meetingId();
     if (!id) return;
 
-    if (id === this.demoMeeting.demoMeeting.id) {
+    if (this.demoMeeting.isDemoActive() && id === this.demoMeeting.demoMeeting.id) {
       const newRes: ResolutionView = {
         id: 'res-demo-' + (this.resolutions().length + 1),
         meetingId: id,
@@ -950,7 +962,7 @@ export class VotingComponent implements OnInit, OnDestroy {
   }
 
   open(resolution: ResolutionView): void {
-    if (resolution.meetingId === this.demoMeeting.demoMeeting.id) {
+    if (this.demoMeeting.isDemoActive() && resolution.meetingId === this.demoMeeting.demoMeeting.id) {
       this.resolutions.update((list) =>
         list.map((r) =>
           r.id === resolution.id ? { ...r, status: 'OPEN', open: true, openedAt: new Date().toISOString() } : r,
@@ -965,7 +977,7 @@ export class VotingComponent implements OnInit, OnDestroy {
     // Deliberately confirmed: closing fixes the result and cannot be undone.
     if (!confirm(`Close voting on "${resolution.title}"? The result becomes final.`)) return;
 
-    if (resolution.meetingId === this.demoMeeting.demoMeeting.id) {
+    if (this.demoMeeting.isDemoActive() && resolution.meetingId === this.demoMeeting.demoMeeting.id) {
       this.resolutions.update((list) =>
         list.map((r) =>
           r.id === resolution.id ? { ...r, status: 'CLOSED', open: false, closedAt: new Date().toISOString() } : r,
@@ -1058,3 +1070,4 @@ export class VotingComponent implements OnInit, OnDestroy {
     return t.decisiveWeight === 0 ? 0 : (weight * 100) / t.decisiveWeight;
   }
 }
+

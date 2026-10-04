@@ -1,4 +1,5 @@
 import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
+import { Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { ApiService, IngestResult } from '../services/api.service';
 import { AuthService } from '../services/auth.service';
@@ -243,21 +244,19 @@ export class AttendeeComponent implements OnInit, OnDestroy {
   private readonly room = inject(RoomService);
   public readonly navHistory = inject(NavigationHistoryService);
   protected readonly demoMeeting = inject(DemoMeetingService);
+  private readonly router = inject(Router);
 
   backLabel(): string {
-    if (this.navHistory.canGoBack()) {
-      return 'Back to previous page';
-    }
     return this.auth.isAuthenticated()
-      ? (this.auth.isModerator() ? 'Back to Board' : 'Back to Lounge')
+      ? (this.auth.isModerator() ? 'Back to Dashboard' : 'Back to Lounge')
       : 'Back to Overview';
   }
 
   goBack(): void {
-    const fallback = this.auth.isAuthenticated()
+    const destination = this.auth.isAuthenticated()
       ? (this.auth.isModerator() ? '/board' : '/chat')
       : '/welcome';
-    this.navHistory.back(fallback);
+    this.router.navigateByUrl(destination);
   }
 
   ngOnDestroy(): void {

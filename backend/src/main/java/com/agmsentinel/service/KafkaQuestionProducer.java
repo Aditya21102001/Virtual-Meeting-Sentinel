@@ -36,15 +36,23 @@ public class KafkaQuestionProducer {
      * clusters it asynchronously and the scheduled board push reflects it to moderators.
      */
     public void publish(String questionId, String text, String attendeeId, float weight) {
+        publish(questionId, text, attendeeId, weight, null);
+    }
+
+    public void publish(String questionId, String text, String attendeeId, float weight, java.util.UUID meetingId) {
         try {
-            String json = mapper.writeValueAsString(Map.of(
-                    "question_id", questionId,
-                    "text", text,
-                    "attendee_id", attendeeId,
-                    "weight", weight));
+            java.util.Map<String, Object> map = new java.util.HashMap<>();
+            map.put("question_id", questionId);
+            map.put("text", text);
+            map.put("attendee_id", attendeeId);
+            map.put("weight", weight);
+            if (meetingId != null) {
+                map.put("meeting_id", meetingId.toString());
+            }
+            String json = mapper.writeValueAsString(map);
             kafka.send(topic, questionId, json);
         } catch (Exception e) {
-            throw new RuntimeException("Failed to publish question to Kafka topic " + topic, e);
+            throw new RuntimeException("Failed to publish question to Kafka topic " + topic + ": " + e.getMessage(), e);
         }
     }
 }

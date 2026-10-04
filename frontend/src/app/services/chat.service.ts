@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+﻿import { HttpClient } from '@angular/common/http';
 import { Injectable, signal } from '@angular/core';
 import { Client, IMessage } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
@@ -50,6 +50,7 @@ export class ChatService {
   readonly online = signal<Set<string>>(new Set());
   readonly activePeer = signal<string | null>(null);
   readonly typingPeer = signal<string | null>(null);   // peer currently typing to me
+  readonly sendError = signal<string | null>(null);
   private typingTimer?: ReturnType<typeof setTimeout>;
   private lastTypingSent = 0;
 
@@ -89,7 +90,7 @@ export class ChatService {
     // Append to the open thread if it belongs to the active peer, then refresh badges.
     if (this.activePeer() && msg.sender === this.activePeer()) {
       this.messages.update((list) => [...list, msg]);
-      this.markRead(msg.sender);   // I'm looking at it → mark read + send receipt
+      this.markRead(msg.sender);   // I'm looking at it -> mark read + send receipt
     }
     this.loadContacts();
   }
@@ -112,7 +113,7 @@ export class ChatService {
   }
 
   private onRead(evt: { reader: string }): void {
-    // The peer opened our conversation → flip our sent messages to that peer to read (✓✓).
+    // The peer opened our conversation -> flip our sent messages to that peer to read.
     if (this.activePeer() === evt.reader) {
       const now = new Date().toISOString();
       this.messages.update((list) =>
@@ -136,129 +137,54 @@ export class ChatService {
     return t ? { Authorization: `Bearer ${t}` } : {};
   }
 
-  private readonly demoContacts: Contact[] = [
-    {
-      username: 'Sarah Lin (Head of IR)',
-      role: 'MODERATOR',
-      online: true,
-      lastMessage: 'Welcome to the 2026 Annual Meeting Lounge! Please review the financial statements before voting.',
-      lastAt: new Date(Date.now() - 3600000).toISOString(),
-      unread: 1,
-    },
-    {
-      username: 'David Chen (Legal Counsel)',
-      role: 'MODERATOR',
-      online: true,
-      lastMessage: 'Quorum attestation is certified at 68.36%. Special Resolution #2 is currently open.',
-      lastAt: new Date(Date.now() - 7200000).toISOString(),
-      unread: 0,
-    },
-    {
-      username: 'Apex Shareholder Committee',
-      role: 'SHAREHOLDER',
-      online: false,
-      lastMessage: 'Proxy ballot recommendations have been uploaded to the governance portal.',
-      lastAt: new Date(Date.now() - 86400000).toISOString(),
-      unread: 0,
-    },
-  ];
-
   async loadContacts(): Promise<void> {
     try {
       const cs = await firstValueFrom(
         this.http.post<Contact[]>(`${this.base}/api/chat/list-contacts`, {}, { headers: this.headers }),
       );
-      if (cs && cs.length > 0) {
-        this.contacts.set(cs);
-        this.online.set(new Set(cs.filter((c) => c.online).map((c) => c.username)));
-      } else {
-        this.contacts.set(this.demoContacts);
-        this.online.set(new Set(this.demoContacts.filter((c) => c.online).map((c) => c.username)));
-      }
+      this.contacts.set(cs ?? []);
+      this.online.set(new Set((cs ?? []).filter((c) => c.online).map((c) => c.username)));
     } catch {
-      this.contacts.set(this.demoContacts);
-      this.online.set(new Set(this.demoContacts.filter((c) => c.online).map((c) => c.username)));
+      this.contacts.set([]);
+      this.online.set(new Set());
     }
   }
 
   async openThread(peer: string): Promise<void> {
     this.activePeer.set(peer);
     this.typingPeer.set(null);
+    this.sendError.set(null);
     try {
       const msgs = await firstValueFrom(
         this.http.post<ChatMessage[]>(`${this.base}/api/chat/load-thread`, { peer }, { headers: this.headers }),
       );
-      if (msgs && msgs.length > 0) {
-        this.messages.set(msgs);
-      } else if (peer !== AI_PEER) {
-        // Pre-populate with welcome message from peer
-        const demoMsg = this.demoContacts.find((c) => c.username === peer)?.lastMessage;
-        this.messages.set(
-          demoMsg
-            ? [
-                {
-                  id: 'demo-' + Date.now(),
-                  sender: peer,
-                  recipient: this.auth.username() ?? 'me',
-                  body: demoMsg,
-                  sentAt: new Date(Date.now() - 1800000).toISOString(),
-                  readAt: new Date().toISOString(),
-                  kind: 'USER',
-                },
-              ]
-            : [],
-        );
-      } else {
-        this.messages.set([]);
-      }
+      this.messages.set(msgs ?? []);
     } catch {
-      const demoMsg = this.demoContacts.find((c) => c.username === peer)?.lastMessage;
-      this.messages.set(
-        demoMsg
-          ? [
-              {
-                id: 'demo-' + Date.now(),
-                sender: peer,
-                recipient: this.auth.username() ?? 'me',
-                body: demoMsg,
-                sentAt: new Date(Date.now() - 1800000).toISOString(),
-                readAt: new Date().toISOString(),
-                kind: 'USER',
-              },
-            ]
-          : [],
-      );
+      this.messages.set([]);
     }
     this.loadContacts();
   }
 
   async send(body: string): Promise<void> {
     const peer = this.activePeer();
-    if (!peer) return;
+    if (!peer || !body.trim()) return;
+    this.sendError.set(null);
     try {
       const saved = await firstValueFrom(
         this.http.post<ChatMessage>(`${this.base}/api/chat/send-message`, { to: peer, body }, { headers: this.headers }),
       );
       this.messages.update((list) => [...list, saved]);
-    } catch {
-      // Offline / demo fallback: reflect sent message locally
-      const localMsg: ChatMessage = {
-        id: 'local-' + Date.now(),
-        sender: this.auth.username() ?? 'me',
-        recipient: peer,
-        body,
-        sentAt: new Date().toISOString(),
-        readAt: null,
-        kind: 'USER',
-      };
-      this.messages.update((list) => [...list, localMsg]);
+    } catch (err: any) {
+      this.sendError.set(`Message could not be delivered to ${peer}. Please check your connection.`);
+      throw err;
     }
   }
 
-  /** GenAI assistant turn: optimistically render my message, then the grounded reply. */
+  /** GenAI assistant turn: optimistically render my message, then the real grounded reply. */
   async askAi(body: string): Promise<void> {
+    this.sendError.set(null);
     const mine: ChatMessage = {
-      id: 'local-' + body.length + '-' + body.slice(0, 8),
+      id: 'local-' + Date.now() + '-' + body.slice(0, 8),
       sender: this.auth.username() ?? 'me',
       recipient: AI_PEER,
       body,
@@ -273,7 +199,7 @@ export class ChatService {
         this.http.post<AiChatResult>(`${this.base}/api/chat/ask-assistant`, { body }, { headers: this.headers }),
       );
       const reply: ChatMessage = {
-        id: 'ai-' + res.answer.length,
+        id: 'ai-' + Date.now(),
         sender: AI_PEER,
         recipient: this.auth.username() ?? 'me',
         body: res.answer,
@@ -284,69 +210,17 @@ export class ChatService {
       this.messages.update((list) => [...list, reply]);
       this.lastCitations.set(res.citations ?? []);
     } catch {
-      // Intelligent Grounded RAG Fallback using Apex Global Technologies 2026 Annual Report
-      const lower = body.toLowerCase();
-      let answerText = '';
-      let citationsList: Citation[] = [];
-
-      if (lower.includes('dividend')) {
-        answerText =
-          'The Board of Directors has recommended a final dividend of $2.40 per equity share for FY2026. The record date for shareholder entitlement is May 15, 2026, and electronic direct disbursement commences on June 2, 2026.';
-        citationsList = [
-          {
-            source: 'apex-annual-report-2026.pdf p.18',
-            snippet: 'Dividend Payout: Board recommends $2.40/share, payable June 2, 2026 to shareholders of record as of May 15, 2026.',
-          },
-        ];
-      } else if (lower.includes('buyback') || lower.includes('repurchase')) {
-        answerText =
-          'Special Resolution #2 authorizes the Company to repurchase up to $500,000,000 of ordinary shares via open-market operations over the next 12 months, funded from operational cash flow without debt incurrence.';
-        citationsList = [
-          {
-            source: 'apex-annual-report-2026.pdf p.34',
-            snippet: 'Capital Allocation: $500M open market share repurchase authorized to offset dilution and enhance EPS.',
-          },
-        ];
-      } else if (lower.includes('capex') || lower.includes('server') || lower.includes('ai') || lower.includes('margin')) {
-        answerText =
-          'Planned infrastructure CapEx for FY2026 is projected at $180M, dedicated to next-generation enterprise AI server deployment across North America. Management expects gross margins to stabilize between 58% and 61%.';
-        citationsList = [
-          {
-            source: 'apex-annual-report-2026.pdf p.27',
-            snippet: 'Data Infrastructure: $180M CapEx program targeted at high-density server clusters with expected margin payback in 6 quarters.',
-          },
-        ];
-      } else if (lower.includes('quorum') || lower.includes('vote') || lower.includes('voting')) {
-        answerText =
-          'Statutory Quorum for the 2026 AGM is certified at 68.36% (exceeding the 25% threshold). Ordinary resolutions require a simple majority (>50%), while Special Resolution #2 requires a 75% statutory majority.';
-        citationsList = [
-          {
-            source: 'statutory-scrutineer-charter-2026.pdf p.4',
-            snippet: 'Quorum Attestation: Validated against central share register. Threshold: 25.0%. Represented: 68.36%.',
-          },
-        ];
-      } else {
-        answerText =
-          'Apex Global Technologies reported FY2026 consolidated revenue of $1.42B (+24% YoY) with an operating profit margin of 21.8%. Strategic priorities emphasize expansion in enterprise cloud intelligence and rigorous capital returns.';
-        citationsList = [
-          {
-            source: 'apex-annual-report-2026.pdf p.8',
-            snippet: 'Financial Summary FY2026: Revenue $1.42B, Operating Income $310M, Free Cash Flow $265M.',
-          },
-        ];
-      }
-
-      const reply: ChatMessage = {
-        id: 'ai-demo-' + Date.now(),
+      const errorReply: ChatMessage = {
+        id: 'ai-err-' + Date.now(),
         sender: AI_PEER,
         recipient: this.auth.username() ?? 'me',
-        body: answerText,
+        body: 'The AI Assistant is currently connecting to the RAG knowledge service or the server is warming up. Please ensure the backend and AI microservice are running, then try asking again.',
         sentAt: new Date().toISOString(),
         readAt: null,
         kind: 'AI',
       };
-      this.messages.update((list) => [...list, reply]);
-      this.lastCitations.set(citationsList);
+      this.messages.update((list) => [...list, errorReply]);
+      this.lastCitations.set([]);
     }
   }
 
@@ -359,10 +233,7 @@ export class ChatService {
         this.http.post<ChatMessage[]>(`${this.base}/api/chat/load-thread`, { peer }, { headers: this.headers }),
       );
     } catch {
-      // In offline/demo mode, mark local messages read
-      this.messages.update((list) =>
-        list.map((m) => (m.recipient === peer && !m.readAt ? { ...m, readAt: new Date().toISOString() } : m)),
-      );
+      // Ignore background receipt failure
     }
   }
 }

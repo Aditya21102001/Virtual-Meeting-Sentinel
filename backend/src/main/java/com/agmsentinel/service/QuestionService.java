@@ -73,9 +73,9 @@ public class QuestionService {
         if (kafkaMode) {
             // Async ingest: append to the durable log and return immediately. The AI service
             // consumes + clusters it, and the scheduled board push (BoardRefreshScheduler)
-            // reflects the new/updated cluster to moderators. Auto-drafting hot clusters is
-            // handled inside the AI consumer in this mode.
-            kafkaProducer.getObject().publish(q.getId().toString(), req.text(), req.attendeeId(), req.weight());
+            // reflects the new/updated cluster to moderators.
+            kafkaProducer.getObject().publish(q.getId().toString(), req.text(), req.attendeeId(), req.weight(), q.getMeetingId());
+            broadcastBoard();
             return new IngestResult(q.getId().toString(), "pending", false, 0.0, 0);
         }
 
@@ -150,7 +150,7 @@ public class QuestionService {
             questions.save(q);
             try {
                 if (kafkaMode) {
-                    kafkaProducer.getObject().publish(q.getId().toString(), clean, "question-bank", weight);
+                    kafkaProducer.getObject().publish(q.getId().toString(), clean, "question-bank", weight, q.getMeetingId());
                 } else {
                     IngestResult result = ai.ingest(q.getId().toString(), clean, "question-bank",
                                                     weight, q.getMeetingId());

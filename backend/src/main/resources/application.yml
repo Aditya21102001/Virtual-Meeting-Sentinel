@@ -16,6 +16,10 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        max.block.ms: 3000
+        request.timeout.ms: 3000
+        delivery.timeout.ms: 5000
   # Google OAuth is intentionally NOT declared here: an empty client-id fails Spring's
   # validation. To enable "Sign in with Google" in production, set these env vars (Spring
   # auto-configures Google with its built-in provider defaults for endpoints + scopes):

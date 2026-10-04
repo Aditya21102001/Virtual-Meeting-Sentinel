@@ -283,7 +283,11 @@ export class PlayerHostService {
       const at = Number.isFinite(video.currentTime) ? Math.floor(video.currentTime) : 0;
       const id = this.card()?.video.id;
 
-      if (returningToTab && id) {
+      // Only navigate back to recordings if the viewer is not already on another interactive route (e.g. ask question, board, etc.)
+      const currentUrl = this.router.url;
+      const isOnActiveInteractivePage = currentUrl && currentUrl !== '/' && !currentUrl.startsWith('/recordings');
+
+      if (returningToTab && id && !isOnActiveInteractivePage) {
         // The recordings page reads `v` and `t` from its route snapshot, which is read once on
         // creation — correct here, because the viewer is by definition elsewhere when this fires.
         void this.router.navigate(['/recordings'], { queryParams: { v: id, t: Math.max(0, at) } });

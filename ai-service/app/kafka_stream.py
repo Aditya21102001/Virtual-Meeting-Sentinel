@@ -137,13 +137,18 @@ class KafkaIngestWorker:
         if not text:
             return
         vec = embeddings.embed_query(text)
-        result = clusterer.assign(text, vec, weight=float(payload.get("weight", 0.0)))
+        result = clusterer.assign(
+            text,
+            vec,
+            weight=float(payload.get("weight", 0.0)),
+            meeting_id=payload.get("meeting_id"),
+        )
 
         if self.ready:
             self.live += 1
-            # Auto-draft a freshly-hot cluster (best-effort; needs an LLM key). Skipped during
-            # replay so rebuilding history never floods the LLM.
-            if result.cluster.size == _HOT_CLUSTER_THRESHOLD and result.cluster.draft is None:
+            # Auto-draft on arrival if no answer exists yet (best-effort; needs an LLM key).
+            # Skipped during replay so rebuilding history never floods the LLM.
+            if result.cluster.draft is None:
                 self._auto_draft(result.cluster)
         else:
             self.rebuilt += 1

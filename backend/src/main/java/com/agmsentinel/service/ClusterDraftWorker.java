@@ -1,6 +1,7 @@
 package com.agmsentinel.service;
 
 import com.agmsentinel.config.DraftAsyncConfig;
+import com.agmsentinel.dto.Dtos.Citation;
 import com.agmsentinel.dto.Dtos.DraftResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
