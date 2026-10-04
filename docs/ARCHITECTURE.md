@@ -39,8 +39,9 @@ every major action. Read this to understand the system end to end.
 PlantUML sources live in [`docs/diagrams/`](diagrams/). Render them with
 `plantuml docs/diagrams/*.puml`, or paste a file into <https://www.plantuml.com/plantuml>.
 
-| Diagram | What it shows |
+| Diagram / Blueprint | What it shows |
 | --- | --- |
+| [`C4_ARCHITECTURE_BLUEPRINT.md`](C4_ARCHITECTURE_BLUEPRINT.md) | **Full C4 System Architecture Blueprint** — Context, Containers, Components, Sequence Flows, ADRs, and Security Architecture. |
 | [`class-diagram.puml`](diagrams/class-diagram.puml) | The AGM domain model and the services that own it, with the reasoning behind the awkward parts — why voting weight lives on `MeetingMember` and is copied into `Vote`, why merges are stored rather than kept in memory. |
 | [`flow-question-to-answer.puml`](diagrams/flow-question-to-answer.puml) | A question arriving, joining a topic, being drafted against the documents, and reaching the room — plus what a caller sees when the AI service is down. |
 | [`flow-auth.puml`](diagrams/flow-auth.puml) | Password sign-in, MFA, one-time-code recovery with the forced set-password step, and Google. |
@@ -196,53 +197,69 @@ Attendee (browser)        Backend (8080)                 AI service (8000)
      │  POST /api/questions/submit-question     │                              │
      │  {text, attendeeId} +JWT │                              │
      │─────────────────────────►│                              │
-     │                          │  save Question (H2)          │
+     │                          │  1. save Question (Postgres) │
+     │                          │     (durable record first)   │
+     │                          │                              │
+     │                          │  [HTTP mode: direct ingest]  │
      │                          │  POST /ingest {text,weight}  │
      │                          │─────────────────────────────►│
      │                          │                   embed(text) → 384-dim vector
      │                          │                   nearest cluster? merge : new
      │                          │  ◄─── {cluster_id,size,is_new,similarity}
-     │                          │  store cluster_id on Question │
+     │                          │  2. update cluster_id in DB  │
      │  ◄──── IngestResult ─────│                              │
-     │                          │  GET /clusters (ranked board)│
+     │                          │  3. off-thread auto-draft:   │
+     │                          │     POST /draft (background) │
+     │                          │─────────────────────────────►│
+     │                          │  4. GET /clusters (board)    │
      │                          │─────────────────────────────►│
      │                          │  ◄──── [ClusterView...] ─────│
-     │                          │  STOMP send → /topic/board    │
+     │                          │  5. STOMP send → /topic/board│
+     │                          │                              │
+     │                          │  [Kafka mode: event-sourced] │
+     │                          │  publish to questions.incoming
+     │                          │  (returns "pending" to SPA;  │
+     │                          │   AI consumes & clusters;    │
+     │                          │   refresh pushes to board)   │
      │                          │                              │
 Moderator board (subscribed to /topic/board) receives the update and re-renders live.
 ```
 
 Key points:
 
-- The attendee's POST returns immediately with _their_ cluster assignment.
+- The question is persisted durably to Postgres **before** any AI or message-broker call.
+- The attendee's POST returns immediately with _their_ cluster assignment (or "pending" in Kafka mode).
+- As soon as a new cluster arrives, `ClusterDraftWorker` enqueues an asynchronous `POST /draft` in the background so an LLM answer is prepared without delaying the attendee.
 - Separately, the backend pushes the **whole ranked board** to every moderator over WebSocket.
 - Signals in `board.service.ts` make the Angular view update with no zone.js.
 
 ---
 
-## Flow 2 — Draft a grounded answer (RAG) + citations
+## Flow 2 — Grounded answer (RAG) + citations
 
-What happens when a moderator clicks **Draft answer** (or a cluster auto-drafts when it gets hot).
+What happens when a cluster is drafted (automatically on arrival via `ClusterDraftWorker`, or when a moderator clicks **Draft answer**).
 
 ```
-Moderator            Backend                    AI service (rag.py)
-   │ POST /api/clusters/draft-answer │                    │
-   │──────────────────────────────►│  POST /draft       │
-   │                               │───────────────────►│
-   │                               │        embed(question)
-   │                               │        FAISS: top-k similar report chunks
-   │                               │        build prompt = chunks + question
-   │                               │        LLM (Groq) → concise answer
-   │                               │  ◄── {answer, citations:[{source,snippet}]}
-   │                               │   cache answer+citations ON the cluster
-   │  ◄──── DraftResult ───────────│                    │
-   │                               │  broadcast board (now includes citations)
+Moderator / Worker        Backend                    AI service (rag.py)
+   │ (Worker auto-triggers /      │                    │
+   │  Moderator clicks Draft)     │  POST /draft       │
+   │─────────────────────────────►│───────────────────►│
+   │                              │        embed(question)
+   │                              │        FAISS: top-k similar report chunks
+   │                              │        build prompt = chunks + question
+   │                              │        LLM (Groq / Gemini) → concise answer
+   │                              │  ◄── {answer, citations:[{source,snippet}]}
+   │                              │   cache answer+citations ON the cluster
+   │ ◄──── DraftResult / Board ───│                    │
+   │                              │  broadcast board (now includes citations)
 ```
 
 - **RAG = Retrieval-Augmented Generation**: the LLM only sees retrieved report passages, so it
   can't invent figures; each answer carries **citations** (`filename p.N` + snippet).
 - The draft + citations are **cached on the cluster**, so they ride along on the next board push
-  and appear for every moderator, not just the one who clicked.
+  and appear for every moderator, ready for review or immediate broadcast.
+- If the model is transiently rate-limited, `ClusterDraftWorker` retries with backoff; exhausted
+  clusters are marked `NEEDS_MANUAL` so moderators can type an answer.
 
 ---
 

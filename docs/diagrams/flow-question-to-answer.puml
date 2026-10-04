@@ -17,6 +17,7 @@ actor Attendee
 participant "Angular SPA" as SPA
 participant "Spring Boot" as API
 database "PostgreSQL" as DB
+queue "Kafka\n(questions.incoming)" as Kafka
 participant "AI service\n(FastAPI)" as AI
 actor Moderator
 
@@ -27,58 +28,46 @@ SPA -> API : POST /api/questions/submit-question
 activate API
 
 API -> API : MeetingScope.activeMeetingId()
-note right
-  Stamped whether or not the MEETINGS
-  feature is on. A question filed
-  without a meeting id can never be
-  put back into the right partition
-  later.
-end note
+API -> DB : INSERT question (status=RECEIVED, meeting_id)\n**Durable record saved first**
 
-API -> AI : POST /ingest\n{text, attendeeId, weight, meeting_id}
-activate AI
-AI -> AI : embed (all-MiniLM-L6-v2, 384 dims)
-AI -> AI : nearest centroid **within this meeting**
-note right of AI
-  Partitioned by meeting. Without it a
-  question at this year's AGM folds into
-  a topic from last year's — not untidy,
-  simply a wrong answer, and invisible
-  until somebody reads the board.
-end note
-AI --> API : {cluster_id, isNew}
-deactivate AI
+alt HTTP mode (synchronous)
+  API -> AI : POST /ingest\n{text, attendeeId, weight, meeting_id}
+  activate AI
+  AI -> AI : embed (384-dim) & find nearest centroid
+  AI --> API : {cluster_id, size, is_new}
+  deactivate AI
+  API -> DB : UPDATE question SET cluster_id = resolved
+  API --> SPA : {cluster_id, is_new} (attendee response)
+  API -> AI : POST /draft (async via ClusterDraftWorker)\n**LLM answer pre-drafted on arrival**
+else Kafka mode (event-sourced)
+  API -> Kafka : publish to questions.incoming
+  API --> SPA : {cluster_id: "pending"} (fast ack)
+  Kafka -> AI : consume question event
+  AI -> AI : embed & assign to cluster
+  AI -> AI : auto-draft if cluster new / un-drafted
+end
 
-API -> DB : INSERT question (cluster_id, meeting_id)
-API --> SPA : their own cluster assignment
 deactivate API
-SPA --> Attendee : "asked" / "merged with N others"
+SPA --> Attendee : "question submitted"
 
-note over SPA, Attendee
-  Returns immediately with **this** attendee's
-  result. The board catches up on its own.
-end note
+== Ranking & Live Board ==
 
-== Ranking ==
+API -> AI : GET /clusters?meeting_id=…\n(after ingest or via BoardRefreshScheduler)
+AI --> API : clusters ranked by log(1+size) × (1+weight) + draft
+API -> SPA : STOMP push /topic/board (WebSocket)\nAngular signals re-render live
 
-API -> AI : GET /clusters?meeting_id=…
-AI --> API : topics ranked by weight and count
-API -> SPA : board push (WebSocket)\nfallback poll every 45s — SILENT, no global loader
+== Reviewing & Publishing Answer ==
 
-== Answering ==
-
-Moderator -> SPA : picks a topic, asks for a draft
-SPA -> API : POST /api/clusters/draft-answer
-activate API
-API -> AI : POST /draft\n{cluster_id, question, meeting_id}
-activate AI
-AI -> AI : retrieve from FAISS,\n**filtered to this meeting + shared docs**
-AI -> AI : generate, grounded, with citations
-AI --> API : {answer, citations}
-deactivate AI
-API -> DB : UPSERT cluster_draft (published = false)
-API --> SPA : draft + citations
-deactivate API
+alt Pre-drafted on arrival (default)
+  Moderator -> SPA : views live board (grounded draft & citations ready)
+else Manual draft request
+  Moderator -> SPA : clicks "Draft answer"
+  SPA -> API : POST /api/clusters/draft-answer
+  API -> AI : POST /draft {cluster_id, question, meeting_id}
+  AI --> API : {answer, citations}
+  API -> DB : UPSERT cluster_draft (published = false)
+  API --> SPA : draft + citations
+end
 
 Moderator -> SPA : edits, then publishes
 SPA -> API : POST /api/room/publish-answer

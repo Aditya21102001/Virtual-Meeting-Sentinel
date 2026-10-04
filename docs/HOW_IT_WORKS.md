@@ -22,7 +22,7 @@ Attendee types question
    → save to Postgres
    → POST /ingest (Python): embed → nearest-centroid cluster (dedup at sim ≥ 0.78)
    → save clusterId back to Postgres
-   → if cluster size == 3: POST /draft → RAG (FAISS retrieve → LLM → cited answer)
+   → if new cluster (or no draft yet): POST /draft (async, off-thread) → RAG (FAISS retrieve → LLM → cited answer)
    → GET /clusters (top-20 ranked) → push to /topic/board (STOMP)
    → Angular signal updates → moderator's board re-renders live
    (+ scheduler re-pushes every 10s to catch late drafts & keep AI warm)
@@ -92,10 +92,14 @@ When an attendee types a question and hits submit:
    - Returns the cluster id, whether it was new, and the new cluster size.
 5. **Store the cluster link.** Backend saves the `clusterId` back onto the question row
    (`backend/.../service/QuestionService.java:38-39`).
-6. **Auto-draft hot clusters.** When a cluster's size hits exactly **3**
-   (`HOT_CLUSTER_THRESHOLD`), the backend fires a best-effort `POST /draft`
-   (`backend/.../service/QuestionService.java:42-48`). Drafting failures never break the
-   attendee's submission.
+6. **Auto-draft on arrival.** As soon as a cluster is created (or receives its first question
+   and has no draft yet), the backend fires a best-effort `POST /draft` **off the request thread**
+   via `ClusterDraftWorker` (`backend/.../service/ClusterDraftWorker.java`). This means an LLM
+   answer is ready before the second or third person asks the same thing. Subsequent questions that
+   fold into an existing draft skip the call — the answer is reused. Drafting failures (transient
+   model errors, cold starts) are retried with a widening backoff; exhausted clusters are flagged
+   `NEEDS_MANUAL` on the board so a moderator can write the answer. None of this can break the
+   attendee's submission — the question is already saved by this point.
 7. **Broadcast the board** (see Phase 4).
 
 ---

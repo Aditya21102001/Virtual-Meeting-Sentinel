@@ -137,11 +137,13 @@ UniquePersonalProject/
 ├── LICENSE                 ← MIT
 ├── docs/                   ← every other document lives here
 │   ├── PROJECT_DOCUMENTATION.md ← the formal project report
+│   ├── C4_ARCHITECTURE_BLUEPRINT.md ← comprehensive C4 system architecture blueprint
 │   ├── ARCHITECTURE.md          ← design, with per-flow sequence diagrams
 │   ├── HOW_IT_WORKS.md          ← complete end-to-end walkthrough
 │   ├── RUN_LOCAL.md             ← run it locally (exact commands)
 │   ├── DEPLOY.md                ← free-tier deployment, no credit card
 │   ├── MEETING_OPERATIONS.md    ← meetings, feature flags, voting, curation, the room, reports
+│   ├── PICTURE_IN_PICTURE.md    ← continuous video player & W3C PiP persistence
 │   ├── VIDEO_LIBRARY.md         ← recordings: storage modes, HLS segmentation, the player
 │   ├── VIDEO_MODULE_SPEC.md     ← portable spec: build this feature in another application
 │   ├── KAFKA.md                 ← Kafka ingest + event-sourced cluster rebuild

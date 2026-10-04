@@ -50,14 +50,14 @@ rebuilt + live clusters are the same singleton that `/clusters` and `/draft` ser
 | Layer | File | Change |
 |---|---|---|
 | AI config | `ai-service/app/config.py` | `kafka_bootstrap_servers`, `kafka_questions_topic`; `queue_mode` gains `kafka` |
-| AI worker | `ai-service/app/kafka_stream.py` | **new** — replay-then-live consumer, auto-draft, status |
+| AI worker | `ai-service/app/kafka_stream.py` | **new** — replay-then-live consumer, auto-draft, status; propagates `meeting_id` |
 | AI app | `ai-service/app/main.py` | start worker in lifespan when `queue_mode=kafka`; `GET /kafka/status` |
 | AI deps | `ai-service/requirements.txt` | `kafka-python==2.0.2` |
 | Backend | `backend/pom.xml` | `spring-kafka` dependency |
-| Backend | `backend/.../service/KafkaQuestionProducer.java` | **new** — produces to `questions.incoming` (active only in kafka mode) |
+| Backend | `backend/.../service/KafkaQuestionProducer.java` | **new** — produces to `questions.incoming` with `meeting_id` field |
 | Backend | `backend/.../service/QuestionService.java` | `submit()` / `submitBulk()` branch to Kafka when `queue.mode=kafka` |
-| Backend | `backend/src/main/resources/application.yml` | `queue.mode`, `spring.kafka.*` |
-| Infra | `docker-compose.yml` | `kafka` (KRaft, single-node) + `kafkadata` volume; env wired into both services |
+| Backend | `backend/src/main/resources/application.yml` | `queue.mode`, `spring.kafka.*`; **fail-fast timeouts**: `max.block.ms=3000`, `request.timeout.ms=3000`, `delivery.timeout.ms=5000` to prevent 60-second hangs when the broker is down |
+| Infra | `docker-compose.yml` | `kafka` (KRaft, single-node) + `kafkadata` volume; **dual listeners**: `PLAINTEXT://kafka:9092` for container-to-container, `PLAINTEXT_HOST://localhost:9093` for host-to-container (fixes `UnknownHostException` on the host) |
 | Infra | `.env.example` | documents `QUEUE_MODE=kafka`, `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_QUESTIONS_TOPIC` |
 
 The default is unchanged (`QUEUE_MODE=inproc`/`http`), so existing behaviour is untouched
@@ -122,9 +122,15 @@ always reproducible from Kafka.
   `cluster_id: "pending"` (the assignment happens asynchronously in the AI consumer). The board
   reflects the new cluster on the next scheduled push (`board.refresh-ms`, default 10s) — lower
   it for a snappier demo.
-- **Auto-draft** of hot clusters (size = 3) moves into the AI consumer in this mode
-  (`_HOT_CLUSTER_THRESHOLD` in `kafka_stream.py`), and is skipped during replay so rebuilding
-  history doesn't stampede the LLM.
+- **Auto-draft** moves into the AI consumer in this mode (`kafka_stream.py`), and is skipped
+  during replay so rebuilding history doesn't stampede the LLM.
+- **Fail-fast producer.** `max.block.ms=3000` / `request.timeout.ms=3000` in `application.yml`
+  mean the backend never hangs for Kafka's default 60 s when the broker is unreachable. An
+  unavailable broker surfaces as an error in seconds.
+- **Dual listeners in docker-compose.** Kafka advertises `PLAINTEXT://kafka:9092` for
+  container-to-container traffic and `PLAINTEXT_HOST://localhost:9093` for access from the
+  host (e.g. `kafka-console-consumer`). Without the host listener the Spring Boot app running
+  outside Docker gets an `UnknownHostException` when trying to reach `kafka:9092`.
 - **Single-node broker** with replication factor 1 — fine for dev/portfolio. Production would
   use a managed multi-broker cluster (e.g. Upstash Kafka / Confluent free tier) via the same
   `KAFKA_BOOTSTRAP_SERVERS`.

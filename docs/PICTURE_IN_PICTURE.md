@@ -148,13 +148,18 @@ pauses it.
 
 ```ts
 const returningToTab = !video.paused;
-if (returningToTab && videoId) {
+// Don't navigate away if the viewer is already on an interactive page (/ask, /board, etc.)
+const currentUrl = this.router.url;
+const isOnActiveInteractivePage = currentUrl && currentUrl !== '/' && !currentUrl.startsWith('/recordings');
+if (returningToTab && videoId && !isOnActiveInteractivePage) {
   void this.router.navigate(['/recordings'], { queryParams: { v: videoId, t: at } });
 }
 ```
 
 A heuristic, written to fail harmlessly: if it reads "closed", the player stops and the viewer stays
-where they are. Dragging somebody who just finished onto a video page is worse than making somebody
+where they are. The `isOnActiveInteractivePage` guard prevents the PiP exit from redirecting a
+moderator or attendee who has navigated to the board or the ask-question page while the video was
+floating. Dragging somebody who just finished onto a video page is worse than making somebody
 who wanted to return click once.
 
 Because the element was never unmounted, arriving back at the page re-anchors the *same* element,
