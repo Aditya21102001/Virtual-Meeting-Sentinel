@@ -40,6 +40,11 @@ export const routes: Routes = [
     path: 'help',
     loadComponent: () => import('./pages/help.component').then((m) => m.HelpComponent),
   },
+  // Architecture Blueprint. Accessible via direct URL for evaluators, architects, and technical reviewers.
+  {
+    path: 'architecture',
+    loadComponent: () => import('./pages/architecture.component').then((m) => m.ArchitectureComponent),
+  },
   // Shareholder Lounge: any signed-in member (chat + GenAI assistant).
   { path: 'chat', component: ChatComponent, canActivate: [authGuard] },
   // Meeting recordings: any signed-in member can watch on demand. Lazy-loaded so hls.js
