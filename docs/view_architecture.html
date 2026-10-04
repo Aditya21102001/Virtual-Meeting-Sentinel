@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Virtual Meeting Sentinel — C4 Architecture Blueprint</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --surface: #111827;
+      --surface-border: #1f2937;
+      --surface-hover: #1e293b;
+      --primary: #38bdf8;
+      --primary-glow: rgba(56, 189, 248, 0.15);
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --text-subtle: #64748b;
+      --accent: #818cf8;
+      --code-bg: #030712;
+      --card-bg: rgba(17, 24, 39, 0.7);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* Sidebar Navigation */
+    #sidebar {
+      width: 300px;
+      background: var(--surface);
+      border-right: 1px solid var(--surface-border);
+      position: fixed;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      overflow-y: auto;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      z-index: 50;
+    }
+
+    .brand {
+      padding: 0 8px 16px 8px;
+      border-bottom: 1px solid var(--surface-border);
+    }
+    .brand h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .brand .badge {
+      font-size: 0.65rem;
+      background: var(--primary-glow);
+      color: var(--primary);
+      border: 1px solid var(--primary);
+      padding: 2px 6px;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+
+    .toc-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-subtle);
+      padding: 0 8px;
+    }
+
+    .toc-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .toc-list a {
+      display: block;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.85rem;
+      padding: 6px 10px;
+      border-radius: 6px;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .toc-list a:hover {
+      color: var(--primary);
+      background: var(--surface-hover);
+    }
+
+    .sidebar-actions {
+      margin-top: auto;
+      padding-top: 16px;
+      border-top: 1px solid var(--surface-border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 12px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      border-radius: 6px;
+      border: 1px solid var(--surface-border);
+      background: var(--surface-hover);
+      color: var(--text);
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.15s ease;
+    }
+    .btn:hover {
+      background: var(--primary);
+      color: #0b0f19;
+      border-color: var(--primary);
+    }
+
+    /* Main Content */
+    #content-container {
+      margin-left: 300px;
+      flex: 1;
+      padding: 48px 64px 96px 64px;
+      max-width: 1200px;
+    }
+
+    #content {
+      background: transparent;
+    }
+
+    /* Typography & Markdown Styles */
+    h1, h2, h3, h4 {
+      color: #fff;
+      font-weight: 700;
+      margin-top: 1.8em;
+      margin-bottom: 0.6em;
+      scroll-margin-top: 24px;
+    }
+    h1 {
+      font-size: 2.2rem;
+      border-bottom: 1px solid var(--surface-border);
+      padding-bottom: 12px;
+      margin-top: 0;
+      background: linear-gradient(135deg, #fff 40%, var(--primary) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    h2 {
+      font-size: 1.5rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding-bottom: 8px;
+      color: #e2e8f0;
+    }
+    h3 {
+      font-size: 1.2rem;
+      color: var(--primary);
+    }
+
+    p {
+      margin-bottom: 1.2em;
+      color: var(--text-muted);
+      font-size: 0.98rem;
+    }
+
+    blockquote {
+      border-left: 4px solid var(--primary);
+      padding: 12px 18px;
+      background: var(--card-bg);
+      border-radius: 0 8px 8px 0;
+      margin: 1.5em 0;
+      color: #cbd5e1;
+    }
+
+    ul, ol {
+      margin-bottom: 1.4em;
+      padding-left: 24px;
+      color: var(--text-muted);
+    }
+    li {
+      margin-bottom: 0.4em;
+    }
+
+    strong {
+      color: #fff;
+    }
+
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.88em;
+      background: var(--code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: #38bdf8;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--surface-border);
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      margin: 1.5em 0;
+    }
+    pre code {
+      background: none;
+      padding: 0;
+      border: none;
+      color: #e2e8f0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1.8em 0;
+      font-size: 0.9rem;
+      background: var(--surface);
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--surface-border);
+    }
+    th, td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--surface-border);
+    }
+    th {
+      background: rgba(255, 255, 255, 0.03);
+      font-weight: 600;
+      color: #fff;
+    }
+    tr:last-child td {
+      border-bottom: none;
+    }
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Mermaid Diagrams Container */
+    .mermaid-wrapper {
+      background: #0d1322;
+      border: 1px solid var(--surface-border);
+      border-radius: 12px;
+      padding: 24px;
+      margin: 2em 0;
+      overflow-x: auto;
+      display: flex;
+      justify-content: center;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    }
+    .mermaid {
+      max-width: 100%;
+    }
+
+    @media print {
+      #sidebar { display: none; }
+      #content-container { margin-left: 0; padding: 0; }
+      body { background: #fff; color: #000; }
+      h1, h2, h3 { color: #000; }
+      .mermaid-wrapper { box-shadow: none; border: 1px solid #ccc; background: #fff; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation Sidebar -->
+  <aside id="sidebar">
+    <div class="brand">
+      <h1>Sentinel Arch <span class="badge">C4</span></h1>
+      <p style="font-size: 0.75rem; color: var(--text-subtle); margin: 4px 0 0 0;">Virtual Meeting Sentinel Blueprint</p>
+    </div>
+
+    <div class="toc-title">Table of Contents</div>
+    <ul class="toc-list" id="toc"></ul>
+
+    <div class="sidebar-actions">
+      <button class="btn" onclick="window.print()">🖨️ Print / Save as PDF</button>
+      <a class="btn" href="C4_ARCHITECTURE_BLUEPRINT.md" download>📥 Download Markdown</a>
+    </div>
+  </aside>
+
+  <!-- Main Blueprint Content -->
+  <main id="content-container">
+    <article id="content">Loading Architecture Blueprint...</article>
+  </main>
+
+  <script id="blueprint-markdown" type="text/markdown">
+# Virtual Meeting Sentinel — Comprehensive C4 Architectural Blueprint
+
+> **System Scope**: Real-time crowd-question intelligence, semantic deduplication, grounded RAG answering, secure voting governance, and adaptive HLS video streaming for Annual General Meetings (AGM) and large-scale corporate assemblies.
+
+---
+
+## 1. Executive Summary & Design Principles
+
+During an Annual General Meeting with up to 10,000+ live participants, hundreds of questions arrive per minute. 60–70% are semantically duplicate inquiries ("What about the dividend?", "Will dividends increase this year?", "Payout ratio update?"). Human chairs and moderators cannot triage this flood manually without delaying meeting proceedings.
+
+**Virtual Meeting Sentinel** provides:
+1. **Instant Semantic Clustering & Deduplication**: Groups identical intents via incremental nearest-centroid clustering in vector space (cosine similarity >= 0.78) rather than naive keyword matching.
+2. **Deterministic & Grounded RAG Answering**: Answers top clusters using FAISS vector retrieval strictly confined to uploaded annual reports and regulatory filings, citing exact documents and pages without hallucination.
+3. **Automated Background Drafting**: As soon as a question or cluster arrives, background workers (`ClusterDraftWorker`) trigger drafting off the request thread, ensuring moderators see pre-grounded answers immediately.
+4. **Resilient Dual Ingestion Pipeline**: Supports both low-latency synchronous HTTP and event-sourced Apache Kafka streaming (`questions.incoming`), resilient against downstream AI hiccups.
+5. **Legally Compliant Two-Phase Voting**: Enforces role boundaries, verified shareholder equity weighting, and secret balloting.
+6. **Adaptive HLS Video Distribution with Persistent PiP**: Multi-rendition video transcode with DOM-anchored Picture-in-Picture that survives page transitions without exiting.
+
+---
+
+## 2. C4 Level 1 — System Context
+
+The System Context diagram details how Virtual Meeting Sentinel interacts with human roles and third-party external services.
+
+```mermaid
+C4Context
+    title System Context Diagram — Virtual Meeting Sentinel
+
+    Person(attendee, "Attendee / Shareholder", "Submits questions, casts weighted votes on resolutions, watches live meeting and video archive.")
+    Person(moderator, "Moderator / Chair", "Reviews real-time clustered questions, curates/merges topics, reviews grounded LLM answers, publishes answers to the room, opens ballots.")
+    Person(admin, "System Administrator", "Uploads regulatory documents/PDFs, manages recordings, configures meeting scopes, audits system logs.")
+
+    System(sentinel, "Virtual Meeting Sentinel", "Clusters live questions, auto-drafts cited answers via RAG, streams live board, manages ballots, and streams HLS recordings.")
+
+    System_Ext(google_auth, "Google Identity Services", "OAuth 2.0 / OpenID Connect authentication provider.")
+    System_Ext(brevo, "Brevo (Sendinblue)", "Transactional email and SMS gateway for OTP and MFA challenges.")
+    System_Ext(llm_gateway, "LLM Inference Provider", "Groq (Llama-3.3-70b) / Google Gemini / Azure OpenAI for grounded RAG drafting.")
+    System_Ext(storage_nas, "NAS / Shared Storage", "Stores source annual report PDFs, raw MP4 recordings, HLS segments (.ts), and seek filmstrips.")
+
+    Rel(attendee, sentinel, "Asks questions, casts votes, watches stream", "HTTPS / WSS")
+    Rel(moderator, sentinel, "Triages clusters, publishes answers, conducts voting", "HTTPS / WSS")
+    Rel(admin, sentinel, "Uploads reports, monitors system health", "HTTPS")
+
+    Rel(sentinel, google_auth, "Validates OAuth tokens", "HTTPS / REST")
+    Rel(sentinel, brevo, "Dispatches OTP / MFA codes", "HTTPS / REST")
+    Rel(sentinel, llm_gateway, "Drafts answers against report context", "HTTPS / REST")
+    Rel(sentinel, storage_nas, "Reads/writes video segments and PDF reports", "POSIX / SMB")
+```
+
+---
+
+## 3. C4 Level 2 — Container Architecture
+
+The Container diagram illustrates the high-level technology choices, container boundaries, and inter-service communication protocols.
+
+```mermaid
+C4Container
+    title Container Diagram — Virtual Meeting Sentinel
+
+    Person(user, "User (Attendee / Moderator / Admin)", "Accesses the platform via modern web browser")
+
+    Container(spa, "Single Page Application (SPA)", "Angular 19+, TypeScript, Signals, Tailwind/CSS, HLS.js, StompJS", "Provides real-time UI, live board updates, reactive voting, and PiP-preserved video playback.")
+
+    Container(api, "Core Backend Gateway & Engine", "Java 17/21, Spring Boot 3.x, Spring Security, Spring Data JPA, Spring WebSocket", "Handles authentication, RBAC/MFA, meeting scopes, durable storage, WebSocket STOMP broadcasting, voting transactions, and video transcode orchestration.")
+
+    Container(ai_service, "AI Intelligence Service", "Python 3.11, FastAPI, PyTorch/ONNX, LangChain, FAISS, sentence-transformers", "Executes 384-dimensional text embeddings, online nearest-centroid clustering, vector similarity search, and cited RAG drafting.")
+
+    ContainerQueue(kafka, "Message Broker / Event Stream", "Apache Kafka (KRaft), Topic: questions.incoming", "Provides durable, ordered, event-sourced question ingestion buffer.")
+
+    ContainerDb(postgres, "Relational Database", "PostgreSQL 15+", "Persists user identities, credentials, questions, cluster metadata, resolutions, votes, and video catalog/segment indices.")
+
+    ContainerDb(nas_storage, "Media & Document Storage", "Local Filesystem / NAS Share", "Stores corporate report PDFs, transcode workdir, HLS ladders (1080p, 720p, 480p, 360p), and VTT seek thumbnails.")
+
+    Rel(user, spa, "Interacts with", "HTTPS")
+    Rel(spa, api, "REST API calls & Authentication", "HTTPS / JSON (Port 8080)")
+    Rel(spa, api, "Live board & room events", "WSS / STOMP over SockJS (/ws)")
+
+    Rel(api, postgres, "Reads and writes transactional entities", "JDBC / SQL (Port 5432)")
+    Rel(api, nas_storage, "Writes media files, reads HLS chunks", "POSIX File I/O")
+
+    Rel(api, kafka, "Publishes incoming questions (Kafka mode)", "Kafka Protocol (Port 9092 / 9093)")
+    Rel(kafka, ai_service, "Consumes questions for streaming clustering", "Kafka Consumer Protocol")
+
+    Rel(api, ai_service, "Direct ingest, drafting, semantic search", "HTTP / REST (Port 8000)")
+    Rel(ai_service, nas_storage, "Loads and indexes regulatory PDFs", "File I/O")
+```
+
+### Container Responsibility Matrix
+
+| Container | Runtime | Primary Responsibilities | Scaling Strategy |
+|---|---|---|---|
+| **Frontend SPA** | Nginx / Vercel / Cloudflare | Reactive UI, Signal state, DOM-level `<video>` coordination, WebSocket subscription | Static Edge CDN cache |
+| **Spring Boot Core** | JVM (Container / VM) | Session verification, Question persistence, STOMP fan-out, Video laddering, Voting integrity | Horizontal stateless replicas with Redis STOMP relay |
+| **Python AI Service** | Uvicorn / FastAPI | Vector embedding (`all-MiniLM-L6-v2`), online centroid clustering, LangChain FAISS retrieval | Replicated workers with shared FAISS index or pgvector |
+| **Apache Kafka** | KRaft mode | Ingest queue decoupling, durability, event replay on boot | Partitioning by `meeting_id` |
+| **PostgreSQL** | Managed Postgres | Canonical source of truth for users, questions, cluster curation, ballots | Read replicas for analytics, primary for writes |
+
+---
+
+## 4. C4 Level 3 — Component Diagrams
+
+### 4.1 Backend Core Components (`backend`)
+
+```mermaid
+graph TD
+    subgraph Spring_Boot_Application ["Spring Boot Core Service"]
+        subgraph Security_Boundary ["Security & Identity"]
+            JWT[JwtAuthFilter]
+            AuthCtrl[AuthController]
+            AuthSvc[AuthService]
+            TotpSvc[TotpService]
+            WebAuthn[WebAuthnService]
+        end
+
+        subgraph Ingestion_Pipeline ["Question Ingestion & Clustering"]
+            QCtrl[QuestionController]
+            QSvc[QuestionService]
+            KafkaProd[KafkaQuestionProducer]
+            DraftWorker[ClusterDraftWorker]
+            DraftSvc[ClusterDraftService]
+            CurationSvc[ClusterCurationService]
+            AiClnt[AiClient]
+            BoardSched[BoardRefreshScheduler]
+        end
+
+        subgraph Voting_Engine ["Voting & Ballots"]
+            VoteCtrl[VotingController]
+            VoteSvc[VotingService]
+        end
+
+        subgraph Video_Subsystem ["HLS Video Library"]
+            VidCtrl[VideoController]
+            VidAdmin[VideoAdminController]
+            VidLibSvc[VideoLibraryService]
+            VidProcWorker[VideoProcessingWorker]
+            VidTranscode[VideoTranscodeService]
+            VidStore[VideoStorageService]
+            TicketSvc[PlaybackTicketService]
+        end
+
+        subgraph Realtime_Broker ["WebSocket Broker"]
+            WSConfig[WebSocketConfig]
+            MsgTemplate[SimpMessagingTemplate]
+        end
+    end
+
+    QCtrl --> QSvc
+    QSvc --> KafkaProd
+    QSvc --> AiClnt
+    QSvc --> DraftWorker
+    DraftWorker --> AiClnt
+    DraftWorker --> MsgTemplate
+    BoardSched --> AiClnt
+    BoardSched --> MsgTemplate
+    QSvc --> CurationSvc
+    VoteCtrl --> VoteSvc
+    VidAdmin --> VidLibSvc
+    VidLibSvc --> VidProcWorker
+    VidProcWorker --> VidTranscode
+    VidCtrl --> TicketSvc
+    VidCtrl --> VidStore
+```
+
+### 4.2 Python AI Service Components (`ai-service`)
+
+```mermaid
+graph TD
+    subgraph FastAPI_AI_Service ["FastAPI AI Service"]
+        API_Router[main.py Endpoints]
+
+        subgraph Clustering_Engine ["Online Centroid Clustering"]
+            Clusterer[OnlineClusterer]
+            CentroidStore[(In-Memory Cluster Centroids)]
+        end
+
+        subgraph Embedding_Engine ["Vector Embeddings"]
+            Embedder[sentence-transformers: all-MiniLM-L6-v2]
+        end
+
+        subgraph RAG_Engine ["Grounded Answering (RAG)"]
+            RAGChain[LangChain Grounded Chain]
+            FAISSStore[(FAISS Vector Index)]
+            DocLoader[PDF Chunk Resolver]
+            LLMGateway[LLM Provider: Groq / Gemini]
+        end
+
+        subgraph Kafka_Worker ["Event Stream Consumer"]
+            KafkaStream[kafka_stream.py Replay & Live Consumer]
+        end
+    end
+
+    API_Router --> Clusterer
+    API_Router --> RAGChain
+    KafkaStream --> Clusterer
+    KafkaStream --> RAGChain
+    Clusterer --> Embedder
+    Clusterer --> CentroidStore
+    RAGChain --> Embedder
+    RAGChain --> FAISSStore
+    RAGChain --> LLMGateway
+    DocLoader --> FAISSStore
+```
+
+### 4.3 Frontend Reactive Components (`frontend`)
+
+```mermaid
+graph TD
+    subgraph Angular_SPA ["Angular 19+ Reactive Frontend"]
+        subgraph Services ["Core Services (Signals & Inversion of Control)"]
+            AuthService[AuthService: JWT, Session, Role Signal]
+            BoardService[BoardService: STOMP Client, Top Clusters Signal]
+            PlayerHostService[PlayerHostService: Document-level Video Positioning & PiP Heuristics]
+            VideoService[VideoService: HLS Quality, Upload & Manifests]
+            VotingService[VotingService: Active Resolution & Ballot Signals]
+        end
+
+        subgraph Presentational_Pages ["Routable Component Pages"]
+            AttendeeComp[AttendeeComponent: Submit Question, Feedback]
+            BoardComp[BoardComponent: Ranked Clusters, Draft Inspection, Publishing]
+            VideoPlayerComp[VideoPlayerComponent: HLS.js custom controls]
+            VotingComp[VotingComponent: Resolution Ballot & Results]
+            LoungeComp[LoungeComponent: Chat & Pre-meeting Activity]
+        end
+
+        AppComp[AppComponent: Top-level Host of Universal Video Element]
+    end
+
+    AppComp --> PlayerHostService
+    VideoPlayerComp --> PlayerHostService
+    BoardComp --> BoardService
+    AttendeeComp --> AuthService
+    VotingComp --> VotingService
+    VideoPlayerComp --> VideoService
+```
+
+---
+
+## 5. C4 Level 4 — Detailed Operational Workflows
+
+### 5.1 Real-Time Question Ingest, Dedup, and Background Drafting
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Attendee
+    participant SPA as Angular SPA
+    participant API as Spring Boot API
+    participant DB as PostgreSQL
+    participant Kafka as Kafka (questions.incoming)
+    participant AI as AI Service (FastAPI)
+    participant Worker as ClusterDraftWorker
+    participant STOMP as WebSocket /topic/board
+    actor Moderator
+
+    Attendee->>SPA: Types question: "Will dividends increase?"
+    SPA->>API: POST /api/questions/submit-question
+    Note over API: 1. Audit safety: Persist raw question first
+    API->>DB: INSERT INTO questions (status='RECEIVED', meeting_id, text)
+
+    alt Mode A: HTTP Synchronous Ingest
+        API->>AI: POST /ingest {text, attendee_id, weight, meeting_id}
+        AI->>AI: Embed text (384-dim)
+        AI->>AI: Calculate cosine similarity against existing meeting centroids
+        alt Sim >= 0.78
+            AI-->>API: {cluster_id, is_new: false, size: N+1}
+        else Sim < 0.78
+            AI-->>API: {cluster_id: new_uuid, is_new: true, size: 1}
+        end
+        API->>DB: UPDATE questions SET cluster_id = :cluster_id
+        API-->>SPA: Return IngestResult to Attendee
+        API->>Worker: enqueue(cluster_id, text, meeting_id)
+        Worker-->>AI: POST /draft (Async off-thread)
+        AI->>AI: FAISS retrieval -> LLM answer with citations
+        AI-->>Worker: {draft_answer, citations}
+        Worker->>STOMP: Broadcast updated board
+    else Mode B: Kafka Event Stream
+        API->>Kafka: publish(question_id, text, attendee_id, weight)
+        API-->>SPA: Return IngestResult {cluster_id: 'pending'}
+        Kafka->>AI: Consumer pulls question event
+        AI->>AI: Embed, assign centroid, and trigger auto-draft
+    end
+
+    STOMP-->>Moderator: Real-time board update with cited answer
+```
+
+### 5.2 Picture-in-Picture & Safe Route Transitions
+
+To prevent browser W3C Picture-in-Picture sessions from aborting on navigation, the application strictly adheres to the following DOM layout:
+
+```
+[Document Root / AppComponent]
+  |-- <header> Global Navigation </header>
+  |-- <main> <router-outlet /> </main>   <-- Pages mount/unmount here (/ask, /board, /voting)
+  \-- <div class="player-host">
+        \-- <video #globalPlayer>       <-- NEVER unmounted; absolute positioned by PlayerHostService
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> InPlayerRoute: Navigate to /recordings?v=XYZ
+    InPlayerRoute --> FloatingPiP: User navigates away to /ask or /board
+    FloatingPiP --> InteractiveWork: User types question or moderates board
+    InteractiveWork --> PiPClosedOrReturned: PiP window clicked or closed
+    
+    state PiPClosedOrReturned {
+        [*] --> CheckCurrentRoute
+        CheckCurrentRoute --> StayOnCurrentPage: Current route is active interactive page (/ask, /board)
+        CheckCurrentRoute --> NavigateBackToVideo: Current route was idle/welcome
+    }
+```
+
+---
+
+## 6. Architectural Decision Records (ADRs)
+
+### ADR-01: Polyglot Microservices Architecture
+* **Context**: Need high-concurrency WebSocket broadcast, enterprise role-based security, and native AI/vector math.
+* **Decision**: 
+  - **Angular 19+**: Chosen for compile-time type safety, Signals-based zoneless reactivity, and real-time board rendering.
+  - **Spring Boot 3.x**: Chosen for enterprise security (JWT, BCrypt, WebAuthn, TOTP), transactional data integrity, and multi-threaded WebSocket fan-out.
+  - **Python FastAPI**: Chosen because the PyTorch, LangChain, FAISS, and sentence-transformers ecosystem natively resides in Python.
+* **Consequences**: Requires well-defined HTTP/Kafka contracts between Java and Python.
+
+### ADR-02: Document-Level `<video>` Preservation for PiP
+* **Context**: Moving a `<video>` element across DOM hierarchies or unmounting it during Angular route changes causes the browser W3C PiP implementation to automatically terminate the picture-in-picture window.
+* **Decision**: The `<video>` tag is mounted once at the `AppComponent` root and positioned over placeholder rectangles in `VideoPlayerComponent` using document coordinates.
+* **Consequences**: Smooth PiP multitasking across tabs; requires coordinate synchronization on window resize.
+
+### ADR-03: Durable Persistence Before Messaging
+* **Context**: If Kafka or AI services experience transient network disconnects, questions submitted by shareholders could be permanently lost.
+* **Decision**: All question submissions are written to PostgreSQL with status `RECEIVED` **prior** to invoking Kafka or HTTP ingest.
+* **Consequences**: Zero question loss under network partition; ingestion can always be replayed.
+
+### ADR-04: Fail-Fast Messaging Configuration
+* **Context**: Default Kafka producer timeout in Spring is 60 seconds. A broker outage would lock HTTP worker threads, leading to thread pool exhaustion and cascading failures.
+* **Decision**: Configured `max.block.ms=3000`, `request.timeout.ms=3000`, and `delivery.timeout.ms=5000` with dual listener configuration (`PLAINTEXT` and `PLAINTEXT_HOST`).
+* **Consequences**: Failures surface in <3 seconds without exhausting server threads.
+
+### ADR-05: Off-Thread LLM Answering on Cluster Creation
+* **Context**: LLM inference takes 1.5–4.0 seconds. Blocking attendee submission for drafting degrades user experience. Waiting for moderators to manually click "Draft" causes delay in high-velocity meetings.
+* **Decision**: `ClusterDraftWorker` auto-triggers drafting asynchronously in the background as soon as a cluster is initialized.
+* **Consequences**: Answers are pre-grounded with citations before moderators even open the card.
+
+---
+
+## 7. Security Architecture & Threat Model
+
+```mermaid
+flowchart LR
+    subgraph Untrusted_Zone ["Untrusted Public Network"]
+        Client[Browser / Client]
+    end
+
+    subgraph DMZ ["Edge / Reverse Proxy"]
+        SSL[TLS Termination & CORS]
+    end
+
+    subgraph Trust_Zone_1 ["Application Layer (Spring Boot)"]
+        Filter[JwtAuthFilter]
+        RBAC[Spring Security RBAC]
+        RateLimit[Rate Limiter]
+    end
+
+    subgraph Trust_Zone_2 ["Internal Services"]
+        DB[(PostgreSQL)]
+        AI_SVC[FastAPI AI]
+        Kafka_Bus[Kafka Broker]
+    end
+
+    Client -->|HTTPS / WSS| SSL
+    SSL --> Filter
+    Filter --> RateLimit
+    RateLimit --> RBAC
+    RBAC --> DB
+    RBAC --> AI_SVC
+    RBAC --> Kafka_Bus
+```
+
+1. **Authentication**: Stateless HMAC-SHA256 JWT tokens with role claims (`ATTENDEE`, `SHAREHOLDER`, `MODERATOR`, `ADMIN`).
+2. **Two-Factor Authentication**: TOTP RFC 6238 and FIDO2/WebAuthn hardware passkeys for administrative and moderator actions.
+3. **Voting Non-Repudiation**: Ballots require authenticated `SHAREHOLDER` tokens with server-verified shareholding weights copied at ballot casting time, preventing retrospective vote tampering.
+4. **Media Security**: Video recordings use short-lived, video-scoped HMAC playback tickets (`PlaybackTicketService`), preventing direct unauthorized hotlinking of NAS media bytes.
+
+---
+
+## 8. Summary Topology & Verification
+
+| Metric | Specification | Verification Method |
+|---|---|---|
+| **Max Concurrent WebSocket Listeners** | 10,000+ | Non-blocking STOMP topic broadcast |
+| **Dedup Cosine Threshold** | 0.78 (`all-MiniLM-L6-v2`) | Unit tested in `test_clustering.py` |
+| **Max RAG Answer Length** | 120 words | Prompt constraint in `rag.py` |
+| **Kafka Broker Failover Time** | <= 3000 ms | Spring Kafka producer timeout config |
+| **Video Ladder Bitrates** | 1080p (4.5M), 720p (2.2M), 480p (800k), 360p (400k) | Verified via FFmpeg transcode pipeline |
+  </script>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      // Initialize Mermaid with sleek dark theme
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: 'dark',
+        themeVariables: {
+          darkMode: true,
+          background: '#0d1322',
+          primaryColor: '#38bdf8',
+          primaryTextColor: '#f8fafc',
+          primaryBorderColor: '#0284c7',
+          lineColor: '#64748b',
+          secondaryColor: '#6366f1',
+          tertiaryColor: '#1e293b'
+        },
+        securityLevel: 'loose'
+      });
+
+      const rawMarkdown = document.getElementById('blueprint-markdown').textContent;
+      
+      // Custom renderer for marked to intercept mermaid codeblocks
+      const renderer = new marked.Renderer();
+      const originalCodeRenderer = renderer.code.bind(renderer);
+
+      renderer.code = function(code, language) {
+        if (language === 'mermaid') {
+          return `<div class="mermaid-wrapper"><pre class="mermaid">${code}</pre></div>`;
+        }
+        return originalCodeRenderer(code, language);
+      };
+
+      // Parse markdown to HTML
+      const contentEl = document.getElementById('content');
+      contentEl.innerHTML = marked.parse(rawMarkdown, { renderer });
+
+      // Render Mermaid diagrams
+      await mermaid.run({
+        nodes: document.querySelectorAll('.mermaid')
+      });
+
+      // Build Table of Contents
+      const tocEl = document.getElementById('toc');
+      const headings = contentEl.querySelectorAll('h2');
+      headings.forEach((h, index) => {
+        const id = 'sec-' + index;
+        h.id = id;
+        const li = document.createElement('li');
+        const a = document.createElement('a');
+        a.href = '#' + id;
+        a.textContent = h.textContent.replace(/^[0-9\.\s]+/, '').trim();
+        li.appendChild(a);
+        tocEl.appendChild(li);
+      });
+    });
+  </script>
+</body>
+</html>
