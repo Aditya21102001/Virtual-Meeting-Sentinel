@@ -1,4 +1,4 @@
-﻿import { DatePipe, DecimalPipe } from '@angular/common';
+import { DatePipe, DecimalPipe } from '@angular/common';
 import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { AuthService } from '../services/auth.service';
 import { DemoMeetingService } from '../services/demo-meeting.service';
@@ -703,6 +703,44 @@ import {
         .tally,
         .withheld {
           padding-left: 0;
+        }
+        .page-head {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 10px;
+        }
+        .live-pill {
+          margin-left: 0;
+        }
+        .ballot {
+          gap: 8px;
+        }
+        .pill-radio {
+          flex: 1 1 auto;
+        }
+        .pill {
+          width: 100%;
+          justify-content: center;
+          padding: 10px 12px;
+        }
+        .chair {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .chair button {
+          width: 100%;
+        }
+      }
+
+      @media (max-width: 440px) {
+        .quorum {
+          flex-direction: column;
+          text-align: center;
+          align-items: center;
+        }
+        .pill-radio {
+          flex: 1 1 100%;
+          width: 100%;
         }
       }
     `,

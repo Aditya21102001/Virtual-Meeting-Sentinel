@@ -217,6 +217,27 @@ import { RoomService, TopicView } from '../services/room.service';
         padding-top: 10px;
         border-top: 1px solid rgba(128, 128, 128, 0.2);
       }
+      @media (max-width: 640px) {
+        .voice-btn,
+        button:not(.sample-chip) {
+          min-height: 44px;
+        }
+        .counts {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 6px;
+        }
+        .support {
+          width: 100%;
+          text-align: center;
+        }
+      }
+      @media (max-width: 480px) {
+        .sample-chip {
+          flex: 1 1 auto;
+          text-align: center;
+        }
+      }
     `,
   ],
 })

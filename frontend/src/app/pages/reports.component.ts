@@ -480,6 +480,38 @@ import { DemoMeetingService } from '../services/demo-meeting.service';
         color: var(--muted);
       }
 
+      /* ---- Mobile Responsive Styles ---- */
+      @media (max-width: 640px) {
+        .picker {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 10px;
+        }
+        .picker select,
+        .btn-print,
+        .btn-download {
+          width: 100%;
+        }
+        .certificate-card {
+          padding: 18px 14px;
+        }
+        .cert-header {
+          flex-direction: column;
+          gap: 10px;
+        }
+        .cert-title-group {
+          min-width: 0;
+          width: 100%;
+        }
+        .cert-metrics-row {
+          grid-template-columns: 1fr;
+          gap: 10px;
+        }
+        .stats {
+          gap: 16px;
+        }
+      }
+
       /* Print Styles for Executive Briefing */
       @media print {
         .back-link,

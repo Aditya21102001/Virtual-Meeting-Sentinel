@@ -292,6 +292,13 @@ import { FaqEntry, FaqSection, HELP_SECTIONS } from '../components/help-content'
         text-align: center;
       }
 
+      @media (max-width: 480px) {
+        .link-card {
+          width: 100%;
+          min-width: 0;
+        }
+      }
+
       @media (prefers-reduced-motion: reduce) {
         .chev,
         .link-card {

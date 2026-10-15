@@ -861,6 +861,84 @@ import { DemoMeetingService, EnrichedClusterView } from "../services/demo-meetin
       .next-start-btn:hover {
         background: #d97706;
       }
+
+      /* ---- Responsive Media Queries ---- */
+      @media (max-width: 640px) {
+        .radar-card {
+          padding: 16px 14px;
+        }
+        .radar-top {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 12px;
+        }
+        .radar-quick-actions {
+          width: 100%;
+        }
+        .quick-btn {
+          flex: 1 1 auto;
+          text-align: center;
+        }
+        .stage-floor-card {
+          padding: 16px 14px;
+        }
+        .stage-header-row {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 10px;
+        }
+        .stage-actions {
+          width: 100%;
+        }
+        .stage-pub-btn,
+        .stage-advance-btn {
+          flex: 1 1 auto;
+          text-align: center;
+        }
+        .stage-question {
+          font-size: clamp(16px, 4.5vw, 19px);
+        }
+        .next-topic-banner {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 10px;
+        }
+        .next-start-btn {
+          width: 100%;
+        }
+        .merge-into select {
+          max-width: 100%;
+          width: 100%;
+        }
+        .cluster-card .row > button {
+          flex: 1 1 calc(50% - 6px);
+          min-width: 120px;
+          font-size: 12px;
+          padding: 8px 8px;
+          text-align: center;
+        }
+      }
+
+      @media (max-width: 440px) {
+        .radar-stats-grid {
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+        }
+        .sentiment-metric {
+          grid-column: 1 / -1;
+        }
+        .radar-filters {
+          gap: 6px;
+        }
+        .filter-chip {
+          padding: 4px 10px;
+          font-size: 11px;
+        }
+        .cluster-card .row > button {
+          flex: 1 1 100%;
+          width: 100%;
+        }
+      }
     `,
   ],
 })

@@ -558,12 +558,14 @@ import { DemoMeetingService } from "./services/demo-meeting.service";
         display: flex;
         align-items: center;
         gap: 12px;
-        padding: 14px 22px;
+        padding: 14px 20px;
         border-radius: 12px;
         background: var(--card);
         border: 1px solid #334155;
         box-shadow: 0 16px 44px #0009;
         font-weight: 600;
+        max-width: calc(100vw - 32px);
+        box-sizing: border-box;
       }
       .blocking-spinner {
         width: 16px;
@@ -847,29 +849,45 @@ import { DemoMeetingService } from "./services/demo-meeting.service";
           margin-left: 0;
         }
         .nav-bar {
-          padding: 12px 16px;
+          padding: 10px 14px;
+          gap: 8px;
+        }
+        .brand {
+          font-size: 14px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          min-width: 0;
         }
         /* The title is the useful part on a phone; the pill chrome is not worth the width. */
         .live-meeting {
-          max-width: 38vw;
-          padding: 4px 9px;
+          max-width: 32vw;
+          padding: 3px 8px;
+          font-size: 11px;
         }
         .nav-toggle {
           display: block;
+          padding: 6px 10px;
+          min-width: 44px;
+          min-height: 44px;
         }
         .nav-links {
           display: none;
           flex-direction: column;
           align-items: flex-start;
-          gap: 4px;
-          padding: 0 16px 12px;
+          gap: 2px;
+          padding: 0 14px 14px;
+          max-height: calc(100dvh - 60px);
+          overflow-y: auto;
         }
         .nav-links.open {
           display: flex;
         }
         .nav-links a {
-          padding: 10px 0;
+          padding: 12px 0;
           width: 100%;
+          min-height: 44px;
+          display: flex;
+          align-items: center;
           border-bottom: 1px solid #33415533;
         }
         .nav-spacer {
@@ -892,7 +910,7 @@ import { DemoMeetingService } from "./services/demo-meeting.service";
         .menu.flat .menu-trigger {
           width: 100%;
           justify-content: flex-start;
-          padding: 12px 0 6px;
+          padding: 14px 0 6px;
           font-size: 11px;
           text-transform: uppercase;
           letter-spacing: 0.04em;
@@ -904,7 +922,10 @@ import { DemoMeetingService } from "./services/demo-meeting.service";
         }
         .menu.flat .menu-items a,
         .menu.flat .menu-action {
-          padding: 10px 0;
+          padding: 12px 0;
+          min-height: 44px;
+          display: flex;
+          align-items: center;
           border-bottom: 1px solid #33415533;
           border-radius: 0;
         }
@@ -913,6 +934,17 @@ import { DemoMeetingService } from "./services/demo-meeting.service";
         }
         .nav-user {
           padding: 8px 0;
+        }
+      }
+
+      @media (max-width: 380px) {
+        .brand {
+          font-size: 13px;
+        }
+        .live-meeting {
+          max-width: 25vw;
+          font-size: 10px;
+          padding: 2px 6px;
         }
       }
     `,

@@ -916,15 +916,44 @@ interface DemoCluster {
       }
 
       @media (max-width: 640px) {
+        .welcome-page {
+          padding: 20px 14px 48px;
+        }
         .hero-title {
-          font-size: 28px;
+          font-size: clamp(24px, 6.5vw, 32px);
         }
         .hero-subtitle {
           font-size: 15px;
+          margin-bottom: 24px;
+        }
+        .hero-cta-group {
+          grid-template-columns: 1fr;
         }
         .engine-status-card {
           flex-direction: column;
           align-items: flex-start;
+          gap: 12px;
+        }
+        .demo-input-row {
+          flex-direction: column;
+        }
+        .simulate-btn {
+          width: 100%;
+        }
+        .pathway-cards-grid {
+          grid-template-columns: 1fr;
+        }
+        .features-grid {
+          grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+        }
+      }
+
+      @media (max-width: 400px) {
+        .welcome-page {
+          padding: 16px 10px 40px;
+        }
+        .cta-button {
+          padding: 12px 14px;
         }
       }
     `,

@@ -928,6 +928,30 @@ interface QualityOption {
         }
       }
 
+      @media (max-width: 480px) {
+        .slider {
+          display: none;
+        }
+        .now-chapter {
+          max-width: 12ch;
+          font-size: 11px;
+        }
+        .buttons {
+          gap: 2px;
+          overflow-x: auto;
+          scrollbar-width: none;
+        }
+        .buttons::-webkit-scrollbar {
+          display: none;
+        }
+        .chapters, .stats {
+          width: calc(100% - 16px);
+          max-width: calc(100% - 16px);
+          left: 8px;
+          right: 8px;
+        }
+      }
+
       /* Touch users do not have a hover gesture to bring an auto-hidden bar back. Keep the bar
          available on mobile, and let the optional controls scroll instead of clipping the primary
          play, seek, volume, and time controls off-screen. */

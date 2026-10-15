@@ -807,6 +807,27 @@ import {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         color: var(--muted);
       }
+
+      /* ---- Responsive Media Queries ---- */
+      @media (max-width: 640px) {
+        .grid {
+          grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 1fr));
+          gap: 10px;
+        }
+        .downloads {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .downloads button {
+          width: 100%;
+        }
+      }
+
+      @media (max-width: 440px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
     `,
   ],
 })

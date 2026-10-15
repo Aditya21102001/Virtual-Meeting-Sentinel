@@ -596,14 +596,14 @@ declare global {
       /* Grids & Cards */
       .grid-3 {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
         gap: 16px;
         margin-top: 24px;
       }
 
       .grid-2 {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
         gap: 16px;
         margin-top: 24px;
       }
@@ -631,7 +631,7 @@ declare global {
       /* Component Grid */
       .component-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
         gap: 20px;
         margin-top: 20px;
       }
@@ -683,7 +683,7 @@ declare global {
       /* ADR Grid */
       .adr-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
         gap: 18px;
       }
 
@@ -794,6 +794,56 @@ declare global {
         color: #cbd5e1;
         font-size: 0.9rem;
         line-height: 1.6;
+      }
+
+      /* Responsive Media Queries */
+      @media (max-width: 768px) {
+        .arch-container {
+          padding: 20px 16px 60px;
+        }
+        .arch-title {
+          font-size: clamp(22px, 6vw, 32px);
+        }
+        .arch-subtitle {
+          font-size: 14px;
+        }
+        .section-card {
+          padding: 20px 16px;
+        }
+        .card-head {
+          flex-direction: column;
+          gap: 6px;
+          align-items: flex-start;
+        }
+        .diagram-shell {
+          padding: 14px;
+          margin: 16px 0;
+        }
+      }
+
+      @media (max-width: 540px) {
+        .arch-container {
+          padding: 14px 10px 48px;
+        }
+        .top-bar {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 12px;
+        }
+        .tab-btn {
+          padding: 8px 12px;
+          font-size: 0.85rem;
+        }
+        .section-card {
+          padding: 16px 12px;
+          border-radius: 12px;
+        }
+        .info-card, .security-card, .comp-box, .adr-card {
+          padding: 14px;
+        }
+        .grid-2, .grid-3, .component-grid, .adr-grid {
+          grid-template-columns: 1fr;
+        }
       }
     `
   ]

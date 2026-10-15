@@ -31,6 +31,7 @@
     "@angular/cli": "^22.0.5",
     "@angular/compiler-cli": "^22.0.5",
     "@types/sockjs-client": "^1.5.4",
+    "axe-core": "^4.14.0",
     "jsdom": "^30.0.1",
     "typescript": "~6.0.3",
     "vitest": "^4.1.10"

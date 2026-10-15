@@ -578,6 +578,25 @@ import { NavigationHistoryService } from '../services/navigation-history.service
         border-top: 1px solid #33415555;
         font-variant-numeric: tabular-nums;
       }
+      .chapter-editor {
+        margin: 10px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .chapter-line {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .chapter-at {
+        width: 80px;
+        flex: 0 0 80px;
+      }
+      .chapter-name {
+        flex: 1;
+        min-width: 0;
+      }
 
       @media (max-width: 640px) {
         .head {
@@ -585,6 +604,20 @@ import { NavigationHistoryService } from '../services/navigation-history.service
         }
         .thumb {
           width: 100%;
+        }
+        .actions button {
+          flex: 1 1 auto;
+          width: 100%;
+        }
+      }
+
+      @media (max-width: 440px) {
+        .chapter-line {
+          flex-wrap: wrap;
+        }
+        .chapter-at {
+          width: 70px;
+          flex: 0 0 70px;
         }
       }
     `,

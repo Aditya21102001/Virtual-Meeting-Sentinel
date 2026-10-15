@@ -291,6 +291,24 @@ export interface SearchHit {
         padding-top: 8px;
         border-top: 1px solid #1f2937;
       }
+
+      @media (max-width: 480px) {
+        .bubble {
+          right: 14px;
+          bottom: 14px;
+          width: 46px;
+          height: 46px;
+          font-size: 20px;
+        }
+        .panel {
+          right: 10px;
+          left: 10px;
+          bottom: 70px;
+          width: calc(100vw - 20px);
+          max-height: min(80dvh, 560px);
+          border-radius: 10px;
+        }
+      }
     `,
   ],
 })

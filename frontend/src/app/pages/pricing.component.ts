@@ -887,6 +887,79 @@ interface PricingTier {
         color: #10b981;
         margin-top: 12px;
       }
+
+      /* ---- Responsive Breakpoints ---- */
+      @media (max-width: 768px) {
+        .pricing-page {
+          padding: 20px 16px 60px;
+        }
+        .pricing-title {
+          font-size: clamp(24px, 6vw, 34px);
+        }
+        .pricing-subtitle {
+          font-size: 15px;
+          margin-bottom: 24px;
+        }
+        .roi-section {
+          padding: 24px 18px;
+        }
+        .tiers-grid {
+          grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+          gap: 16px;
+        }
+      }
+
+      @media (max-width: 540px) {
+        .pricing-header {
+          margin-bottom: 32px;
+        }
+        .billing-toggle {
+          display: flex;
+          flex-direction: column;
+          width: 100%;
+          border-radius: 14px;
+          padding: 4px;
+        }
+        .toggle-btn {
+          width: 100%;
+          justify-content: center;
+          padding: 10px 14px;
+        }
+        .tiers-grid {
+          grid-template-columns: 1fr;
+        }
+        .tier-card {
+          padding: 24px 16px;
+        }
+        .metrics-grid {
+          grid-template-columns: 1fr;
+        }
+        .modal-dialog {
+          padding: 20px 16px;
+        }
+        .form-row {
+          grid-template-columns: 1fr;
+        }
+        .modal-actions {
+          flex-direction: column;
+        }
+        .submit-booking-btn,
+        .ghost-btn {
+          width: 100%;
+        }
+      }
+
+      @media (max-width: 380px) {
+        .pricing-page {
+          padding: 14px 10px 48px;
+        }
+        .tier-card {
+          padding: 20px 12px;
+        }
+        .roi-section {
+          padding: 18px 12px;
+        }
+      }
     `,
   ],
 })

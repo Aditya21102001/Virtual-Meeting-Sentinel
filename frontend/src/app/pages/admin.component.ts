@@ -562,7 +562,8 @@ import {
       .sources { list-style: none; padding: 0; margin: 8px 0 0; }
       .source-row {
         display: flex; align-items: center; gap: 10px; justify-content: space-between;
-        padding: 6px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        padding: 8px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        flex-wrap: wrap;
       }
       .trace { margin-top: 12px; font-size: 0.9em; }
       .trace-step {
@@ -571,6 +572,22 @@ import {
       .trace-step > span:nth-child(2) { flex: 1; }
       .badge { width: 1.2em; display: inline-block; }
       .badge.failed { color: #fca5a5; }
+
+      @media (max-width: 640px) {
+        .source-name {
+          flex: 1 1 180px;
+          min-width: 0;
+          word-break: break-all;
+        }
+        .source-row button {
+          width: 100%;
+        }
+        .progress-head {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 4px;
+        }
+      }
     `,
   ],
 })

@@ -134,6 +134,31 @@ import { NavigationHistoryService } from '../services/navigation-history.service
       @if (msg()) { <p class="muted">{{ msg() }}</p> }
     </div>
   `,
+  styles: [
+    `
+      .how {
+        border: 0;
+        padding: 0;
+        margin: 8px 0 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .opt {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        font-size: 14px;
+        line-height: 1.4;
+      }
+      @media (max-width: 480px) {
+        .row > button {
+          width: 100%;
+        }
+      }
+    `,
+  ],
 })
 export class SecurityComponent implements OnInit {
   // ---- password ------------------------------------------------------------
