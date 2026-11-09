@@ -1,0 +1,45 @@
+# Keeps the free-tier backend (Render) and AI service (Hugging Face Space) alive 24x7.
+#
+# Free PaaS instances sleep after ~15 min of inactivity. This cron pings their
+# health endpoints every 10 minutes, which is well inside that window. The pings
+# touch /health only — no model calls, no DB queries, no provider quota consumed.
+#
+# Configure these repository secrets / variables:
+#   BACKEND_URL    – e.g. https://virtual-meeting-sentinel.onrender.com
+#   AI_SERVICE_URL – e.g. https://<you>-agm-sentinel-ai.hf.space
+#
+# If either is unset, its ping is skipped silently — this way the workflow is
+# safe to enable before the services are deployed.
+
+name: Keep Application Warm 24x7
+
+on:
+  schedule:
+    # Every 10 minutes, every day. GitHub may delay cron runs by a few minutes
+    # during high load — 10 min still leaves margin before a 15 min idle timeout.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:           # Allow manual trigger for testing
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping Backend
+        if: vars.BACKEND_URL != ''
+        run: |
+          echo "Pinging backend: ${{ vars.BACKEND_URL }}/health"
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            --max-time 30 \
+            "${{ vars.BACKEND_URL }}/health" || true)
+          echo "Backend responded: $HTTP_CODE"
+
+      - name: Ping AI Service
+        if: vars.AI_SERVICE_URL != ''
+        run: |
+          echo "Pinging AI service: ${{ vars.AI_SERVICE_URL }}/health"
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            --max-time 30 \
+            "${{ vars.AI_SERVICE_URL }}/health" || true)
+          echo "AI service responded: $HTTP_CODE"
+

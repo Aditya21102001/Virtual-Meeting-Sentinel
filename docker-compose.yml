@@ -1,8 +1,12 @@
-# Local development orchestration — spins up the whole system with one command.
+# Orchestration for development and production — spins up the whole system with one command.
 # Usage:  cp .env.example .env   (add your free GROQ_API_KEY)   then   docker compose up --build
+#
+# All services use restart: always so the stack recovers automatically from
+# crashes, OOM kills, and host reboots — keeping the application up 24x7.
 services:
   postgres:
     image: pgvector/pgvector:pg16          # Postgres 16 with pgvector preinstalled
+    restart: always
     environment:
       POSTGRES_USER: sentinel
       POSTGRES_PASSWORD: sentinel
@@ -20,6 +24,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: always
     ports:
       - "6379:6379"
     healthcheck:
@@ -33,6 +38,7 @@ services:
   # across restarts so the AI service can replay it to rebuild clusters (event sourcing).
   kafka:
     image: apache/kafka:3.9.0
+    restart: always
     ports:
       - "9092:9092"
     environment:
@@ -62,6 +68,7 @@ services:
 
   ai-service:
     build: ./ai-service
+    restart: always
     env_file: .env
     environment:
       DATABASE_URL: postgresql://sentinel:sentinel@postgres:5432/sentinel
@@ -69,6 +76,12 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s            # model loading can take a while on first boot
     depends_on:
       postgres:
         condition: service_healthy
@@ -79,6 +92,7 @@ services:
 
   backend:
     build: ./backend
+    restart: always
     env_file: .env
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/sentinel
@@ -89,6 +103,12 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s            # JVM + Spring context init
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,7 +117,7 @@ services:
       kafka:
         condition: service_healthy
       ai-service:
-        condition: service_started
+        condition: service_healthy  # wait until AI service passes its own healthcheck
 
 volumes:
   pgdata:

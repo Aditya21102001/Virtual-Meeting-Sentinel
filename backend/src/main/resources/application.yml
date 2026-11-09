@@ -287,6 +287,23 @@ queue:
 board:
   refresh-ms: 10000
 
+# ---------------------------------------------------------------------------
+# Keep-alive — prevents the AI service from sleeping due to idle timeouts.
+#
+# The backend pings /health at this interval for as long as it is running.
+# Combined with the external GitHub Actions cron that wakes the BACKEND,
+# this forms a complete keep-alive chain:
+#
+#   GitHub Actions (every 10 min) → wakes Backend
+#   Backend KeepAliveScheduler (every 8 min) → wakes AI service
+#
+# Set enabled=false when both services run on always-on infrastructure.
+# ---------------------------------------------------------------------------
+keep-alive:
+  enabled: ${KEEP_ALIVE_ENABLED:true}
+  interval-ms: ${KEEP_ALIVE_INTERVAL_MS:480000}       # 8 min — inside a 15 min idle timeout
+  initial-delay-ms: ${KEEP_ALIVE_INITIAL_DELAY_MS:60000}  # 1 min after boot
+
 management:
   endpoints:
     web:

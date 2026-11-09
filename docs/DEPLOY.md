@@ -165,14 +165,42 @@ and Fast2SMS (India, UPI top-up) are the closest.
 
 ---
 
-## 5. Keep-warm — UptimeRobot (beat cold starts)
+## 5. Keep-warm — 24x7 uptime (beat cold starts)
 
-Free backends sleep after ~15 min idle. Add HTTP monitors, interval 5–10 min:
+Free backends sleep after ~15 min idle. The application now has **three layers** of keep-alive,
+forming a complete chain that keeps everything awake around the clock:
 
-- `<AI_SERVICE_URL>/health`
+```
+GitHub Actions cron (every 10 min)  →  wakes Backend (/health)
+Backend KeepAliveScheduler (every 8 min)  →  wakes AI service (/health)
+Frontend WarmupService (on page load)  →  wakes Backend in background
+```
+
+### Layer 1: GitHub Actions cron (`.github/workflows/keep-warm.yml`)
+
+A scheduled workflow pings both services every 10 minutes. **Set up:**
+
+1. Go to your GitHub repo → **Settings → Secrets and variables → Actions → Variables**.
+2. Add two **repository variables** (not secrets — they're just URLs):
+   - `BACKEND_URL` = `https://virtual-meeting-sentinel.onrender.com`
+   - `AI_SERVICE_URL` = `https://<you>-agm-sentinel-ai.hf.space`
+3. Push the repo — the cron starts automatically.
+
+### Layer 2: Backend self-ping (`KeepAliveScheduler`)
+
+While the backend is running, it pings the AI service's `/health` every 8 minutes. This
+covers the case where the AI service is on a private network that GitHub Actions can't reach
+(Docker Compose, VPC). **Enabled by default; no setup needed.**
+
+To disable (e.g. on always-on infra): set `KEEP_ALIVE_ENABLED=false`.
+
+### Layer 3: UptimeRobot (optional extra)
+
+If you want monitoring + alerting on top of the cron, add HTTP monitors at
+[UptimeRobot](https://uptimerobot.com) (free, no card), interval 5–10 min:
+
 - `<BACKEND_URL>/health`
-
-Now the services stay awake during demos and interviews.
+- `<AI_SERVICE_URL>/health`
 
 **Two caveats on keep-warm pings.**
 
