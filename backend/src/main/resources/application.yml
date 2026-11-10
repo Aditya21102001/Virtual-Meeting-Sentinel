@@ -301,8 +301,8 @@ board:
 # ---------------------------------------------------------------------------
 keep-alive:
   enabled: ${KEEP_ALIVE_ENABLED:true}
-  interval-ms: ${KEEP_ALIVE_INTERVAL_MS:480000}       # 8 min — inside a 15 min idle timeout
-  initial-delay-ms: ${KEEP_ALIVE_INITIAL_DELAY_MS:60000}  # 1 min after boot
+  interval-ms: ${KEEP_ALIVE_INTERVAL_MS:240000}       # 4 min — aggressively keeps AI service awake
+  initial-delay-ms: ${KEEP_ALIVE_INITIAL_DELAY_MS:30000}  # 30s after boot
 
 management:
   endpoints:

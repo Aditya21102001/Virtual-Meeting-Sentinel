@@ -60,23 +60,62 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+import threading
+import time as _time
+
+# Readiness flag — True once the embedding model and knowledge index are loaded.
+# /health returns immediately regardless; /ingest and /draft wait for this.
+_ready = threading.Event()
+_boot_error: str | None = None
+
+
+def _background_init():
+    """Load the heavy singletons in a background thread so the process accepts HTTP sooner.
+
+    WHY THIS MATTERS FOR COLD STARTS.
+
+    Before this change, the entire startup sequence — ONNX model deserialization (10-20s) plus
+    FAISS index rebuild from PDFs (5-15s) — ran inside the `lifespan` context manager, which
+    means uvicorn would not accept ANY connection until both completed. A keep-alive ping to
+    /health arriving during that window got no TCP response at all, so the orchestrator (Docker,
+    Render, Koyeb) could not tell whether the service was booting or dead — and after enough
+    failed probes it would RESTART the container, creating a crash loop where the service never
+    finished initialising.
+
+    Moving the work to a thread lets the process bind its port and answer /health within
+    ~1 second of starting. The healthcheck passes, the orchestrator is satisfied, and the model
+    loads in the background. Endpoints that need the model (/ingest, /draft) wait on the
+    _ready event, so they return a clear 503 during the window rather than crashing.
+    """
+    global _boot_error
+    try:
+        log.info("Background init: loading the embedding model…")
+        get_embeddings()
+        log.info("Embedding model ready. Building the knowledge index…")
+        get_kb()
+        log.info("Knowledge index ready — the service can now answer requests.")
+        _ready.set()
+    except Exception as exc:
+        _boot_error = str(exc)
+        log.error("Background init FAILED: %s", exc, exc_info=True)
+        # Set ready anyway so health reports the error rather than hanging forever.
+        _ready.set()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Warm the heavy singletons at startup so the first request isn't slow.
-    #
-    # Logged stage by stage because these two calls are where startup actually fails: loading
-    # the embedding model needs several hundred MB, and building the knowledge index reads
-    # every stored PDF. When this service died on boot, the only way to tell which of the two
-    # was responsible was to guess — these lines make the last one printed the answer.
-    log.info("Starting up: loading the embedding model…")
-    get_embeddings()
-    log.info("Embedding model ready. Building the knowledge index…")
-    get_kb()
-    log.info("Knowledge index ready — the service can now answer requests.")
+    # Start the heavy loading in a background thread so the server binds its port immediately
+    # and can answer /health probes while the model loads. See _background_init for the reasoning.
+    init_thread = threading.Thread(target=_background_init, name="ai-init", daemon=True)
+    init_thread.start()
+
     # In Kafka mode, start the background consumer that replays the question log to rebuild
     # clusters, then keeps ingesting live (see kafka_stream.py). No-op in inproc/redis mode.
     worker = None
     if get_settings().queue_mode == "kafka":
+        # Wait for the model to be ready before starting the Kafka consumer, since it needs
+        # embeddings to cluster incoming questions.
+        _ready.wait()
         from .kafka_stream import get_kafka_worker
         worker = get_kafka_worker()
         worker.start()
@@ -116,7 +155,20 @@ def root() -> dict:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok"}
+    """Liveness + readiness.
+
+    Returns HTTP 200 immediately — even before the model is loaded — so that container
+    orchestrators (Docker healthcheck, Render, Koyeb) see the process as alive the moment
+    it binds its port. The ``ready`` field distinguishes "alive and loading" from "alive and
+    serving".
+
+    A keep-warm ping (/health → 200) prevents sleeping; it does NOT need the model.
+    """
+    if _boot_error:
+        return {"status": "error", "ready": False, "error": _boot_error}
+    if _ready.is_set():
+        return {"status": "ok", "ready": True}
+    return {"status": "ok", "ready": False, "detail": "Model loading in progress…"}
 
 
 @app.get("/kafka/status")

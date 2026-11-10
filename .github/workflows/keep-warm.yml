@@ -1,45 +1,49 @@
-# Keeps the free-tier backend (Render) and AI service (Hugging Face Space) alive 24x7.
+# Keeps the free-tier backend (Render/Koyeb) and AI service (Hugging Face Space) alive 24x7.
 #
 # Free PaaS instances sleep after ~15 min of inactivity. This cron pings their
-# health endpoints every 10 minutes, which is well inside that window. The pings
+# health endpoints every 5-10 minutes, which is well inside that window. The pings
 # touch /health only — no model calls, no DB queries, no provider quota consumed.
 #
-# Configure these repository secrets / variables:
-#   BACKEND_URL    – e.g. https://virtual-meeting-sentinel.onrender.com
-#   AI_SERVICE_URL – e.g. https://<you>-agm-sentinel-ai.hf.space
-#
-# If either is unset, its ping is skipped silently — this way the workflow is
-# safe to enable before the services are deployed.
+# Default URLs are provided below. You can override them anytime via GitHub Repository Variables:
+#   Settings -> Secrets and variables -> Actions -> Variables:
+#   BACKEND_URL, AI_SERVICE_URL
 
 name: Keep Application Warm 24x7
 
 on:
   schedule:
-    # Every 10 minutes, every day. GitHub may delay cron runs by a few minutes
-    # during high load — 10 min still leaves margin before a 15 min idle timeout.
-    - cron: '*/10 * * * *'
+    # Every 5 minutes to stay ahead of the 15-minute idle sleep timer even with GitHub scheduling jitter
+    - cron: '*/5 * * * *'
   workflow_dispatch:           # Allow manual trigger for testing
 
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 4
     steps:
       - name: Ping Backend
-        if: vars.BACKEND_URL != ''
         run: |
-          echo "Pinging backend: ${{ vars.BACKEND_URL }}/health"
+          TARGET_URL="${{ vars.BACKEND_URL }}"
+          if [ -z "$TARGET_URL" ]; then
+            TARGET_URL="https://virtual-meeting-sentinel.onrender.com"
+          fi
+          echo "Pinging backend at: $TARGET_URL/health"
+          # 60s timeout allows sleeping containers enough time to complete cold boot
           HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
-            --max-time 30 \
-            "${{ vars.BACKEND_URL }}/health" || true)
-          echo "Backend responded: $HTTP_CODE"
+            --max-time 60 \
+            "$TARGET_URL/health" || true)
+          echo "Backend responded with HTTP status: $HTTP_CODE"
 
       - name: Ping AI Service
-        if: vars.AI_SERVICE_URL != ''
         run: |
-          echo "Pinging AI service: ${{ vars.AI_SERVICE_URL }}/health"
-          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
-            --max-time 30 \
-            "${{ vars.AI_SERVICE_URL }}/health" || true)
-          echo "AI service responded: $HTTP_CODE"
+          TARGET_URL="${{ vars.AI_SERVICE_URL }}"
+          if [ -n "$TARGET_URL" ]; then
+            echo "Pinging AI service at: $TARGET_URL/health"
+            HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+              --max-time 60 \
+              "$TARGET_URL/health" || true)
+            echo "AI service responded with HTTP status: $HTTP_CODE"
+          else
+            echo "No AI_SERVICE_URL configured; relying on backend's internal KeepAliveScheduler to keep AI service warm."
+          fi
 

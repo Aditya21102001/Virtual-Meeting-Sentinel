@@ -70,8 +70,8 @@ public class KeepAliveScheduler {
      * forward rather than stacking up.
      */
     @Scheduled(
-        fixedDelayString = "${keep-alive.interval-ms:480000}",
-        initialDelayString = "${keep-alive.initial-delay-ms:60000}"
+        fixedDelayString = "${keep-alive.interval-ms:240000}",
+        initialDelayString = "${keep-alive.initial-delay-ms:30000}"
     )
     public void pingAiService() {
         if (!enabled) return;
